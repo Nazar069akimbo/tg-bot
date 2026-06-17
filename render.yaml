@@ -1,8 +1,9 @@
 services:
-  - type: web
-    name: telegram-bot
+  - type: worker
+    name: repsolver-bot
     runtime: docker
-    repo: https://github.com/ВАШ_ЛОГИН/НАЗВАНИЕ_РЕПО
+    repo: https://github.com/Nazar069akimbo/repsolver-bot
+    branch: main
     plan: free
     envVars:
       - key: BOT_TOKEN
@@ -10,4 +11,8 @@ services:
       - key: BOTHUB_API_KEY
         sync: false
       - key: ADMIN_ID
+        sync: false
+      - key: ADMIN_CODE
+        sync: false
+      - key: FREE_LIMIT
         sync: false
