@@ -3,22 +3,28 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from database.db import get_setting
 
+# Загружаем .env файл (если есть)
 load_dotenv()
 
-# Проверяем наличие API ключа
-API_KEY = os.getenv("BOTHUB_API_KEY")
-if not API_KEY:
-    print("⚠️ BOTHUB_API_KEY не найден в .env файле!")
+# Пробуем получить ключ из разных источников
+API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("BOTHUB_API_KEY")
 
+# Если ключ не найден - выводим ошибку в логи
+if not API_KEY:
+    print("❌ OPENAI_API_KEY не найден!")
+    print(f"Все переменные: {list(os.environ.keys())}")
+else:
+    print(f"✅ API Key найден! Длина: {len(API_KEY)}")
+
+# Создаем клиент
 client = OpenAI(
     api_key=API_KEY,
     base_url="https://openai.bothub.chat/v1"
 )
 
 def solve_problem(question, mode="gdz", is_premium=False):
-    """Решение задачи через AI"""
     if not API_KEY:
-        return "⚠️ Ошибка: API ключ не настроен. Проверьте .env файл."
+        return "⚠️ Ошибка: API ключ не настроен. Пожалуйста, обратитесь к администратору."
     
     if is_premium:
         max_input = int(get_setting('premium_input_chars') or 3000)
