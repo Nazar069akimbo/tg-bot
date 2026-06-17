@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: telegram-bot
+    runtime: docker
+    repo: https://github.com/ВАШ_ЛОГИН/НАЗВАНИЕ_РЕПО
+    plan: free
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOTHUB_API_KEY
+        sync: false
+      - key: ADMIN_ID
+        sync: false
