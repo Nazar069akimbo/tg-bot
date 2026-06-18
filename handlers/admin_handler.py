@@ -23,7 +23,21 @@ def admin_kb():
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
             [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],
+            [InlineKeyboardButton(text="🗑️ Управление бэкапами", callback_data="a_backup_manage")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ]
+    )
+
+def backup_manage_kb():
+    """Клавиатура управления бэкапами"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Список бэкапов", callback_data="a_backup_list")],
+            [InlineKeyboardButton(text="🗑️ Удалить старше 1 дня", callback_data="a_backup_delete_1")],
+            [InlineKeyboardButton(text="🗑️ Удалить старше 7 дней", callback_data="a_backup_delete_7")],
+            [InlineKeyboardButton(text="🗑️ Удалить старше 30 дней", callback_data="a_backup_delete_30")],
+            [InlineKeyboardButton(text="🗑️ Удалить ВСЕ бэкапы", callback_data="a_backup_delete_all")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
         ]
     )
 
@@ -456,7 +470,7 @@ async def a_backup(callback: types.CallbackQuery):
     
     try:
         backup = GitHubBackup()
-        result = backup.backup_db()
+        result = backup.backup_db(reason='ручной')
         
         if result:
             text = "✅ **БЭКАП УСПЕШНО СОЗДАН!**\n\n"
@@ -471,6 +485,168 @@ async def a_backup(callback: types.CallbackQuery):
         await callback.message.edit_text(
             f"❌ Ошибка: {e}",
             reply_markup=admin_kb()
+        )
+
+# ============ УПРАВЛЕНИЕ БЭКАПАМИ ============
+
+@router.callback_query(F.data == "a_backup_manage")
+async def a_backup_manage(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    try:
+        await callback.message.edit_text(
+            "🗑️ **УПРАВЛЕНИЕ БЭКАПАМИ**\n\n"
+            "Выберите действие:",
+            reply_markup=backup_manage_kb()
+        )
+    except TelegramBadRequest:
+        await callback.message.delete()
+        await callback.message.answer(
+            "🗑️ **УПРАВЛЕНИЕ БЭКАПАМИ**\n\n"
+            "Выберите действие:",
+            reply_markup=backup_manage_kb()
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "a_backup_list")
+async def a_backup_list(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    try:
+        backup = GitHubBackup()
+        headers = backup.headers
+        repo = backup.repo
+        url = f'https://api.github.com/repos/{repo}/contents/backups'
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            await callback.message.edit_text(
+                "❌ Не удалось получить список бэкапов",
+                reply_markup=backup_manage_kb()
+            )
+            await callback.answer()
+            return
+        
+        files = response.json()
+        db_files = [f for f in files if f['name'].endswith('.db')]
+        db_files.sort(key=lambda x: x['name'], reverse=True)
+        
+        if not db_files:
+            text = "📋 **СПИСОК БЭКАПОВ**\n\n"
+            text += "Нет бэкапов"
+        else:
+            text = f"📋 **СПИСОК БЭКАПОВ**\n\n"
+            text += f"Всего: {len(db_files)}\n\n"
+            for i, f in enumerate(db_files[:20], 1):
+                text += f"{i}. `{f['name']}`\n"
+            if len(db_files) > 20:
+                text += f"\n... и еще {len(db_files) - 20} файлов"
+        
+        await callback.message.edit_text(text, reply_markup=backup_manage_kb())
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=backup_manage_kb()
+        )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("a_backup_delete_"))
+async def a_backup_delete(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    days = int(callback.data.split("_")[3])
+    
+    # Подтверждение
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_delete_{days}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="a_backup_manage")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        f"⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
+        f"Вы собираетесь удалить все бэкапы старше {days} дней.\n\n"
+        f"Это действие НЕЛЬЗЯ будет отменить!",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("confirm_delete_"))
+async def confirm_delete(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    days = int(callback.data.split("_")[2])
+    
+    await callback.message.edit_text("⏳ Удаление бэкапов...")
+    await callback.answer()
+    
+    try:
+        backup = GitHubBackup()
+        backup.cleanup_old_backups(days=days)
+        
+        text = f"✅ **БЭКАПЫ УДАЛЕНЫ!**\n\n"
+        text += f"🗑️ Удалены бэкапы старше {days} дней"
+        text += f"\n🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        await callback.message.edit_text(text, reply_markup=admin_kb())
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=backup_manage_kb()
+        )
+
+@router.callback_query(F.data == "a_backup_delete_all")
+async def a_backup_delete_all(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    # Подтверждение
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚠️ ДА, УДАЛИТЬ ВСЕ", callback_data="confirm_delete_all")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="a_backup_manage")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        "⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
+        "Вы собираетесь удалить ВСЕ бэкапы!\n\n"
+        "Это действие НЕЛЬЗЯ будет отменить!",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "confirm_delete_all")
+async def confirm_delete_all(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    await callback.message.edit_text("⏳ Удаление всех бэкапов...")
+    await callback.answer()
+    
+    try:
+        backup = GitHubBackup()
+        backup.cleanup_old_backups(days=0)  # 0 = все бэкапы
+        
+        text = "✅ **ВСЕ БЭКАПЫ УДАЛЕНЫ!**\n\n"
+        text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        await callback.message.edit_text(text, reply_markup=admin_kb())
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=backup_manage_kb()
         )
 
 # ============ РАССЫЛКА ============
