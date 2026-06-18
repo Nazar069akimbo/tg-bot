@@ -32,7 +32,7 @@ from handlers import (
     solve_handler, admin_handler, leaderboard_handler, help_handler
 )
 from middleware import AuthMiddleware
-from drive_backup import DriveBackup
+from backup_github import GitHubBackup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,37 +64,34 @@ async def set_commands():
 async def main():
     logger.info("🚀 Запуск бота...")
     
-    # Запускаем Flask в отдельном потоке
+    # Запускаем Flask
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
-    logger.info("✅ Flask сервер запущен на порту 8080")
+    logger.info("✅ Flask сервер запущен")
     
     # Инициализация БД
     init_db()
     init_settings()
     
-    # ========== GOOGLE DRIVE БЭКАП ==========
-    drive = DriveBackup()
+    # ========== GITHUB БЭКАП ==========
+    backup = GitHubBackup()
     
-    # Восстанавливаем БД из Google Drive
-    if drive.restore_latest_backup():
-        logger.info("✅ БД восстановлена из Google Drive")
-    else:
-        logger.info("ℹ️ Создана новая БД")
+    # Восстанавливаем БД из GitHub
+    backup.restore_latest_backup()
     
-    # Запускаем периодический бэкап (каждые 6 часов)
+    # Запускаем периодический бэкап (каждый час)
     def backup_loop():
         while True:
-            time.sleep(21600)  # 6 часов
+            time.sleep(3600)  # 3600 секунд = 1 час
             try:
-                drive.backup_db()
+                backup.backup_db(reason='каждый час')
             except Exception as e:
-                logger.error(f"Ошибка бэкапа: {e}")
+                logger.error(f"❌ Ошибка бэкапа: {e}")
     
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
-    logger.info("✅ Запущен планировщик бэкапов (каждые 6 часов)")
+    logger.info("✅ Запущен планировщик бэкапов (каждый час)")
     # =========================================
     
     if not is_admin(ADMIN_ID):

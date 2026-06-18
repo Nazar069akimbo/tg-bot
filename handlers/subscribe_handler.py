@@ -4,17 +4,22 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 import secrets
 from datetime import datetime
 from database.db import cursor, conn, add_premium
+from backup_github import GitHubBackup
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 def get_subscribe_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ 49 Stars — 1 мес", callback_data="pay_1")],
-        [InlineKeyboardButton(text="⭐ 129 Stars — 3 мес", callback_data="pay_3")],
-        [InlineKeyboardButton(text="⭐ 249 Stars — 6 мес", callback_data="pay_6")],
-        [InlineKeyboardButton(text="⭐ 449 Stars — 12 мес", callback_data="pay_12")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ 49 Stars — 1 мес", callback_data="pay_1")],
+            [InlineKeyboardButton(text="⭐ 129 Stars — 3 мес", callback_data="pay_3")],
+            [InlineKeyboardButton(text="⭐ 249 Stars — 6 мес", callback_data="pay_6")],
+            [InlineKeyboardButton(text="⭐ 449 Stars — 12 мес", callback_data="pay_12")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ]
+    )
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
@@ -97,4 +102,14 @@ async def payment_success(message: types.Message):
         conn.commit()
     
     add_premium(message.from_user.id, days)
+    
+    # ========== БЭКАП ПОСЛЕ ПОКУПКИ PREMIUM ==========
+    try:
+        backup = GitHubBackup()
+        backup.backup_db(reason='покупка Premium')
+        logger.info(f"✅ Бэкап сделан после покупки Premium пользователем {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка бэкапа: {e}")
+    # ===================================================
+    
     await message.answer(f"✅ Premium на {days} дней активирован! 🎉")
