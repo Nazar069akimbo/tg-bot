@@ -2,11 +2,11 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 
-# Создаем папку для базы данных если её нет
-os.makedirs('data', exist_ok=True)
+# Путь к БД в папке data
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'repsolver.db')
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# Подключаемся к базе данных
-conn = sqlite3.connect('data/repsolver.db', check_same_thread=False)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
@@ -59,42 +59,35 @@ def init_settings():
     print("✅ Настройки инициализированы")
 
 def get_user(user_id):
-    """Получить пользователя по ID"""
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()
 
 def create_user(user_id, username, referrer_id=None):
-    """Создать нового пользователя"""
     cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, referrer_id) VALUES (?, ?, ?, ?)",
                    (user_id, username, datetime.now().isoformat(), referrer_id))
     conn.commit()
 
 def is_admin(user_id):
-    """Проверить, является ли пользователь админом"""
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
     return cursor.fetchone() is not None
 
 def add_admin(user_id):
-    """Добавить админа"""
     cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                    (user_id, datetime.now().isoformat()))
     conn.commit()
 
 def is_premium(user_id):
-    """Проверить, есть ли у пользователя премиум"""
     user = get_user(user_id)
     if not user or not user[3]:
         return False
     return datetime.now().isoformat() < user[3]
 
 def add_premium(user_id, days):
-    """Добавить премиум пользователю"""
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
     cursor.execute("UPDATE users SET premium_until = ? WHERE user_id = ?", (new_date, user_id))
     conn.commit()
 
 def can_request(user_id):
-    """Проверить, может ли пользователь сделать запрос"""
     user = get_user(user_id)
     if not user:
         return True, 10
@@ -105,22 +98,18 @@ def can_request(user_id):
     return used < free_limit, free_limit - used
 
 def add_request(user_id):
-    """Увеличить счетчик запросов"""
     cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def set_mode(user_id, mode):
-    """Установить режим пользователя"""
     cursor.execute("UPDATE users SET mode = ? WHERE user_id = ?", (mode, user_id))
     conn.commit()
 
 def get_mode(user_id):
-    """Получить режим пользователя"""
     user = get_user(user_id)
     return user[7] if user and user[7] else "gdz"
 
 def get_setting(key):
-    """Получить настройку"""
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     result = cursor.fetchone()
     if result:
@@ -128,12 +117,10 @@ def get_setting(key):
     return '0'
 
 def set_setting(key, value):
-    """Установить настройку"""
     cursor.execute("UPDATE settings SET value = ? WHERE key = ?", (value, key))
     conn.commit()
 
 def get_stats():
-    """Получить общую статистику"""
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM users WHERE premium_until IS NOT NULL AND premium_until > datetime('now')")

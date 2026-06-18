@@ -2,6 +2,8 @@ import os
 import sys
 import asyncio
 import logging
+import threading
+import time
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
@@ -30,6 +32,7 @@ from handlers import (
     solve_handler, admin_handler, leaderboard_handler, help_handler
 )
 from middleware import AuthMiddleware
+from drive_backup import DriveBackup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,8 +70,33 @@ async def main():
     thread.start()
     logger.info("✅ Flask сервер запущен на порту 8080")
     
+    # Инициализация БД
     init_db()
     init_settings()
+    
+    # ========== GOOGLE DRIVE БЭКАП ==========
+    drive = DriveBackup()
+    
+    # Восстанавливаем БД из Google Drive
+    if drive.restore_latest_backup():
+        logger.info("✅ БД восстановлена из Google Drive")
+    else:
+        logger.info("ℹ️ Создана новая БД")
+    
+    # Запускаем периодический бэкап (каждые 6 часов)
+    def backup_loop():
+        while True:
+            time.sleep(21600)  # 6 часов
+            try:
+                drive.backup_db()
+            except Exception as e:
+                logger.error(f"Ошибка бэкапа: {e}")
+    
+    backup_thread = threading.Thread(target=backup_loop, daemon=True)
+    backup_thread.start()
+    logger.info("✅ Запущен планировщик бэкапов (каждые 6 часов)")
+    # =========================================
+    
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
     
