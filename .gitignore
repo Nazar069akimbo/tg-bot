@@ -1,2 +1,12 @@
-.env
-.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.db
+*.sqlite3
+get-docker.sh
+railway.py
+data/
