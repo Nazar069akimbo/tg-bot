@@ -20,7 +20,8 @@ def init_db():
         free_requests INTEGER DEFAULT 0,
         total_requests INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
-        mode TEXT DEFAULT 'gdz'
+        mode TEXT DEFAULT 'gdz',
+        referrer_id INTEGER DEFAULT NULL
     )
     ''')
     cursor.execute('''
@@ -62,10 +63,10 @@ def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()
 
-def create_user(user_id, username):
+def create_user(user_id, username, referrer_id=None):
     """Создать нового пользователя"""
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined) VALUES (?, ?, ?)",
-                   (user_id, username, datetime.now().isoformat()))
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, referrer_id) VALUES (?, ?, ?, ?)",
+                   (user_id, username, datetime.now().isoformat(), referrer_id))
     conn.commit()
 
 def is_admin(user_id):
