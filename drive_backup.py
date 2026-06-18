@@ -1,41 +1,62 @@
 import os
-import json
+import pickle
 import shutil
 import logging
 from datetime import datetime
-from google.oauth2 import service_account
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 
 logger = logging.getLogger(__name__)
 
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+TOKEN_FILE = 'token.pickle'
+CREDS_FILE = 'credentials.json'
+
 class DriveBackup:
     def __init__(self):
-        """Инициализация Google Drive"""
-        creds_json = os.getenv('GOOGLE_DRIVE_CREDENTIALS')
-        if not creds_json:
-            logger.error("❌ GOOGLE_DRIVE_CREDENTIALS не найдены!")
-            self.service = None
-            self.folder_id = None
+        """Инициализация Google Drive через OAuth"""
+        self.service = None
+        self.folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+        
+        # Проверяем, есть ли файл с ключами
+        if not os.path.exists(CREDS_FILE):
+            logger.error(f"❌ Файл {CREDS_FILE} не найден в папке проекта!")
             return
         
         try:
-            creds_dict = json.loads(creds_json)
-            self.creds = service_account.Credentials.from_service_account_info(
-                creds_dict,
-                scopes=['https://www.googleapis.com/auth/drive.file']
-            )
-            self.service = build('drive', 'v3', credentials=self.creds)
-            self.folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
-            if self.folder_id:
-                logger.info("✅ Google Drive инициализирован")
-            else:
-                logger.error("❌ GOOGLE_DRIVE_FOLDER_ID не найден!")
+            creds = None
+            
+            # Проверяем, есть ли сохраненный токен
+            if os.path.exists(TOKEN_FILE):
+                with open(TOKEN_FILE, 'rb') as token:
+                    creds = pickle.load(token)
+                logger.info("📂 Найден сохраненный токен")
+            
+            # Если токен невалидный - обновляем
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                logger.info("🔄 Токен обновлен")
+            elif not creds:
+                # Если нет токена - просим авторизоваться
+                logger.info("🔐 Требуется авторизация в Google...")
+                flow = InstalledAppFlow.from_client_secrets_file(CREDS_FILE, SCOPES)
+                creds = flow.run_local_server(port=8080)
+                logger.info("✅ Авторизация прошла успешно")
+            
+            # Сохраняем токен для следующего раза
+            with open(TOKEN_FILE, 'wb') as token:
+                pickle.dump(creds, token)
+            
+            self.service = build('drive', 'v3', credentials=creds)
+            logger.info("✅ Google Drive инициализирован (OAuth)")
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка инициализации Google Drive: {e}")
+            logger.error(f"❌ Ошибка инициализации: {e}")
             self.service = None
-            self.folder_id = None
     
     def backup_db(self, db_path='data/repsolver.db'):
         """Бэкап БД в Google Drive"""
@@ -43,20 +64,20 @@ class DriveBackup:
             logger.warning("⚠️ Google Drive не инициализирован")
             return False
         
+        if not self.folder_id:
+            logger.error("❌ GOOGLE_DRIVE_FOLDER_ID не найден!")
+            return False
+        
         try:
             if not os.path.exists(db_path):
                 logger.warning(f"⚠️ Файл {db_path} не найден")
                 return False
             
-            # Создаем файл бэкапа с датой
             timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
             backup_name = f'repsolver_backup_{timestamp}.db'
-            
-            # Копируем БД
             shutil.copy2(db_path, backup_name)
             logger.info(f"📦 Создан локальный бэкап: {backup_name}")
             
-            # Загружаем в Google Drive
             file_metadata = {
                 'name': backup_name,
                 'parents': [self.folder_id]
@@ -69,9 +90,7 @@ class DriveBackup:
                 fields='id'
             ).execute()
             
-            # Удаляем временный файл
             os.remove(backup_name)
-            
             logger.info(f"✅ Бэкап загружен в Google Drive: {backup_name}")
             return True
         except Exception as e:
@@ -84,8 +103,11 @@ class DriveBackup:
             logger.warning("⚠️ Google Drive не инициализирован")
             return False
         
+        if not self.folder_id:
+            logger.error("❌ GOOGLE_DRIVE_FOLDER_ID не найден!")
+            return False
+        
         try:
-            # Ищем последний бэкап
             results = self.service.files().list(
                 q=f"'{self.folder_id}' in parents and name contains 'repsolver_backup'",
                 orderBy='createdTime desc',
@@ -100,11 +122,8 @@ class DriveBackup:
             
             file = files[0]
             logger.info(f"📥 Восстановление из: {file['name']}")
-            
-            # Создаем папку data если её нет
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             
-            # Скачиваем файл
             request = self.service.files().get_media(fileId=file['id'])
             fh = io.FileIO(db_path, 'wb')
             downloader = MediaIoBaseDownload(fh, request)
