@@ -10,3 +10,7 @@ venv/
 get-docker.sh
 railway.py
 data/
+*.json
+*.tar.gz
+*.db
+test_backup.txt
