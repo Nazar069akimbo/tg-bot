@@ -1,5 +1,6 @@
 import os
 import pickle
+import json
 import shutil
 import logging
 from datetime import datetime
@@ -14,52 +15,56 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_FILE = 'token.pickle'
-CREDS_FILE = 'credentials.json'
 
 class DriveBackup:
     def __init__(self):
-        """Инициализация Google Drive через OAuth"""
         self.service = None
         self.folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
         
-        # Проверяем, есть ли файл с ключами
-        if not os.path.exists(CREDS_FILE):
-            logger.error(f"❌ Файл {CREDS_FILE} не найден в папке проекта!")
+        # Пробуем получить credentials из переменной окружения
+        creds_json = os.getenv('GOOGLE_OAUTH_CREDENTIALS')
+        
+        if not creds_json:
+            logger.error("❌ GOOGLE_OAUTH_CREDENTIALS не найдены!")
             return
         
         try:
+            # Сохраняем временный файл
+            with open('credentials.json', 'w') as f:
+                f.write(creds_json)
+            logger.info("✅ Credentials загружены из переменной окружения")
+            
             creds = None
             
-            # Проверяем, есть ли сохраненный токен
             if os.path.exists(TOKEN_FILE):
                 with open(TOKEN_FILE, 'rb') as token:
                     creds = pickle.load(token)
                 logger.info("📂 Найден сохраненный токен")
             
-            # Если токен невалидный - обновляем
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
                 logger.info("🔄 Токен обновлен")
             elif not creds:
-                # Если нет токена - просим авторизоваться
                 logger.info("🔐 Требуется авторизация в Google...")
-                flow = InstalledAppFlow.from_client_secrets_file(CREDS_FILE, SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
                 creds = flow.run_local_server(port=8080)
                 logger.info("✅ Авторизация прошла успешно")
             
-            # Сохраняем токен для следующего раза
             with open(TOKEN_FILE, 'wb') as token:
                 pickle.dump(creds, token)
             
             self.service = build('drive', 'v3', credentials=creds)
             logger.info("✅ Google Drive инициализирован (OAuth)")
             
+            # Удаляем временный файл
+            if os.path.exists('credentials.json'):
+                os.remove('credentials.json')
+            
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации: {e}")
             self.service = None
     
     def backup_db(self, db_path='data/repsolver.db'):
-        """Бэкап БД в Google Drive"""
         if not self.service:
             logger.warning("⚠️ Google Drive не инициализирован")
             return False
@@ -98,7 +103,6 @@ class DriveBackup:
             return False
     
     def restore_latest_backup(self, db_path='data/repsolver.db'):
-        """Восстанавливает последний бэкап"""
         if not self.service:
             logger.warning("⚠️ Google Drive не инициализирован")
             return False
@@ -140,7 +144,6 @@ class DriveBackup:
             return False
     
     def cleanup_old_backups(self, keep=10):
-        """Удаляет старые бэкапы"""
         if not self.service:
             return
         
