@@ -5,6 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from database.db import is_admin, add_admin, cursor, conn, get_setting, set_setting, get_user
 import asyncio
 from datetime import datetime
+from drive_backup import DriveBackup
 
 router = Router()
 ADMIN_CODE = "30121979"
@@ -21,6 +22,7 @@ def admin_kb():
             [InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
+            [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],  # Новая кнопка
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ]
     )
@@ -441,7 +443,47 @@ async def select_user_for_premium(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=premium_days_kb(user_id))
     await callback.answer()
 
-# ============ РАССЫЛКА (упрощенная версия) ============
+# ============ БЭКАП ============
+
+@router.callback_query(F.data == "a_backup")
+async def a_backup(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    # Отправляем сообщение о начале
+    await callback.message.edit_text(
+        "⏳ Создаю бэкап базы данных...\n"
+        "Пожалуйста, подождите..."
+    )
+    await callback.answer()
+    
+    try:
+        # Делаем бэкап
+        drive = DriveBackup()
+        result = drive.backup_db()
+        
+        if result:
+            text = "✅ **БЭКАП УСПЕШНО СОЗДАН!**\n\n"
+            text += "📁 Бэкап загружен в Google Drive\n"
+            text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        else:
+            text = "❌ **ОШИБКА СОЗДАНИЯ БЭКАПА!**\n\n"
+            text += "Проверьте логи для деталей."
+        
+        # Возвращаемся в админ-меню
+        await callback.message.edit_text(
+            text,
+            reply_markup=admin_kb()
+        )
+        
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка бэкапа: {e}",
+            reply_markup=admin_kb()
+        )
+
+# ============ РАССЫЛКА ============
 
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast(callback: types.CallbackQuery):
@@ -453,7 +495,6 @@ async def a_broadcast(callback: types.CallbackQuery):
     text += "Просто отправьте сообщение, которое хотите разослать ВСЕМ пользователям.\n\n"
     text += "⏹ Чтобы отменить, отправьте /cancel"
     
-    # Сохраняем состояние
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     
     try:
@@ -465,7 +506,6 @@ async def a_broadcast(callback: types.CallbackQuery):
 
 @router.message(F.text)
 async def handle_broadcast(message: types.Message):
-    # Проверяем, что это админ и он в режиме рассылки
     if not is_admin(message.from_user.id):
         return
     
@@ -473,30 +513,24 @@ async def handle_broadcast(message: types.Message):
     if state.get("state") != "waiting_broadcast":
         return
     
-    # Отмена
     if message.text == "/cancel":
         user_pages.pop(message.from_user.id, None)
         await message.answer("✅ Рассылка отменена", reply_markup=admin_kb())
         return
     
-    # Нельзя отправлять команды
     if message.text.startswith("/"):
         await message.answer("❌ Нельзя использовать команды в тексте рассылки")
         return
     
-    # Получаем текст для рассылки
     broadcast_text = message.text
-    
-    # Получаем всех пользователей
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
     users = cursor.fetchall()
     
     if not users:
-        await message.answer("❌ Нет активных пользователей для рассылки")
+        await message.answer("❌ Нет активных пользователей")
         user_pages.pop(message.from_user.id, None)
         return
     
-    # Подтверждение
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Отправить всем", callback_data=f"confirm_broadcast")],
@@ -513,7 +547,6 @@ async def handle_broadcast(message: types.Message):
         reply_markup=kb
     )
     
-    # Сохраняем текст для рассылки
     user_pages[message.from_user.id] = {
         "state": "confirm_broadcast", 
         "text": broadcast_text,
@@ -548,16 +581,13 @@ async def confirm_broadcast(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка: нет текста или пользователей", show_alert=True)
         return
     
-    # Сразу отвечаем на callback
     await callback.answer("⏳ Начинаю рассылку...")
     
-    # Удаляем сообщение с подтверждением
     try:
         await callback.message.delete()
     except:
         pass
     
-    # Отправляем статус
     status_msg = await callback.message.answer(
         f"⏳ Начинаю рассылку...\n"
         f"👥 Всего: {len(users)}\n"
@@ -571,8 +601,6 @@ async def confirm_broadcast(callback: types.CallbackQuery):
         try:
             await callback.bot.send_message(u[0], broadcast_text)
             sent += 1
-            
-            # Обновляем статус каждые 10 сообщений
             if i % 10 == 0:
                 try:
                     await status_msg.edit_text(
@@ -583,25 +611,19 @@ async def confirm_broadcast(callback: types.CallbackQuery):
                     )
                 except:
                     pass
-                
-            # Небольшая задержка, чтобы не превысить лимиты Telegram
             await asyncio.sleep(0.03)
-            
         except Exception as e:
             failed += 1
     
-    # Финальный результат
     final_text = f"✅ **РАССЫЛКА ЗАВЕРШЕНА**\n\n"
     final_text += f"📤 Отправлено: {sent}\n"
     final_text += f"❌ Не доставлено: {failed}\n"
     final_text += f"👥 Всего: {len(users)}"
     
     await status_msg.edit_text(final_text, reply_markup=admin_kb())
-    
-    # Очищаем состояние
     user_pages.pop(callback.from_user.id, None)
 
-# ============ КОНЕЦ РАССЫЛКИ ============
+# ============ ЛИМИТЫ ============
 
 @router.callback_query(F.data == "a_limits")
 async def a_limits(callback: types.CallbackQuery):
