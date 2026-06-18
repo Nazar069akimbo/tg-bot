@@ -11,6 +11,7 @@ cursor = conn.cursor()
 
 def init_db():
     """Инициализация базы данных"""
+    # Создаем таблицу users, если её нет
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -24,13 +25,17 @@ def init_db():
     )
     ''')
     
-    # Добавляем колонку referrer_id если её нет
+    # Добавляем колонку referrer_id, если её нет
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER DEFAULT NULL")
         print("✅ Добавлена колонка referrer_id")
-    except sqlite3.OperationalError:
-        print("ℹ️ Колонка referrer_id уже существует")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            print("ℹ️ Колонка referrer_id уже существует")
+        else:
+            print(f"⚠️ Ошибка при добавлении колонки: {e}")
     
+    # Создаем остальные таблицы
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
