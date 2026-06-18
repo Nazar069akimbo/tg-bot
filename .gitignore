@@ -14,3 +14,5 @@ data/
 *.tar.gz
 *.db
 test_backup.txt
+credentials.json
+token.pickle
