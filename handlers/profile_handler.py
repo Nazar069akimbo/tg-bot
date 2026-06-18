@@ -9,7 +9,11 @@ router = Router()
 async def profile_cmd(message: types.Message):
     user = get_user(message.from_user.id)
     if not user:
-        await message.answer("Напиши /start")
+        await message.answer(
+            "❌ Вы не зарегистрированы!\n\n"
+            "Нажмите /start для регистрации.",
+            reply_markup=main_menu()
+        )
         return
     
     premium = user[3][:10] if user[3] else "нет"
@@ -27,7 +31,11 @@ async def profile_callback(callback: types.CallbackQuery):
     try:
         user = get_user(callback.from_user.id)
         if not user:
-            await callback.message.edit_text("Напиши /start")
+            await callback.message.edit_text(
+                "❌ Вы не зарегистрированы!\n\n"
+                "Нажмите /start для регистрации.",
+                reply_markup=main_menu()
+            )
             await callback.answer()
             return
         

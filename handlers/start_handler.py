@@ -16,6 +16,7 @@ async def start_cmd(message: types.Message):
     logger.info(f"Start command from {user_id}: {message.text}")
     args = message.text.split()
     
+    # Если пользователь НЕ зарегистрирован — регистрируем
     if not user:
         create_user(user_id, message.from_user.username or "")
         logger.info(f"New user registered: {user_id}")
@@ -48,9 +49,8 @@ async def start_cmd(message: types.Message):
                 logger.warning(f"Invalid referral ID: {args[1]}")
             except Exception as e:
                 logger.error(f"Error processing referral: {e}")
-    else:
-        logger.info(f"Existing user started bot: {user_id}")
     
+    # ====== ВСЕГДА ПОКАЗЫВАЕМ ПРИВЕТСТВИЕ ======
     await message.answer(
         "🚀 **Флагман Решебник**\n\n"
         "✅ 10 задач в день бесплатно\n"
@@ -59,3 +59,4 @@ async def start_cmd(message: types.Message):
         "Выбери режим:",
         reply_markup=main_menu()
     )
+    logger.info(f"Welcome message sent to {user_id}")
