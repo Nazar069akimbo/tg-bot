@@ -6,8 +6,21 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
+from threading import Thread
+from flask import Flask
 
-# Добавляем текущую директорию в путь
+# ========== FLASK ДЛЯ HEALTHCHECK ==========
+app = Flask(__name__)
+
+@app.route('/')
+@app.route('/healthz')
+def health():
+    return "OK", 200
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
+
+# ========== ОСНОВНОЙ КОД БОТА ==========
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database.db import init_db, init_settings, is_admin, add_admin
@@ -25,7 +38,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN не найден в .env файле!")
+    logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", 6957852385))
@@ -35,71 +48,50 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 async def set_commands():
-    """Установка команд бота (только основные)"""
-    try:
-        commands = [
-            BotCommand(command="start", description="🚀 Запустить бота"),
-            BotCommand(command="stats", description="📊 Статистика"),
-            BotCommand(command="profile", description="👤 Профиль"),
-            BotCommand(command="settings", description="⚙️ Настройки"),
-            BotCommand(command="subscribe", description="💎 Premium"),
-            BotCommand(command="referral", description="👥 Рефералы"),
-            # Убираем leaderboard, help, admin из списка команд
-            # BotCommand(command="leaderboard", description="🏆 Рейтинг"),
-            # BotCommand(command="admin", description="🛡️ Админ-панель"),
-            # BotCommand(command="help", description="❓ Помощь"),
-        ]
-        await bot.set_my_commands(commands)
-        logger.info("✅ Команды установлены")
-    except Exception as e:
-        logger.warning(f"⚠️ Не удалось установить команды: {e}")
+    commands = [
+        BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="stats", description="📊 Статистика"),
+        BotCommand(command="profile", description="👤 Профиль"),
+        BotCommand(command="settings", description="⚙️ Настройки"),
+        BotCommand(command="subscribe", description="💎 Premium"),
+        BotCommand(command="referral", description="👥 Рефералы"),
+    ]
+    await bot.set_my_commands(commands)
 
 async def main():
-    """Главная функция"""
-    try:
-        logger.info("🚀 Запуск бота...")
-        
-        # Инициализация базы данных
-        init_db()
-        init_settings()
-        
-        # Добавление администратора
-        if not is_admin(ADMIN_ID):
-            add_admin(ADMIN_ID)
-            logger.info(f"✅ Администратор {ADMIN_ID} добавлен")
-        
-        # Установка команд
-        await set_commands()
-        
-        # Подключение middleware
-        dp.message.middleware(AuthMiddleware())
-        dp.callback_query.middleware(AuthMiddleware())
-        
-        # Подключение роутеров
-        dp.include_router(start_handler.router)
-        dp.include_router(stats_handler.router)
-        dp.include_router(profile_handler.router)
-        dp.include_router(settings_handler.router)
-        dp.include_router(subscribe_handler.router)
-        dp.include_router(referral_handler.router)
-        dp.include_router(solve_handler.router)
-        dp.include_router(admin_handler.router)
-        dp.include_router(leaderboard_handler.router)
-        dp.include_router(help_handler.router)
-        
-        logger.info("✅ Все модули загружены!")
-        logger.info("✅ Бот готов к работе!")
-        logger.info("🔄 Начинаем поллинг...")
-        
-        await dp.start_polling(bot, skip_updates=True)
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
-        raise
+    logger.info("🚀 Запуск бота...")
+    
+    # Запускаем Flask в отдельном потоке
+    thread = Thread(target=run_flask)
+    thread.daemon = True
+    thread.start()
+    logger.info("✅ Flask сервер запущен на порту 8080")
+    
+    init_db()
+    init_settings()
+    if not is_admin(ADMIN_ID):
+        add_admin(ADMIN_ID)
+    
+    await set_commands()
+    dp.message.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AuthMiddleware())
+    
+    dp.include_router(start_handler.router)
+    dp.include_router(stats_handler.router)
+    dp.include_router(profile_handler.router)
+    dp.include_router(settings_handler.router)
+    dp.include_router(subscribe_handler.router)
+    dp.include_router(referral_handler.router)
+    dp.include_router(solve_handler.router)
+    dp.include_router(admin_handler.router)
+    dp.include_router(leaderboard_handler.router)
+    dp.include_router(help_handler.router)
+    
+    logger.info("✅ Бот готов!")
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("👋 Бот остановлен")
-    except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
