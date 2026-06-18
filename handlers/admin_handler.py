@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from database.db import is_admin, add_admin, cursor, conn, get_setting, set_setting, get_user
 import asyncio
 from datetime import datetime
-from drive_backup import DriveBackup
+from backup_github import GitHubBackup
 
 router = Router()
 ADMIN_CODE = "30121979"
@@ -22,7 +22,7 @@ def admin_kb():
             [InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
-            [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],  # Новая кнопка
+            [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ]
     )
@@ -443,7 +443,7 @@ async def select_user_for_premium(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=premium_days_kb(user_id))
     await callback.answer()
 
-# ============ БЭКАП ============
+# ============ БЭКАП В GITHUB ============
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup(callback: types.CallbackQuery):
@@ -451,35 +451,25 @@ async def a_backup(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Отправляем сообщение о начале
-    await callback.message.edit_text(
-        "⏳ Создаю бэкап базы данных...\n"
-        "Пожалуйста, подождите..."
-    )
+    await callback.message.edit_text("⏳ Создаю бэкап...")
     await callback.answer()
     
     try:
-        # Делаем бэкап
-        drive = DriveBackup()
-        result = drive.backup_db()
+        backup = GitHubBackup()
+        result = backup.backup_db()
         
         if result:
             text = "✅ **БЭКАП УСПЕШНО СОЗДАН!**\n\n"
-            text += "📁 Бэкап загружен в Google Drive\n"
+            text += "📁 Бэкап загружен в GitHub\n"
             text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         else:
             text = "❌ **ОШИБКА СОЗДАНИЯ БЭКАПА!**\n\n"
             text += "Проверьте логи для деталей."
         
-        # Возвращаемся в админ-меню
-        await callback.message.edit_text(
-            text,
-            reply_markup=admin_kb()
-        )
-        
+        await callback.message.edit_text(text, reply_markup=admin_kb())
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка бэкапа: {e}",
+            f"❌ Ошибка: {e}",
             reply_markup=admin_kb()
         )
 
