@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 
-# Путь к БД в папке data
+# Путь к БД
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'repsolver.db')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -20,16 +20,24 @@ def init_db():
         free_requests INTEGER DEFAULT 0,
         total_requests INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
-        mode TEXT DEFAULT 'gdz',
-        referrer_id INTEGER DEFAULT NULL
+        mode TEXT DEFAULT 'gdz'
     )
     ''')
+    
+    # Добавляем колонку referrer_id если её нет
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER DEFAULT NULL")
+        print("✅ Добавлена колонка referrer_id")
+    except sqlite3.OperationalError:
+        print("ℹ️ Колонка referrer_id уже существует")
+    
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
+    
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
