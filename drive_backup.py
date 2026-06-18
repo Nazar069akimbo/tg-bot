@@ -1,72 +1,34 @@
 import os
-import pickle
 import json
 import shutil
 import logging
 from datetime import datetime
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
-import time
 
 logger = logging.getLogger(__name__)
-
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-TOKEN_FILE = 'token.pickle'
 
 class DriveBackup:
     def __init__(self):
         self.service = None
         self.folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
         
-        # Пробуем получить credentials из переменной окружения
-        creds_json = os.getenv('GOOGLE_OAUTH_CREDENTIALS')
+        creds_json = os.getenv('GOOGLE_DRIVE_CREDENTIALS')
         
         if not creds_json:
-            logger.error("❌ GOOGLE_OAUTH_CREDENTIALS не найдены!")
+            logger.error("❌ GOOGLE_DRIVE_CREDENTIALS не найдены!")
             return
         
         try:
-            # Сохраняем временный файл
-            with open('credentials.json', 'w') as f:
-                f.write(creds_json)
-            logger.info("✅ Credentials загружены из переменной окружения")
-            
-            creds = None
-            
-            # Проверяем сохраненный токен
-            if os.path.exists(TOKEN_FILE):
-                with open(TOKEN_FILE, 'rb') as token:
-                    creds = pickle.load(token)
-                logger.info("📂 Найден сохраненный токен")
-            
-            # Если токен невалидный - обновляем
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                logger.info("🔄 Токен обновлен")
-            elif not creds:
-                logger.info("🔐 Требуется авторизация в Google...")
-                logger.info("⚠️ На Render потребуется ручная авторизация через ссылку")
-                
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                # Используем run_console вместо run_local_server
-                creds = flow.run_console()
-                logger.info("✅ Авторизация прошла успешно")
-            
-            # Сохраняем токен
-            with open(TOKEN_FILE, 'wb') as token:
-                pickle.dump(creds, token)
-            
-            self.service = build('drive', 'v3', credentials=creds)
-            logger.info("✅ Google Drive инициализирован (OAuth)")
-            
-            # Удаляем временный файл
-            if os.path.exists('credentials.json'):
-                os.remove('credentials.json')
-            
+            creds_dict = json.loads(creds_json)
+            self.creds = service_account.Credentials.from_service_account_info(
+                creds_dict,
+                scopes=['https://www.googleapis.com/auth/drive.file']
+            )
+            self.service = build('drive', 'v3', credentials=self.creds)
+            logger.info("✅ Google Drive инициализирован (сервисный аккаунт)")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации: {e}")
             self.service = None
