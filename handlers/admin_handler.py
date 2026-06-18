@@ -6,6 +6,7 @@ from database.db import is_admin, add_admin, cursor, conn, get_setting, set_sett
 import asyncio
 from datetime import datetime
 from backup_github import GitHubBackup
+import requests
 
 router = Router()
 ADMIN_CODE = "30121979"
@@ -560,9 +561,32 @@ async def a_backup_delete(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    days = int(callback.data.split("_")[3])
+    # Получаем количество дней из callback
+    parts = callback.data.split("_")
     
-    # Подтверждение
+    # Если это "a_backup_delete_all" - обрабатываем отдельно
+    if len(parts) >= 4 and parts[3] == 'all':
+        await callback.message.edit_text(
+            "⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
+            "Вы собираетесь удалить ВСЕ бэкапы!\n\n"
+            "Это действие НЕЛЬЗЯ будет отменить!",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⚠️ ДА, УДАЛИТЬ ВСЕ", callback_data="confirm_delete_all")],
+                    [InlineKeyboardButton(text="❌ Отмена", callback_data="a_backup_manage")]
+                ]
+            )
+        )
+        await callback.answer()
+        return
+    
+    # Если это "a_backup_delete_1", "a_backup_delete_7" и т.д.
+    try:
+        days = int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
+        return
+    
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_delete_{days}")],
@@ -584,7 +608,34 @@ async def confirm_delete(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    days = int(callback.data.split("_")[2])
+    parts = callback.data.split("_")
+    
+    # Если это "confirm_delete_all"
+    if len(parts) >= 3 and parts[2] == 'all':
+        await callback.message.edit_text("⏳ Удаление всех бэкапов...")
+        await callback.answer()
+        
+        try:
+            backup = GitHubBackup()
+            backup.cleanup_old_backups(days=0)  # 0 = все бэкапы
+            
+            text = "✅ **ВСЕ БЭКАПЫ УДАЛЕНЫ!**\n\n"
+            text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            await callback.message.edit_text(text, reply_markup=admin_kb())
+        except Exception as e:
+            await callback.message.edit_text(
+                f"❌ Ошибка: {e}",
+                reply_markup=backup_manage_kb()
+            )
+        return
+    
+    # Если это "confirm_delete_1", "confirm_delete_7" и т.д.
+    try:
+        days = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
+        return
     
     await callback.message.edit_text("⏳ Удаление бэкапов...")
     await callback.answer()
@@ -610,44 +661,8 @@ async def a_backup_delete_all(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Подтверждение
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⚠️ ДА, УДАЛИТЬ ВСЕ", callback_data="confirm_delete_all")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="a_backup_manage")]
-        ]
-    )
-    
-    await callback.message.edit_text(
-        "⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
-        "Вы собираетесь удалить ВСЕ бэкапы!\n\n"
-        "Это действие НЕЛЬЗЯ будет отменить!",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "confirm_delete_all")
-async def confirm_delete_all(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Нет доступа", show_alert=True)
-        return
-    
-    await callback.message.edit_text("⏳ Удаление всех бэкапов...")
-    await callback.answer()
-    
-    try:
-        backup = GitHubBackup()
-        backup.cleanup_old_backups(days=0)  # 0 = все бэкапы
-        
-        text = "✅ **ВСЕ БЭКАПЫ УДАЛЕНЫ!**\n\n"
-        text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        await callback.message.edit_text(text, reply_markup=admin_kb())
-    except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=backup_manage_kb()
-        )
+    # Просто перенаправляем на общий обработчик
+    await a_backup_delete(callback)
 
 # ============ РАССЫЛКА ============
 
