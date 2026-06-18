@@ -2,7 +2,6 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 
-# Путь к БД
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'repsolver.db')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -10,8 +9,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    """Инициализация базы данных"""
-    # Создаем таблицу users, если её нет
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -25,17 +22,19 @@ def init_db():
     )
     ''')
     
-    # Добавляем колонку referrer_id, если её нет
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER DEFAULT NULL")
-        print("✅ Добавлена колонка referrer_id")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" in str(e):
-            print("ℹ️ Колонка referrer_id уже существует")
-        else:
-            print(f"⚠️ Ошибка при добавлении колонки: {e}")
+    # Таблица для рефералов
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER,
+        joined TEXT,
+        bonus_given INTEGER DEFAULT 0,
+        FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+        FOREIGN KEY (referred_id) REFERENCES users(user_id)
+    )
+    ''')
     
-    # Создаем остальные таблицы
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -57,7 +56,6 @@ def init_db():
     print("✅ База данных инициализирована")
 
 def init_settings():
-    """Инициализация настроек"""
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -75,9 +73,17 @@ def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()
 
-def create_user(user_id, username, referrer_id=None):
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, referrer_id) VALUES (?, ?, ?, ?)",
-                   (user_id, username, datetime.now().isoformat(), referrer_id))
+def create_user(user_id, username):
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined) VALUES (?, ?, ?)",
+                   (user_id, username, datetime.now().isoformat()))
+    conn.commit()
+
+def add_referral(referrer_id, referred_id):
+    cursor.execute("INSERT OR IGNORE INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
+                   (referrer_id, referred_id, datetime.now().isoformat()))
+    conn.commit()
+    # Добавляем бонус рефереру
+    cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
     conn.commit()
 
 def is_admin(user_id):
