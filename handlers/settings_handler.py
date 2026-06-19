@@ -9,7 +9,8 @@ router = Router()
 async def settings_cmd(message: types.Message):
     await message.answer(
         "⚙️ **Настройки**\n\n"
-        "Выбери режим работы:",
+        "Бот всегда работает в режиме ChatGPT.\n"
+        "Просто задавайте любые вопросы!",
         reply_markup=main_menu()
     )
 
@@ -18,27 +19,10 @@ async def settings_callback(callback: types.CallbackQuery):
     try:
         await callback.message.edit_text(
             "⚙️ **Настройки**\n\n"
-            "Выбери режим работы:",
+            "Бот всегда работает в режиме ChatGPT.\n"
+            "Просто задавайте любые вопросы!",
             reply_markup=main_menu()
         )
-        await callback.answer()
-    except Exception as e:
-        await callback.answer()
-
-@router.callback_query(F.data == "mode_gdz")
-async def mode_gdz(callback: types.CallbackQuery):
-    try:
-        set_mode(callback.from_user.id, "gdz")
-        await callback.message.edit_text("✅ Режим: 📚 ГДЗ")
-        await callback.answer()
-    except Exception as e:
-        await callback.answer()
-
-@router.callback_query(F.data == "mode_chat")
-async def mode_chat(callback: types.CallbackQuery):
-    try:
-        set_mode(callback.from_user.id, "chat")
-        await callback.message.edit_text("✅ Режим: 💬 Общение")
         await callback.answer()
     except Exception as e:
         await callback.answer()

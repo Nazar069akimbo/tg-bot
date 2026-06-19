@@ -24,7 +24,7 @@ async def start_cmd(message: types.Message):
                 ref_id = int(args[1])
                 if ref_id != user_id:
                     add_referral(ref_id, user_id)
-                    await message.answer("👤 Вы были приглашены! Реферер получил +5 задач.")
+                    await message.answer("👤 Вы были приглашены! Реферер получил +5 запросов.")
                     logger.info(f"Referral: {ref_id} -> {user_id}")
             except:
                 pass
@@ -37,6 +37,6 @@ async def start_cmd(message: types.Message):
         "✅ 10 запросов в день бесплатно\n"
         "💎 Premium: безлимит\n"
         "👥 Приведи друга → +5 запросов\n\n"
-        "Выбери режим работы:",
+        "Просто напиши свой вопрос!",
         reply_markup=main_menu()
     )

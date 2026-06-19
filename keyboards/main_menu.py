@@ -5,19 +5,15 @@ def main_menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🤖 ChatGPT", callback_data="mode_chat"),
-                InlineKeyboardButton(text="📚 ГДЗ", callback_data="mode_gdz")
+                InlineKeyboardButton(text="🧠 Задать вопрос", callback_data="ask_question"),
+                InlineKeyboardButton(text="👤 Профиль", callback_data="profile")
             ],
             [
-                InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), 
-                InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
-            ],
-            [
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings"), 
+                InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
                 InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")
             ],
             [
-                InlineKeyboardButton(text="💎 Premium", callback_data="premium"), 
+                InlineKeyboardButton(text="💎 Premium", callback_data="premium"),
                 InlineKeyboardButton(text="❓ Помощь", callback_data="help")
             ],
             [

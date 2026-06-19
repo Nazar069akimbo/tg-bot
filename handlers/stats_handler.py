@@ -17,13 +17,11 @@ async def stats_cmd(message: types.Message):
     ok, remaining = can_request(message.from_user.id)
     premium = is_premium(message.from_user.id)
     status = "💎 Premium" if premium else "🔴 Бесплатный"
-    mode = "📚 ГДЗ" if user[7] == "gdz" else "💬 Общение"
     
     text = f"📊 **Статистика**\n\n"
-    text += f"📝 Решено: {user[5] or 0}\n"
+    text += f"📝 Запросов сделано: {user[5] or 0}\n"
     text += f"🎯 Осталось: {remaining}\n"
-    text += f"💎 Статус: {status}\n"
-    text += f"🎯 Режим: {mode}"
+    text += f"💎 Статус: {status}"
     
     await message.answer(text)
 
@@ -42,13 +40,11 @@ async def stats_callback(callback: types.CallbackQuery):
         ok, remaining = can_request(callback.from_user.id)
         premium = is_premium(callback.from_user.id)
         status = "💎 Premium" if premium else "🔴 Бесплатный"
-        mode = "📚 ГДЗ" if user[7] == "gdz" else "💬 Общение"
         
         text = f"📊 **Статистика**\n\n"
-        text += f"📝 Решено: {user[5] or 0}\n"
+        text += f"📝 Запросов сделано: {user[5] or 0}\n"
         text += f"🎯 Осталось: {remaining}\n"
-        text += f"💎 Статус: {status}\n"
-        text += f"🎯 Режим: {mode}"
+        text += f"💎 Статус: {status}"
         
         await callback.message.edit_text(text)
         await callback.answer()

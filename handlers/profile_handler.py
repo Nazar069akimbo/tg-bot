@@ -16,7 +16,6 @@ async def profile_cmd(message: types.Message):
         )
         return
     
-    # Считаем рефералов
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
     referrals_count = cursor.fetchone()[0]
     
@@ -24,10 +23,9 @@ async def profile_cmd(message: types.Message):
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
-    text += f"📊 Решено: {user[5] or 0}\n"
+    text += f"📊 Запросов сделано: {user[5] or 0}\n"
     text += f"👥 Приглашено: {referrals_count}\n"
-    text += f"💎 Premium до: {premium}\n"
-    text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 ChatGPT'}"
+    text += f"💎 Premium до: {premium}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -51,10 +49,9 @@ async def profile_callback(callback: types.CallbackQuery):
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"
-        text += f"📊 Решено: {user[5] or 0}\n"
+        text += f"📊 Запросов сделано: {user[5] or 0}\n"
         text += f"👥 Приглашено: {referrals_count}\n"
-        text += f"💎 Premium до: {premium}\n"
-        text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 ChatGPT'}"
+        text += f"💎 Premium до: {premium}"
         
         await callback.message.edit_text(text, reply_markup=main_menu())
         await callback.answer()
