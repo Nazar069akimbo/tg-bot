@@ -5,8 +5,8 @@ def main_menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📚 ГДЗ", callback_data="mode_gdz"), 
-                InlineKeyboardButton(text="💬 Общение", callback_data="mode_chat")
+                InlineKeyboardButton(text="🤖 ChatGPT", callback_data="mode_chat"),
+                InlineKeyboardButton(text="📚 ГДЗ", callback_data="mode_gdz")
             ],
             [
                 InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), 
