@@ -1,5 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import cursor, get_user
 from keyboards import main_menu
 import logging
@@ -34,6 +35,7 @@ async def referral_cmd(message: types.Message):
     """, (user_id,))
     referrals = cursor.fetchall()
     
+    # Используем правильное имя бота
     link = f"https://t.me/VertexAIBot?start={user_id}"
     
     text = f"👥 **Реферальная система**\n\n"
@@ -138,3 +140,17 @@ async def share_referral(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in share_referral: {e}")
         await callback.answer()
+
+@router.callback_query(F.data == "back_to_main")
+async def back_to_main_callback(callback: types.CallbackQuery):
+    from keyboards import main_menu
+    await callback.message.edit_text(
+        "🤖 **Vertex AI**\n\n"
+        "🧠 Искусственный интеллект в твоем Telegram!\n\n"
+        "✅ 10 запросов в день бесплатно\n"
+        "💎 Premium: безлимит\n"
+        "👥 Приведи друга → +5 запросов\n\n"
+        "Просто напиши свой вопрос!",
+        reply_markup=main_menu()
+    )
+    await callback.answer()
