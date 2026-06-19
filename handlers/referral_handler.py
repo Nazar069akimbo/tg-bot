@@ -1,6 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import cursor, get_user
+from keyboards import main_menu
 import logging
 
 router = Router()
@@ -12,7 +13,10 @@ async def referral_cmd(message: types.Message):
     
     user = get_user(user_id)
     if not user:
-        await message.answer("👋 Напишите /start для регистрации")
+        await message.answer(
+            "👋 Напишите /start для регистрации",
+            reply_markup=main_menu()
+        )
         return
     
     # Считаем количество приглашенных
@@ -49,19 +53,26 @@ async def referral_cmd(message: types.Message):
         text += "📋 **Приглашенных пока нет**\n"
         text += "Поделись ссылкой с друзьями!"
     
-    await message.answer(text, reply_markup=inline_kb())
-
-def inline_kb():
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться ссылкой", callback_data="share_referral")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
+    
+    await message.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data == "referral")
 async def referral_callback(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
+        
+        user = get_user(user_id)
+        if not user:
+            await callback.message.edit_text(
+                "👋 Напишите /start для регистрации",
+                reply_markup=main_menu()
+            )
+            await callback.answer()
+            return
         
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         count = cursor.fetchone()[0]
@@ -95,7 +106,12 @@ async def referral_callback(callback: types.CallbackQuery):
             text += "📋 **Приглашенных пока нет**\n"
             text += "Поделись ссылкой с друзьями!"
         
-        await callback.message.edit_text(text, reply_markup=inline_kb())
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Поделиться ссылкой", callback_data="share_referral")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ])
+        
+        await callback.message.edit_text(text, reply_markup=kb)
         await callback.answer()
     except Exception as e:
         logger.error(f"Error in referral callback: {e}")
