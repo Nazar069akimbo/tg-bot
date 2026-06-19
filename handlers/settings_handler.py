@@ -9,8 +9,15 @@ router = Router()
 async def settings_cmd(message: types.Message):
     await message.answer(
         "⚙️ **Настройки**\n\n"
-        "Бот всегда работает в режиме ChatGPT.\n"
-        "Просто задавайте любые вопросы!",
+        "🤖 Бот всегда работает в режиме ChatGPT.\n"
+        "Просто задавайте любые вопросы!\n\n"
+        "📌 Доступные команды:\n"
+        "/start — Главное меню\n"
+        "/profile — Профиль\n"
+        "/stats — Статистика\n"
+        "/subscribe — Premium\n"
+        "/referral — Рефералы\n"
+        "/leaderboard — Рейтинг",
         reply_markup=main_menu()
     )
 
@@ -19,8 +26,15 @@ async def settings_callback(callback: types.CallbackQuery):
     try:
         await callback.message.edit_text(
             "⚙️ **Настройки**\n\n"
-            "Бот всегда работает в режиме ChatGPT.\n"
-            "Просто задавайте любые вопросы!",
+            "🤖 Бот всегда работает в режиме ChatGPT.\n"
+            "Просто задавайте любые вопросы!\n\n"
+            "📌 Доступные команды:\n"
+            "/start — Главное меню\n"
+            "/profile — Профиль\n"
+            "/stats — Статистика\n"
+            "/subscribe — Premium\n"
+            "/referral — Рефералы\n"
+            "/leaderboard — Рейтинг",
             reply_markup=main_menu()
         )
         await callback.answer()
