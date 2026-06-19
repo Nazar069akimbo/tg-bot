@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user
+from database.db import get_user, cursor
 from keyboards import main_menu
 
 router = Router()
@@ -16,13 +16,18 @@ async def profile_cmd(message: types.Message):
         )
         return
     
+    # Считаем рефералов
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
+    referrals_count = cursor.fetchone()[0]
+    
     premium = user[3][:10] if user[3] else "нет"
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
     text += f"📊 Решено: {user[5] or 0}\n"
+    text += f"👥 Приглашено: {referrals_count}\n"
     text += f"💎 Premium до: {premium}\n"
-    text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 Общение'}"
+    text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 ChatGPT'}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -39,13 +44,17 @@ async def profile_callback(callback: types.CallbackQuery):
             await callback.answer()
             return
         
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (callback.from_user.id,))
+        referrals_count = cursor.fetchone()[0]
+        
         premium = user[3][:10] if user[3] else "нет"
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"
         text += f"📊 Решено: {user[5] or 0}\n"
+        text += f"👥 Приглашено: {referrals_count}\n"
         text += f"💎 Premium до: {premium}\n"
-        text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 Общение'}"
+        text += f"🎯 Режим: {'📚 ГДЗ' if user[7] == 'gdz' else '💬 ChatGPT'}"
         
         await callback.message.edit_text(text, reply_markup=main_menu())
         await callback.answer()

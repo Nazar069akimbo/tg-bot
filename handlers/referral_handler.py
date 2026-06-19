@@ -10,35 +10,46 @@ logger = logging.getLogger(__name__)
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
     
-    # Проверяем, существует ли пользователь
     user = get_user(user_id)
     if not user:
         await message.answer("👋 Напишите /start для регистрации")
         return
     
-    # Генерируем реферальную ссылку
-    link = f"https://t.me/ReshebnikPro_bot?start={user_id}"
+    # Считаем количество приглашенных
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+    count = cursor.fetchone()[0]
     
-    # Получаем количество рефералов (через приглашенных пользователей)
-    cursor.execute("SELECT COUNT(*) FROM users WHERE username LIKE ?", (f"%{user_id}%",))
-    # Простой подсчет - можно улучшить, добавив поле referrer_id в таблицу users
-    # Пока просто показываем ссылку
+    # Получаем список приглашенных
+    cursor.execute("""
+        SELECT u.user_id, u.username, r.joined 
+        FROM referrals r 
+        JOIN users u ON r.referred_id = u.user_id 
+        WHERE r.referrer_id = ? 
+        ORDER BY r.joined DESC 
+        LIMIT 10
+    """, (user_id,))
+    referrals = cursor.fetchall()
     
-    await message.answer(
-        f"👥 **Реферальная система**\n\n"
-        f"🔗 Ваша ссылка:\n"
-        f"`{link}`\n\n"
-        f"📋 **Как это работает:**\n"
-        f"• Перешлите эту ссылку другу\n"
-        f"• Когда друг перейдет по ссылке и запустит бота\n"
-        f"• Вы получите **+5 бесплатных задач**!\n\n"
-        f"💰 **Бонусы:**\n"
-        f"• За каждого друга: +5 задач\n"
-        f"• Безлимит рефералов\n"
-        f"• Можно приглашать сколько угодно!\n\n"
-        f"📤 Просто скопируй ссылку и отправь друзьям!",
-        reply_markup=inline_kb()
-    )
+    link = f"https://t.me/VertexAIBot?start={user_id}"
+    
+    text = f"👥 **Реферальная система**\n\n"
+    text += f"📊 Приглашено: {count}\n"
+    text += f"💰 Бонус: +5 запросов за каждого\n\n"
+    text += f"🔗 Ваша ссылка:\n`{link}`\n\n"
+    
+    if referrals:
+        text += "📋 **Приглашенные:**\n"
+        for i, ref in enumerate(referrals[:5], 1):
+            name = ref[1] or f"User_{ref[0]}"
+            date = ref[2][:10] if ref[2] else "неизвестно"
+            text += f"{i}. {name} — {date}\n"
+        if len(referrals) > 5:
+            text += f"\n... и еще {len(referrals) - 5} человек"
+    else:
+        text += "📋 **Приглашенных пока нет**\n"
+        text += "Поделись ссылкой с друзьями!"
+    
+    await message.answer(text, reply_markup=inline_kb())
 
 def inline_kb():
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -51,23 +62,40 @@ def inline_kb():
 async def referral_callback(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        link = f"https://t.me/ReshebnikPro_bot?start={user_id}"
         
-        await callback.message.edit_text(
-            f"👥 **Реферальная система**\n\n"
-            f"🔗 Ваша ссылка:\n"
-            f"`{link}`\n\n"
-            f"📋 **Как это работает:**\n"
-            f"• Перешлите эту ссылку другу\n"
-            f"• Когда друг перейдет по ссылке и запустит бота\n"
-            f"• Вы получите **+5 бесплатных задач**!\n\n"
-            f"💰 **Бонусы:**\n"
-            f"• За каждого друга: +5 задач\n"
-            f"• Безлимит рефералов\n"
-            f"• Можно приглашать сколько угодно!\n\n"
-            f"📤 Просто скопируй ссылку и отправь друзьям!",
-            reply_markup=inline_kb()
-        )
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+        count = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT u.user_id, u.username, r.joined 
+            FROM referrals r 
+            JOIN users u ON r.referred_id = u.user_id 
+            WHERE r.referrer_id = ? 
+            ORDER BY r.joined DESC 
+            LIMIT 10
+        """, (user_id,))
+        referrals = cursor.fetchall()
+        
+        link = f"https://t.me/VertexAIBot?start={user_id}"
+        
+        text = f"👥 **Реферальная система**\n\n"
+        text += f"📊 Приглашено: {count}\n"
+        text += f"💰 Бонус: +5 запросов за каждого\n\n"
+        text += f"🔗 Ваша ссылка:\n`{link}`\n\n"
+        
+        if referrals:
+            text += "📋 **Приглашенные:**\n"
+            for i, ref in enumerate(referrals[:5], 1):
+                name = ref[1] or f"User_{ref[0]}"
+                date = ref[2][:10] if ref[2] else "неизвестно"
+                text += f"{i}. {name} — {date}\n"
+            if len(referrals) > 5:
+                text += f"\n... и еще {len(referrals) - 5} человек"
+        else:
+            text += "📋 **Приглашенных пока нет**\n"
+            text += "Поделись ссылкой с друзьями!"
+        
+        await callback.message.edit_text(text, reply_markup=inline_kb())
         await callback.answer()
     except Exception as e:
         logger.error(f"Error in referral callback: {e}")
@@ -77,13 +105,10 @@ async def referral_callback(callback: types.CallbackQuery):
 async def share_referral(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        link = f"https://t.me/ReshebnikPro_bot?start={user_id}"
-        
-        # Создаем кнопку для шаринга
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        link = f"https://t.me/VertexAIBot?start={user_id}"
         
         share_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=Привет! Использую крутого бота для решения задач! Присоединяйся! 🚀")],
+            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="referral")]
         ])
         
