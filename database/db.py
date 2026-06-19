@@ -9,6 +9,7 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
+    # Таблица users
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -18,22 +19,34 @@ def init_db():
         free_requests INTEGER DEFAULT 0,
         total_requests INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
-        mode TEXT DEFAULT 'gdz'
+        mode TEXT DEFAULT 'chat'
     )
     ''')
     
-    # Таблица для рефералов
+    # Таблица referrals — ПЕРЕСОЗДАЕМ ЕСЛИ НЕТ
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
         joined TEXT,
-        bonus_given INTEGER DEFAULT 0,
-        FOREIGN KEY (referrer_id) REFERENCES users(user_id),
-        FOREIGN KEY (referred_id) REFERENCES users(user_id)
+        bonus_given INTEGER DEFAULT 0
     )
     ''')
+    
+    # Проверяем, есть ли таблица, если нет — создаем
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
+    if not cursor.fetchone():
+        cursor.execute('''
+        CREATE TABLE referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER,
+            referred_id INTEGER,
+            joined TEXT,
+            bonus_given INTEGER DEFAULT 0
+        )
+        ''')
+        print("✅ Таблица referrals создана")
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
@@ -79,12 +92,16 @@ def create_user(user_id, username):
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
-    cursor.execute("INSERT OR IGNORE INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
-                   (referrer_id, referred_id, datetime.now().isoformat()))
-    conn.commit()
-    # Добавляем бонус рефереру
-    cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
-    conn.commit()
+    try:
+        cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
+                       (referrer_id, referred_id, datetime.now().isoformat()))
+        conn.commit()
+        cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error adding referral: {e}")
+        return False
 
 def is_admin(user_id):
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
@@ -126,7 +143,7 @@ def set_mode(user_id, mode):
 
 def get_mode(user_id):
     user = get_user(user_id)
-    return user[7] if user and user[7] else "gdz"
+    return user[7] if user and user[7] else "chat"
 
 def get_setting(key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))

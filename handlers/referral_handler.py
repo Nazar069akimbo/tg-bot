@@ -1,12 +1,17 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database.db import cursor, get_user
+from database.db import cursor, get_user, conn
 from keyboards import main_menu
 import logging
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# Проверяем, существует ли таблица referrals
+def check_referrals_table():
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
+    return cursor.fetchone() is not None
 
 @router.message(Command("referral"))
 async def referral_cmd(message: types.Message):
@@ -16,6 +21,14 @@ async def referral_cmd(message: types.Message):
     if not user:
         await message.answer(
             "👋 Напишите /start для регистрации",
+            reply_markup=main_menu()
+        )
+        return
+    
+    # Проверяем таблицу
+    if not check_referrals_table():
+        await message.answer(
+            "⚠️ Система рефералов временно недоступна. Попробуйте позже.",
             reply_markup=main_menu()
         )
         return
@@ -35,7 +48,6 @@ async def referral_cmd(message: types.Message):
     """, (user_id,))
     referrals = cursor.fetchall()
     
-    # Используем правильное имя бота
     link = f"https://t.me/VertexAIBot?start={user_id}"
     
     text = f"👥 **Реферальная система**\n\n"
@@ -71,6 +83,14 @@ async def referral_callback(callback: types.CallbackQuery):
         if not user:
             await callback.message.edit_text(
                 "👋 Напишите /start для регистрации",
+                reply_markup=main_menu()
+            )
+            await callback.answer()
+            return
+        
+        if not check_referrals_table():
+            await callback.message.edit_text(
+                "⚠️ Система рефералов временно недоступна.",
                 reply_markup=main_menu()
             )
             await callback.answer()
