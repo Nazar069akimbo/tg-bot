@@ -23,9 +23,10 @@ def init_db():
     )
     ''')
     
-    # Таблица referrals — ПЕРЕСОЗДАЕМ ЕСЛИ НЕТ
+    # ПРИНУДИТЕЛЬНО СОЗДАЕМ ТАБЛИЦУ referrals
+    cursor.execute('DROP TABLE IF EXISTS referrals')
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -33,20 +34,7 @@ def init_db():
         bonus_given INTEGER DEFAULT 0
     )
     ''')
-    
-    # Проверяем, есть ли таблица, если нет — создаем
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-    if not cursor.fetchone():
-        cursor.execute('''
-        CREATE TABLE referrals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrer_id INTEGER,
-            referred_id INTEGER,
-            joined TEXT,
-            bonus_given INTEGER DEFAULT 0
-        )
-        ''')
-        print("✅ Таблица referrals создана")
+    print("✅ Таблица referrals создана заново")
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
