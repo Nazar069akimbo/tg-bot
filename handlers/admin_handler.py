@@ -20,6 +20,7 @@ def admin_kb():
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats")],
             [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="a_users_list")],
+            [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="a_search_user")],
             [InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
@@ -70,6 +71,7 @@ def user_actions_kb(user_id):
             [InlineKeyboardButton(text="🟢 Разблокировать", callback_data=f"unblock_user_{user_id}")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data=f"give_premium_user_{user_id}")],
             [InlineKeyboardButton(text="📊 Статистика пользователя", callback_data=f"user_stats_{user_id}")],
+            [InlineKeyboardButton(text="✏️ Отправить сообщение", callback_data=f"send_message_{user_id}")],
             [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="a_users_list")]
         ]
     )
@@ -368,7 +370,7 @@ async def premium_days_set(callback: types.CallbackQuery):
         await callback.bot.send_message(
             user_id,
             f"🎉 Администратор выдал вам Premium на {days} дней!\n\n"
-            f"Теперь у вас безлимит задач и 3000 символов на запрос."
+            f"Теперь у вас безлимит запросов и 3000 символов на запрос."
         )
     except:
         pass
@@ -415,7 +417,7 @@ async def a_give_premium_list(callback: types.CallbackQuery, page=0):
     else:
         for u in users:
             name = u[1] or "без имени"
-            text += f"🆔 `{u[0]}` — {name} — {u[2]} задач\n"
+            text += f"🆔 `{u[0]}` — {name} — {u[2]} запросов\n"
     
     kb = users_list_kb(users, page, total_pages)
     try:
@@ -456,6 +458,50 @@ async def select_user_for_premium(callback: types.CallbackQuery):
     except TelegramBadRequest:
         await callback.message.delete()
         await callback.message.answer(text, reply_markup=premium_days_kb(user_id))
+    await callback.answer()
+
+# ============ ПОИСК ПОЛЬЗОВАТЕЛЯ ============
+
+@router.callback_query(F.data == "a_search_user")
+async def a_search_user(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    user_pages[callback.from_user.id] = {"state": "waiting_user_search"}
+    
+    await callback.message.edit_text(
+        "🔍 **Поиск пользователя**\n\n"
+        "Введи ID, username или часть имени пользователя.\n\n"
+        "Примеры:\n"
+        "• `6957852385` — по ID\n"
+        "• `@username` — по username\n"
+        "• `Назар` — по части имени\n\n"
+        "⏹ Отмена: /cancel"
+    )
+    await callback.answer()
+
+# ============ ОБЩЕНИЕ С ПОЛЬЗОВАТЕЛЕМ ============
+
+@router.callback_query(F.data.startswith("send_message_"))
+async def send_message_to_user(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[2])
+    
+    user_pages[callback.from_user.id] = {
+        "state": "waiting_admin_message",
+        "target_user": user_id
+    }
+    
+    await callback.message.edit_text(
+        f"✏️ **Отправить сообщение пользователю**\n\n"
+        f"🆔 ID: `{user_id}`\n\n"
+        f"Напиши текст, который хочешь отправить.\n\n"
+        f"⏹ Отмена: /cancel"
+    )
     await callback.answer()
 
 # ============ БЭКАП В GITHUB ============
@@ -561,10 +607,8 @@ async def a_backup_delete(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Получаем количество дней из callback
     parts = callback.data.split("_")
     
-    # Если это "a_backup_delete_all" - обрабатываем отдельно
     if len(parts) >= 4 and parts[3] == 'all':
         await callback.message.edit_text(
             "⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
@@ -580,7 +624,6 @@ async def a_backup_delete(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Если это "a_backup_delete_1", "a_backup_delete_7" и т.д.
     try:
         days = int(parts[3])
     except (IndexError, ValueError):
@@ -610,14 +653,13 @@ async def confirm_delete(callback: types.CallbackQuery):
     
     parts = callback.data.split("_")
     
-    # Если это "confirm_delete_all"
     if len(parts) >= 3 and parts[2] == 'all':
         await callback.message.edit_text("⏳ Удаление всех бэкапов...")
         await callback.answer()
         
         try:
             backup = GitHubBackup()
-            backup.cleanup_old_backups(days=0)  # 0 = все бэкапы
+            backup.cleanup_old_backups(days=0)
             
             text = "✅ **ВСЕ БЭКАПЫ УДАЛЕНЫ!**\n\n"
             text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -630,7 +672,6 @@ async def confirm_delete(callback: types.CallbackQuery):
             )
         return
     
-    # Если это "confirm_delete_1", "confirm_delete_7" и т.д.
     try:
         days = int(parts[2])
     except (IndexError, ValueError):
@@ -661,7 +702,6 @@ async def a_backup_delete_all(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Просто перенаправляем на общий обработчик
     await a_backup_delete(callback)
 
 # ============ РАССЫЛКА ============
@@ -685,54 +725,123 @@ async def a_broadcast(callback: types.CallbackQuery):
         await callback.message.answer(text)
     await callback.answer()
 
+# ============ ОБРАБОТЧИКИ СООБЩЕНИЙ ============
+
 @router.message(F.text)
-async def handle_broadcast(message: types.Message):
+async def handle_messages(message: types.Message):
     if not is_admin(message.from_user.id):
         return
     
     state = user_pages.get(message.from_user.id, {})
-    if state.get("state") != "waiting_broadcast":
+    
+    # Поиск пользователя
+    if state.get("state") == "waiting_user_search":
+        if message.text == "/cancel":
+            user_pages.pop(message.from_user.id, None)
+            await message.answer("✅ Поиск отменен", reply_markup=admin_kb())
+            return
+        
+        query = message.text.strip()
+        
+        try:
+            if query.isdigit():
+                cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (int(query),))
+            elif query.startswith("@"):
+                cursor.execute("SELECT user_id, username FROM users WHERE username LIKE ?", (query[1:],))
+            else:
+                cursor.execute("SELECT user_id, username FROM users WHERE username LIKE ? OR CAST(user_id AS TEXT) LIKE ?", 
+                               (f"%{query}%", f"%{query}%"))
+            
+            user = cursor.fetchone()
+            
+            if not user:
+                await message.answer(
+                    f"❌ Пользователь не найден: `{query}`\n\n"
+                    "Попробуй еще раз или отправь /cancel",
+                    reply_markup=admin_kb()
+                )
+                return
+            
+            user_id, username = user
+            await show_user_info(message, user_id)
+            user_pages.pop(message.from_user.id, None)
+            
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+        
         return
     
-    if message.text == "/cancel":
-        user_pages.pop(message.from_user.id, None)
-        await message.answer("✅ Рассылка отменена", reply_markup=admin_kb())
+    # Отправка сообщения пользователю
+    if state.get("state") == "waiting_admin_message":
+        if message.text == "/cancel":
+            user_pages.pop(message.from_user.id, None)
+            await message.answer("✅ Отменено", reply_markup=admin_kb())
+            return
+        
+        target_user = state.get("target_user")
+        if not target_user:
+            await message.answer("❌ Ошибка: пользователь не найден")
+            user_pages.pop(message.from_user.id, None)
+            return
+        
+        try:
+            await message.bot.send_message(
+                target_user,
+                f"📩 **Сообщение от администратора:**\n\n{message.text}"
+            )
+            await message.answer(
+                f"✅ Сообщение отправлено пользователю `{target_user}`",
+                reply_markup=admin_kb()
+            )
+            user_pages.pop(message.from_user.id, None)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+        
         return
     
-    if message.text.startswith("/"):
-        await message.answer("❌ Нельзя использовать команды в тексте рассылки")
+    # Рассылка
+    if state.get("state") == "waiting_broadcast":
+        if message.text == "/cancel":
+            user_pages.pop(message.from_user.id, None)
+            await message.answer("✅ Рассылка отменена", reply_markup=admin_kb())
+            return
+        
+        if message.text.startswith("/"):
+            await message.answer("❌ Нельзя использовать команды в тексте рассылки")
+            return
+        
+        broadcast_text = message.text
+        cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+        users = cursor.fetchall()
+        
+        if not users:
+            await message.answer("❌ Нет активных пользователей")
+            user_pages.pop(message.from_user.id, None)
+            return
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast")],
+                [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")]
+            ]
+        )
+        
+        await message.answer(
+            f"📢 **ПОДТВЕРЖДЕНИЕ РАССЫЛКИ**\n\n"
+            f"👥 Получателей: {len(users)}\n\n"
+            f"📝 Текст:\n"
+            f"`{broadcast_text[:300]}{'...' if len(broadcast_text) > 300 else ''}`\n\n"
+            f"Отправить?",
+            reply_markup=kb
+        )
+        
+        user_pages[message.from_user.id] = {
+            "state": "confirm_broadcast", 
+            "text": broadcast_text,
+            "users": users
+        }
+        
         return
-    
-    broadcast_text = message.text
-    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-    users = cursor.fetchall()
-    
-    if not users:
-        await message.answer("❌ Нет активных пользователей")
-        user_pages.pop(message.from_user.id, None)
-        return
-    
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Отправить всем", callback_data=f"confirm_broadcast")],
-            [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")]
-        ]
-    )
-    
-    await message.answer(
-        f"📢 **ПОДТВЕРЖДЕНИЕ РАССЫЛКИ**\n\n"
-        f"👥 Получателей: {len(users)}\n\n"
-        f"📝 Текст:\n"
-        f"`{broadcast_text[:300]}{'...' if len(broadcast_text) > 300 else ''}`\n\n"
-        f"Отправить?",
-        reply_markup=kb
-    )
-    
-    user_pages[message.from_user.id] = {
-        "state": "confirm_broadcast", 
-        "text": broadcast_text,
-        "users": users
-    }
 
 @router.callback_query(F.data == "cancel_broadcast")
 async def cancel_broadcast(callback: types.CallbackQuery):
@@ -905,11 +1014,12 @@ async def back_to_main(callback: types.CallbackQuery):
     user_pages.pop(callback.from_user.id, None)
     
     from keyboards import main_menu
-    text = "🚀 **Флагман Решебник**\n\n"
-    text += "✅ 10 задач в день бесплатно\n"
+    text = "🤖 **Vertex AI**\n\n"
+    text += "🧠 Искусственный интеллект в твоем Telegram!\n\n"
+    text += "✅ 10 запросов в день бесплатно\n"
     text += "💎 Premium: безлимит\n"
-    text += "👥 Приведи друга → +5 задач\n\n"
-    text += "Выбери режим:"
+    text += "👥 Приведи друга → +5 запросов\n\n"
+    text += "Просто напиши свой вопрос!"
     
     try:
         await callback.message.edit_text(text, reply_markup=main_menu())
