@@ -7,6 +7,7 @@ import asyncio
 from datetime import datetime
 from backup_github import GitHubBackup
 import requests
+import os
 
 router = Router()
 ADMIN_CODE = "30121979"
@@ -21,6 +22,7 @@ def admin_kb():
             [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats")],
             [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="a_users_list")],
             [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="a_search_user")],
+            [InlineKeyboardButton(text="📩 Входящие обращения", callback_data="a_messages")],
             [InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
@@ -159,6 +161,8 @@ async def back_to_admin(callback: types.CallbackQuery):
     await callback.message.answer("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
     await callback.answer()
 
+# ============ СТАТИСТИКА ============
+
 @router.callback_query(F.data == "a_stats")
 async def a_stats(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -175,12 +179,15 @@ async def a_stats(callback: types.CallbackQuery):
     blocked = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM admins")
     admins = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM messages_to_admin WHERE status = 'new'")
+    new_messages = cursor.fetchone()[0]
     
     text = f"📊 **СТАТИСТИКА**\n\n"
     text += f"👥 Всего пользователей: {total}\n"
     text += f"💎 Premium: {premium}\n"
     text += f"🔴 Заблокировано: {blocked}\n"
     text += f"📝 Всего запросов: {req}\n"
+    text += f"📩 Новых обращений: {new_messages}\n"
     text += f"🛡️ Администраторов: {admins}"
     
     try:
@@ -189,6 +196,8 @@ async def a_stats(callback: types.CallbackQuery):
         await callback.message.delete()
         await callback.message.answer(text, reply_markup=admin_kb())
     await callback.answer()
+
+# ============ УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ============
 
 @router.callback_query(F.data == "a_users_list")
 async def a_users_list(callback: types.CallbackQuery, page=0):
@@ -220,7 +229,7 @@ async def a_users_list(callback: types.CallbackQuery, page=0):
             premium = "💎" if u[4] and u[4] > datetime.now().isoformat() else "🔴"
             name = u[1] or "без имени"
             text += f"🆔 `{u[0]}` — {name}\n"
-            text += f"   {status} | {premium} Задач: {u[2]}\n"
+            text += f"   {status} | {premium} Запросов: {u[2]}\n"
             text += f"   👉 Нажмите /user_{u[0]}\n\n"
     
     kb = user_management_kb(page, total_pages)
@@ -278,13 +287,13 @@ async def show_user_info(target, user_id):
     premium_status = "✅ Активен" if u[2] and u[2] > datetime.now().isoformat() else "❌ Не активен"
     premium_until = u[2][:10] if u[2] else "Нет"
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
-    mode = "📚 ГДЗ" if u[6] == "gdz" else "💬 Общение"
+    mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
     
     text = f"👤 **ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ**\n\n"
     text += f"🆔 ID: `{user_id}`\n"
     text += f"👤 Имя: {u[0] or 'без имени'}\n"
     text += f"📆 Регистрация: {u[1][:10] if u[1] else 'Нет'}\n"
-    text += f"📊 Решено задач: {u[4] or 0}\n"
+    text += f"📊 Запросов: {u[4] or 0}\n"
     text += f"🎯 Режим: {mode}\n"
     text += f"💎 Premium: {premium_status}\n"
     text += f"📅 Premium до: {premium_until}\n"
@@ -300,6 +309,8 @@ async def show_user_info(target, user_id):
         except TelegramBadRequest:
             await target.message.delete()
             await target.message.answer(text, reply_markup=kb)
+
+# ============ БЛОКИРОВКА/РАЗБЛОКИРОВКА ============
 
 @router.callback_query(F.data.startswith("block_user_"))
 async def block_user(callback: types.CallbackQuery):
@@ -331,6 +342,8 @@ async def unblock_user(callback: types.CallbackQuery):
     
     await callback.answer(f"✅ Пользователь {user_id} разблокирован", show_alert=True)
     await show_user_info(callback, user_id)
+
+# ============ ВЫДАЧА PREMIUM ============
 
 @router.callback_query(F.data.startswith("give_premium_user_"))
 async def give_premium_user(callback: types.CallbackQuery):
@@ -481,6 +494,38 @@ async def a_search_user(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+# ============ ВХОДЯЩИЕ ОБРАЩЕНИЯ ============
+
+@router.callback_query(F.data == "a_messages")
+async def a_messages(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
+    messages = cursor.fetchall()
+    
+    if not messages:
+        await callback.message.edit_text(
+            "📩 **Входящие обращения**\n\n"
+            "Новых обращений нет.",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
+        return
+    
+    text = "📩 **Входящие обращения**\n\n"
+    for msg in messages:
+        status = "🆕" if msg[5] == "new" else "✅"
+        name = msg[2] or f"User_{msg[1]}"
+        text += f"{status} `{msg[1]}` — {name}\n"
+        text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
+        text += f"🕐 {msg[4][:16]}\n"
+        text += f"👉 /reply_{msg[1]}\n\n"
+    
+    await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
+    await callback.answer()
+
 # ============ ОБЩЕНИЕ С ПОЛЬЗОВАТЕЛЕМ ============
 
 @router.callback_query(F.data.startswith("send_message_"))
@@ -503,6 +548,35 @@ async def send_message_to_user(callback: types.CallbackQuery):
         f"⏹ Отмена: /cancel"
     )
     await callback.answer()
+
+@router.message(Command("reply"))
+async def reply_to_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("❌ Использование: /reply_123 Текст ответа")
+        return
+    
+    try:
+        user_id = int(parts[0].replace("/reply_", ""))
+        reply_text = " ".join(parts[1:])
+        
+        await message.bot.send_message(
+            user_id,
+            f"📩 **Ответ от администратора:**\n\n{reply_text}"
+        )
+        
+        cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", (user_id,))
+        conn.commit()
+        
+        await message.answer(f"✅ Ответ отправлен пользователю `{user_id}`")
+    except ValueError:
+        await message.answer("❌ Неверный ID пользователя")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 # ============ БЭКАП В GITHUB ============
 
@@ -1008,6 +1082,8 @@ async def s_set(callback: types.CallbackQuery):
     set_setting(key, value)
     await callback.answer(f"✅ Установлено: {value}", show_alert=True)
     await a_limits(callback)
+
+# ============ НАЗАД В ГЛАВНОЕ МЕНЮ ============
 
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
