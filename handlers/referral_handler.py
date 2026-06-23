@@ -20,7 +20,7 @@ async def referral_cmd(message: types.Message):
         )
         return
     
-    link = f"https://t.me/VertexAIBot?start={user_id}"
+    link = f"https://t.me/Vertex1bot?start={user_id}"
     
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
@@ -78,7 +78,7 @@ async def referral_callback(callback: types.CallbackQuery):
             await callback.answer()
             return
         
-        link = f"https://t.me/VertexAIBot?start={user_id}"
+        link = f"https://t.me/Vertex1bot?start={user_id}"
         
         try:
             cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
@@ -130,7 +130,7 @@ async def referral_callback(callback: types.CallbackQuery):
 async def share_referral(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        link = f"https://t.me/VertexAIBot?start={user_id}"
+        link = f"https://t.me/Vertex1bot?start={user_id}"
         
         share_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
