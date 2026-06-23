@@ -16,14 +16,19 @@ async def profile_cmd(message: types.Message):
         )
         return
     
-    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
-    referrals_count = cursor.fetchone()[0]
+    # Проверяем таблицу referrals
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
+    if cursor.fetchone():
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
+        referrals_count = cursor.fetchone()[0]
+    else:
+        referrals_count = 0
     
     premium = user[3][:10] if user[3] else "нет"
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
-    text += f"📊 Запросов сделано: {user[5] or 0}\n"
+    text += f"📊 Запросов: {user[5] or 0}\n"
     text += f"👥 Приглашено: {referrals_count}\n"
     text += f"💎 Premium до: {premium}"
     
@@ -42,14 +47,18 @@ async def profile_callback(callback: types.CallbackQuery):
             await callback.answer()
             return
         
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (callback.from_user.id,))
-        referrals_count = cursor.fetchone()[0]
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
+        if cursor.fetchone():
+            cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (callback.from_user.id,))
+            referrals_count = cursor.fetchone()[0]
+        else:
+            referrals_count = 0
         
         premium = user[3][:10] if user[3] else "нет"
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"
-        text += f"📊 Запросов сделано: {user[5] or 0}\n"
+        text += f"📊 Запросов: {user[5] or 0}\n"
         text += f"👥 Приглашено: {referrals_count}\n"
         text += f"💎 Premium до: {premium}"
         
