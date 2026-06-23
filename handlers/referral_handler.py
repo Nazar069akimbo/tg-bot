@@ -20,10 +20,8 @@ async def referral_cmd(message: types.Message):
         )
         return
     
-    # Ссылка всегда показывается
     link = f"https://t.me/VertexAIBot?start={user_id}"
     
-    # Считаем рефералов, если таблица есть
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         count = cursor.fetchone()[0]
@@ -64,6 +62,7 @@ async def referral_cmd(message: types.Message):
     ])
     
     await message.answer(text, reply_markup=kb)
+
 
 @router.callback_query(F.data == "referral")
 async def referral_callback(callback: types.CallbackQuery):
@@ -126,6 +125,7 @@ async def referral_callback(callback: types.CallbackQuery):
         logger.error(f"Error: {e}")
         await callback.answer()
 
+
 @router.callback_query(F.data == "share_referral")
 async def share_referral(callback: types.CallbackQuery):
     try:
@@ -142,11 +142,6 @@ async def share_referral(callback: types.CallbackQuery):
             f"Нажми на кнопку ниже, чтобы отправить ссылку другу:\n\n"
             f"`{link}`",
             reply_markup=share_kb
-        )
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await=share_kb
         )
         await callback.answer()
     except Exception as e:
