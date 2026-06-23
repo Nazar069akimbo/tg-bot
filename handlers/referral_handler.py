@@ -20,30 +20,26 @@ async def referral_cmd(message: types.Message):
         )
         return
     
-    # Проверяем, есть ли таблица
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-    if not cursor.fetchone():
-        await message.answer(
-            "📋 Система рефералов активируется после первого приглашения.\n\n"
-            "Поделись ссылкой с друзьями!",
-            reply_markup=main_menu()
-        )
-        return
-    
-    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-    count = cursor.fetchone()[0]
-    
-    cursor.execute("""
-        SELECT u.user_id, u.username, r.joined 
-        FROM referrals r 
-        JOIN users u ON r.referred_id = u.user_id 
-        WHERE r.referrer_id = ? 
-        ORDER BY r.joined DESC 
-        LIMIT 10
-    """, (user_id,))
-    referrals = cursor.fetchall()
-    
+    # Ссылка всегда показывается
     link = f"https://t.me/VertexAIBot?start={user_id}"
+    
+    # Считаем рефералов, если таблица есть
+    try:
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+        count = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT u.user_id, u.username, r.joined 
+            FROM referrals r 
+            JOIN users u ON r.referred_id = u.user_id 
+            WHERE r.referrer_id = ? 
+            ORDER BY r.joined DESC 
+            LIMIT 10
+        """, (user_id,))
+        referrals = cursor.fetchall()
+    except:
+        count = 0
+        referrals = []
     
     text = f"👥 **Реферальная система**\n\n"
     text += f"📊 Приглашено: {count}\n"
@@ -83,29 +79,24 @@ async def referral_callback(callback: types.CallbackQuery):
             await callback.answer()
             return
         
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-        if not cursor.fetchone():
-            await callback.message.edit_text(
-                "📋 Система рефералов активируется после первого приглашения.",
-                reply_markup=main_menu()
-            )
-            await callback.answer()
-            return
-        
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-        count = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT u.user_id, u.username, r.joined 
-            FROM referrals r 
-            JOIN users u ON r.referred_id = u.user_id 
-            WHERE r.referrer_id = ? 
-            ORDER BY r.joined DESC 
-            LIMIT 10
-        """, (user_id,))
-        referrals = cursor.fetchall()
-        
         link = f"https://t.me/VertexAIBot?start={user_id}"
+        
+        try:
+            cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+            count = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT u.user_id, u.username, r.joined 
+                FROM referrals r 
+                JOIN users u ON r.referred_id = u.user_id 
+                WHERE r.referrer_id = ? 
+                ORDER BY r.joined DESC 
+                LIMIT 10
+            """, (user_id,))
+            referrals = cursor.fetchall()
+        except:
+            count = 0
+            referrals = []
         
         text = f"👥 **Реферальная система**\n\n"
         text += f"📊 Приглашено: {count}\n"
@@ -151,6 +142,11 @@ async def share_referral(callback: types.CallbackQuery):
             f"Нажми на кнопку ниже, чтобы отправить ссылку другу:\n\n"
             f"`{link}`",
             reply_markup=share_kb
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await=share_kb
         )
         await callback.answer()
     except Exception as e:
