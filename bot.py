@@ -11,7 +11,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from threading import Thread
 from flask import Flask
 
-# ========== FLASK ДЛЯ HEALTHCHECK ==========
 app = Flask(__name__)
 
 @app.route('/')
@@ -22,14 +21,14 @@ def health():
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
 
-# ========== ОСНОВНОЙ КОД БОТА ==========
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database.db import init_db, init_settings, is_admin, add_admin
 from handlers import (
     start_handler, stats_handler, profile_handler, 
     settings_handler, subscribe_handler, referral_handler, 
-    solve_handler, admin_handler, leaderboard_handler, help_handler
+    solve_handler, admin_handler, leaderboard_handler, help_handler,
+    contact_handler, image_handler
 )
 from middleware import AuthMiddleware
 from backup_github import GitHubBackup
@@ -58,32 +57,27 @@ async def set_commands():
         BotCommand(command="settings", description="⚙️ Настройки"),
         BotCommand(command="subscribe", description="💎 Premium"),
         BotCommand(command="referral", description="👥 Рефералы"),
+        BotCommand(command="image", description="🖼️ Сгенерировать картинку"),
     ]
     await bot.set_my_commands(commands)
 
 async def main():
     logger.info("🚀 Запуск бота...")
     
-    # Запускаем Flask
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
     logger.info("✅ Flask сервер запущен")
     
-    # Инициализация БД
     init_db()
     init_settings()
     
-    # ========== GITHUB БЭКАП ==========
     backup = GitHubBackup()
-    
-    # Восстанавливаем БД из GitHub
     backup.restore_latest_backup()
     
-    # Запускаем периодический бэкап (каждый час)
     def backup_loop():
         while True:
-            time.sleep(3600)  # 3600 секунд = 1 час
+            time.sleep(3600)
             try:
                 backup.backup_db(reason='каждый час')
             except Exception as e:
@@ -92,7 +86,6 @@ async def main():
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
     logger.info("✅ Запущен планировщик бэкапов (каждый час)")
-    # =========================================
     
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
@@ -111,6 +104,8 @@ async def main():
     dp.include_router(admin_handler.router)
     dp.include_router(leaderboard_handler.router)
     dp.include_router(help_handler.router)
+    dp.include_router(contact_handler.router)
+    dp.include_router(image_handler.router)
     
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)

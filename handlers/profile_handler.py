@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user, cursor
+from database.db import get_user, cursor, get_user_plan, get_image_limit
 from keyboards import main_menu
 
 router = Router()
@@ -16,7 +16,6 @@ async def profile_cmd(message: types.Message):
         )
         return
     
-    # Проверяем таблицу referrals
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
     if cursor.fetchone():
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
@@ -24,13 +23,18 @@ async def profile_cmd(message: types.Message):
     else:
         referrals_count = 0
     
+    plan = get_user_plan(message.from_user.id)
+    image_limit = get_image_limit(message.from_user.id)
+    
     premium = user[3][:10] if user[3] else "нет"
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
     text += f"📊 Запросов: {user[5] or 0}\n"
     text += f"👥 Приглашено: {referrals_count}\n"
-    text += f"💎 Premium до: {premium}"
+    text += f"💎 Premium до: {premium}\n"
+    text += f"📊 План: {plan.upper()}\n"
+    text += f"🖼️ Картинок/день: {image_limit}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -54,13 +58,18 @@ async def profile_callback(callback: types.CallbackQuery):
         else:
             referrals_count = 0
         
+        plan = get_user_plan(callback.from_user.id)
+        image_limit = get_image_limit(callback.from_user.id)
+        
         premium = user[3][:10] if user[3] else "нет"
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"
         text += f"📊 Запросов: {user[5] or 0}\n"
         text += f"👥 Приглашено: {referrals_count}\n"
-        text += f"💎 Premium до: {premium}"
+        text += f"💎 Premium до: {premium}\n"
+        text += f"📊 План: {plan.upper()}\n"
+        text += f"🖼️ Картинок/день: {image_limit}"
         
         await callback.message.edit_text(text, reply_markup=main_menu())
         await callback.answer()

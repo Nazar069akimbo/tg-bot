@@ -23,10 +23,9 @@ def init_db():
     )
     ''')
     
-    # ПРИНУДИТЕЛЬНО СОЗДАЕМ ТАБЛИЦУ referrals
-    cursor.execute('DROP TABLE IF EXISTS referrals')
+    # Таблица referrals
     cursor.execute('''
-    CREATE TABLE referrals (
+    CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -34,8 +33,8 @@ def init_db():
         bonus_given INTEGER DEFAULT 0
     )
     ''')
-    print("✅ Таблица referrals создана заново")
     
+    # Таблица admins
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -43,6 +42,7 @@ def init_db():
     )
     ''')
     
+    # Таблица payments
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +53,35 @@ def init_db():
         timestamp TEXT
     )
     ''')
+    
+    # Таблица messages_to_admin
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        date TEXT,
+        status TEXT DEFAULT 'new'
+    )
+    ''')
+    
+    # Добавляем колонки для генерации картинок
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN image_requests INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN image_limit INTEGER DEFAULT 3")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'basic'")
+    except sqlite3.OperationalError:
+        pass
+    
     conn.commit()
     print("✅ База данных инициализирована")
 
@@ -155,19 +184,45 @@ def get_stats():
     blocked_users = cursor.fetchone()[0]
     return total_users, premium_users, total_requests, blocked_users
 
-def init_db():
-    # ... существующий код ...
+def get_user_plan(user_id):
+    user = get_user(user_id)
+    if user and len(user) > 8:
+        return user[8]
+    return 'basic'
+
+def get_image_limit(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 3
+    plan = user[8] if len(user) > 8 else 'basic'
+    limits = {
+        'basic': 3,
+        'premium': 50,
+        'pro': 200
+    }
+    return limits.get(plan, 3)
+
+def can_generate_image(user_id):
+    user = get_user(user_id)
+    if not user:
+        return True, 3
     
-    # Таблица для обращений к админу
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        date TEXT,
-        status TEXT DEFAULT 'new'
-    )
-    ''')
+    if user[3] and datetime.now().isoformat() < user[3]:
+        return True, 999999
+    
+    plan = user[8] if len(user) > 8 else 'basic'
+    limits = {'basic': 3, 'premium': 50, 'pro': 200}
+    limit = limits.get(plan, 3)
+    used = user[6] if len(user) > 6 else 0
+    
+    return used < limit, limit - used
+
+def add_image_request(user_id):
+    cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
-    print("✅ Таблица messages_to_admin создана")
+
+def set_user_plan(user_id, plan):
+    cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
+    conn.commit()
+    cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
+    conn.commit()
