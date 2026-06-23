@@ -20,11 +20,9 @@ async def referral_cmd(message: types.Message):
         )
         return
     
-    # Считаем количество приглашенных
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     count = cursor.fetchone()[0]
     
-    # Получаем список приглашенных
     cursor.execute("""
         SELECT u.user_id, u.username, r.joined 
         FROM referrals r 
@@ -121,47 +119,7 @@ async def referral_callback(callback: types.CallbackQuery):
 @router.callback_query(F.data == "share_referral")
 async def share_referral(callback: types.CallbackQuery):
     try:
-        user_id =KeyboardButton(text="📤 Поделиться ссылкой", callback_data="share_referral")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-        ])
-        
-        await callback.message.edit_text(text, reply_markup=kb)
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Error in referral callback: {e}")
-        await callback.answer()
-
-@router.callback_query(F.data == "share_referral")
-async def share_referral(callback: types.CallbackQuery):
-    try:
         user_id = callback.from_user.id
-        link = f"https://t.me/VertexAIBot?start={user_id}"
-        
-        share_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="referral")]
-        ])
-        
-        await callback.message.edit_text(
-            f"📤 **П callback.message.edit_text(text, reply_markup=kb)
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"Error in referral callback: {e}")
-        await callback.answer()
-
-@router.callback_query(F.data == "share_referral")
-async def share_referral(callback: types.CallbackQuery):
-    try:
-        user_id = callback.from_user.id
-        link = f"https://t.me/VertexAIBot?start={user_id}"
-        
-        share_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="referral")]
-        ])
-        
-        await callback.message.edit_text(
-            f"📤 **Поделиться ссыл callback.from_user.id
         link = f"https://t.me/VertexAIBot?start={user_id}"
         
         share_kb = InlineKeyboardMarkup(inline_keyboard=[
