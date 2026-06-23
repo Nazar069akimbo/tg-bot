@@ -15,6 +15,25 @@ ADMIN_CODE = "30121979"
 # Временное хранилище для состояний
 user_pages = {}
 
+# ============ СОЗДАНИЕ ТАБЛИЦЫ ДЛЯ ОБРАЩЕНИЙ (если её нет) ============
+def init_messages_table():
+    try:
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages_to_admin (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            text TEXT,
+            date TEXT,
+            status TEXT DEFAULT 'new'
+        )
+        ''')
+        conn.commit()
+    except:
+        pass
+
+init_messages_table()
+
 def admin_kb():
     """Главное меню админа"""
     return InlineKeyboardMarkup(
@@ -33,7 +52,6 @@ def admin_kb():
     )
 
 def backup_manage_kb():
-    """Клавиатура управления бэкапами"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Список бэкапов", callback_data="a_backup_list")],
@@ -46,27 +64,21 @@ def backup_manage_kb():
     )
 
 def user_management_kb(page=0, total_pages=1):
-    """Клавиатура управления пользователями"""
     kb = InlineKeyboardMarkup(inline_keyboard=[])
-    
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"users_page_{page-1}"))
     nav_buttons.append(InlineKeyboardButton(text=f"📄 {page+1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"users_page_{page+1}"))
-    
     if nav_buttons:
         kb.inline_keyboard.append(nav_buttons)
-    
     kb.inline_keyboard.append([
         InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")
     ])
-    
     return kb
 
 def user_actions_kb(user_id):
-    """Клавиатура действий с пользователем"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔴 Заблокировать", callback_data=f"block_user_{user_id}")],
@@ -79,7 +91,6 @@ def user_actions_kb(user_id):
     )
 
 def premium_days_kb(user_id):
-    """Клавиатура выбора дней Premium"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="7 дней", callback_data=f"premium_days_{user_id}_7")],
@@ -92,9 +103,7 @@ def premium_days_kb(user_id):
     )
 
 def users_list_kb(users, page=0, total_pages=1):
-    """Клавиатура со списком пользователей для выдачи Premium"""
     kb = InlineKeyboardMarkup(inline_keyboard=[])
-    
     for u in users:
         user_id = u[0]
         name = u[1] or f"User_{user_id}"
@@ -103,21 +112,17 @@ def users_list_kb(users, page=0, total_pages=1):
         kb.inline_keyboard.append([
             InlineKeyboardButton(text=f"👤 {name} (ID: {user_id})", callback_data=f"select_user_{user_id}")
         ])
-    
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"premium_page_{page-1}"))
     nav_buttons.append(InlineKeyboardButton(text=f"📄 {page+1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"premium_page_{page+1}"))
-    
     if nav_buttons:
         kb.inline_keyboard.append(nav_buttons)
-    
     kb.inline_keyboard.append([
         InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")
     ])
-    
     return kb
 
 @router.message(Command("admin"))
@@ -161,8 +166,6 @@ async def back_to_admin(callback: types.CallbackQuery):
     await callback.message.answer("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
     await callback.answer()
 
-# ============ СТАТИСТИКА ============
-
 @router.callback_query(F.data == "a_stats")
 async def a_stats(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -196,8 +199,6 @@ async def a_stats(callback: types.CallbackQuery):
         await callback.message.delete()
         await callback.message.answer(text, reply_markup=admin_kb())
     await callback.answer()
-
-# ============ УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ============
 
 @router.callback_query(F.data == "a_users_list")
 async def a_users_list(callback: types.CallbackQuery, page=0):
@@ -272,7 +273,6 @@ async def user_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 async def show_user_info(target, user_id):
-    """Показать информацию о пользователе"""
     user = get_user(user_id)
     if not user:
         if isinstance(target, types.Message):
@@ -310,8 +310,6 @@ async def show_user_info(target, user_id):
             await target.message.delete()
             await target.message.answer(text, reply_markup=kb)
 
-# ============ БЛОКИРОВКА/РАЗБЛОКИРОВКА ============
-
 @router.callback_query(F.data.startswith("block_user_"))
 async def block_user(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -319,14 +317,12 @@ async def block_user(callback: types.CallbackQuery):
         return
     
     user_id = int(callback.data.split("_")[2])
-    
     if is_admin(user_id):
         await callback.answer("❌ Нельзя заблокировать администратора!", show_alert=True)
         return
     
     cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
-    
     await callback.answer(f"✅ Пользователь {user_id} заблокирован", show_alert=True)
     await show_user_info(callback, user_id)
 
@@ -339,11 +335,8 @@ async def unblock_user(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[2])
     cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
-    
     await callback.answer(f"✅ Пользователь {user_id} разблокирован", show_alert=True)
     await show_user_info(callback, user_id)
-
-# ============ ВЫДАЧА PREMIUM ============
 
 @router.callback_query(F.data.startswith("give_premium_user_"))
 async def give_premium_user(callback: types.CallbackQuery):
@@ -352,7 +345,6 @@ async def give_premium_user(callback: types.CallbackQuery):
         return
     
     user_id = int(callback.data.split("_")[3])
-    
     text = f"💎 **ВЫБЕРИТЕ ПЕРИОД PREMIUM**\n\n"
     text += f"Для пользователя: `{user_id}`\n\n"
     text += "Выберите количество дней:"
@@ -376,7 +368,6 @@ async def premium_days_set(callback: types.CallbackQuery):
     
     from database.db import add_premium
     add_premium(user_id, days)
-    
     user_pages.pop(callback.from_user.id, None)
     
     try:
@@ -456,7 +447,6 @@ async def select_user_for_premium(callback: types.CallbackQuery):
         return
     
     user_id = int(callback.data.split("_")[2])
-    
     user = get_user(user_id)
     if not user:
         await callback.answer("❌ Пользователь не найден", show_alert=True)
@@ -500,6 +490,17 @@ async def a_search_user(callback: types.CallbackQuery):
 async def a_messages(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    # Проверяем, есть ли таблица
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
+    if not cursor.fetchone():
+        await callback.message.edit_text(
+            "📩 **Входящие обращения**\n\n"
+            "Пока нет обращений.",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
         return
     
     cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
@@ -578,7 +579,7 @@ async def reply_to_user(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ============ БЭКАП В GITHUB ============
+# ============ БЭКАП ============
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup(callback: types.CallbackQuery):
@@ -1082,8 +1083,6 @@ async def s_set(callback: types.CallbackQuery):
     set_setting(key, value)
     await callback.answer(f"✅ Установлено: {value}", show_alert=True)
     await a_limits(callback)
-
-# ============ НАЗАД В ГЛАВНОЕ МЕНЮ ============
 
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):

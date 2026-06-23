@@ -154,3 +154,20 @@ def get_stats():
     cursor.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1")
     blocked_users = cursor.fetchone()[0]
     return total_users, premium_users, total_requests, blocked_users
+
+def init_db():
+    # ... существующий код ...
+    
+    # Таблица для обращений к админу
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        date TEXT,
+        status TEXT DEFAULT 'new'
+    )
+    ''')
+    conn.commit()
+    print("✅ Таблица messages_to_admin создана")
