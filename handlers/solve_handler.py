@@ -7,6 +7,7 @@ import asyncio
 import requests
 import os
 import json
+import re
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -15,8 +16,17 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== МОДЕЛЬ STABLE DIFFUSION 3.5 MEDIUM =====
-IMAGE_MODEL = "stable-diffusion-3.5-medium"
+# ===== СПИСОК МОДЕЛЕЙ ДЛЯ КАРТИНОК (от самых дешёвых) =====
+IMAGE_MODELS = [
+    "gpt-5-image-mini",          # самая дешёвая
+    "gpt-image-1-mini",
+    "gpt-image-1.5",
+    "gpt-image-2",
+    "gpt-image-1",
+    "mai-image-2.5",
+    "seedream-4.5",
+    "grok-imagine-image-quality"
+]
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -81,7 +91,6 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.3)
             try:
@@ -89,54 +98,62 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== STABLE DIFFUSION 3.5 MEDIUM =====
         url = "https://api.bothub.chat/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        data = {
-            "model": IMAGE_MODEL,
-            "prompt": prompt,
-            "n": 1,
-            "size": "1024x1024",  # Stable Diffusion поддерживает большие размеры
-            "negative_prompt": "low quality, blurry, distorted, ugly, bad anatomy"  # улучшает качество
-        }
+        image_url = None
+        last_error = None
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}, запрос: {prompt[:50]}...")
-        response = requests.post(url, headers=headers, json=data, timeout=120)
-        
-        logger.info(f"📊 Статус: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            image_url = result.get('data', [{}])[0].get('url')
-            
-            if image_url:
-                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                await asyncio.sleep(0.3)
+        # Перебираем все модели из списка
+        for model in IMAGE_MODELS:
+            try:
+                data = {
+                    "model": model,
+                    "prompt": prompt,
+                    "n": 1,
+                    "size": "512x512"
+                }
                 
-                await message.answer_photo(
-                    photo=image_url,
-                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-                )
-                add_image_request(user_id)
-                await status_msg.delete()
-            else:
-                logger.error(f"❌ Нет URL в ответе: {result}")
-                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
-        elif response.status_code == 403:
-            await status_msg.edit_text("❌ Нет доступа к Stable Diffusion 3.5. Попробуй другую модель.")
-        elif response.status_code == 404:
-            await status_msg.edit_text("❌ Модель не найдена. Проверь название модели.")
-        else:
-            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
-            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
+                logger.info(f"🖼️ Пробую модель: {model}")
+                response = requests.post(url, headers=headers, json=data, timeout=60)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    image_url = result.get('data', [{}])[0].get('url')
+                    if image_url:
+                        logger.info(f"✅ Найдена картинка через {model}")
+                        break
+                    else:
+                        logger.warning(f"⚠️ Нет URL в ответе {model}")
+                else:
+                    logger.warning(f"⚠️ Модель {model} вернула {response.status_code}")
+                    last_error = response.status_code
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка с моделью {model}: {e}")
+                continue
+        
+        if image_url:
+            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+            await asyncio.sleep(0.3)
             
-    except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут")
-        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
+            await message.answer_photo(
+                photo=image_url,
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+            )
+            add_image_request(user_id)
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text(
+                "❌ Не удалось сгенерировать картинку.\n\n"
+                "Попробуй:\n"
+                "• написать более детальное описание\n"
+                "• использовать английский язык\n"
+                "• попробовать позже"
+            )
+            
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
