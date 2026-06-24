@@ -14,8 +14,8 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
-IMAGE_MODEL = "gpt-image-square"  # 272 CAPS за картинку!
+# ===== ЕДИНСТВЕННАЯ РАБОЧАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "flux-schnell"  # 1499 CAPS
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -87,6 +87,7 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
+        # ===== REPLICATE ШЛЮЗ (РАБОТАЕТ) =====
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
@@ -106,7 +107,7 @@ async def generate_image(message: types.Message):
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (272 CAPS)")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
         response = requests.post(url, headers=headers, json=data, timeout=120)
         
         if response.status_code == 200:
