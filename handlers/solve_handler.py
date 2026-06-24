@@ -8,6 +8,7 @@ import asyncio
 import requests
 import os
 import io
+import json
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 from handlers.settings_handler import user_modes
 
 IMAGE_MODEL = "flux-schnell"
+PROMPT_MODEL = "gpt-4.1-nano"  # Дешёвая для создания промптов
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -69,17 +71,15 @@ async def generate_text(message: types.Message):
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
-    # ===== ПРОВЕРКА ПРОБНОГО ПЕРИОДА =====
+    # ===== ПРОВЕРКА ЛИМИТОВ =====
     trial_remaining = get_trial_remaining(user_id)
     can_gen, remaining = can_generate_image(user_id)
     
-    # Если есть пробный период и остались картинки
     if trial_remaining > 0:
         can_gen = True
         remaining = trial_remaining
         logger.info(f"🎁 Пробный период: осталось {trial_remaining} картинок")
     else:
-        # Проверяем, активен ли пробный период (показываем сообщение)
         if is_trial_active(user_id) and trial_remaining == 0:
             await message.answer(
                 f"🎁 **Пробный период активен, но лимит исчерпан!**\n\n"
@@ -89,7 +89,6 @@ async def generate_image(message: types.Message):
             )
             return
     
-    # Если нет пробного периода и нет Premium
     if not can_gen and not is_trial_active(user_id):
         await message.answer(
             f"❌ Лимит картинок исчерпан!\n\n"
@@ -98,11 +97,62 @@ async def generate_image(message: types.Message):
         )
         return
     
-    status_msg = await message.answer("🎨 Генерирую картинку...")
+    status_msg = await message.answer("🎨 Думаю над твоим запросом...")
     
     try:
-        prompt = message.text
+        user_prompt = message.text
         
+        # ===== ШАГ 1: ГЕНЕРАЦИЯ ПРОМПТА =====
+        await status_msg.edit_text("🔍 Создаю детальное описание...")
+        
+        prompt_url = "https://openai.bothub.chat/v1/chat/completions"
+        prompt_headers = {
+            "Authorization": f"Bearer {BOTHUB_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt_data = {
+            "model": PROMPT_MODEL,
+            "messages": [
+                {"role": "system", "content": """Ты — профессиональный промпт-инженер для генерации изображений. 
+                Твоя задача — превратить короткий запрос пользователя в детальный английский промпт для нейросети (Flux, Stable Diffusion, DALL-E).
+                
+                Правила:
+                1. Всегда отвечай ТОЛЬКО на английском языке
+                2. Промпт должен быть от 30 до 60 слов
+                3. Добавляй детали: стиль, освещение, настроение, цвета, композицию
+                4. Используй ключевые слова для качества: photorealistic, 8k, highly detailed, masterpiece, sharp focus
+                5. Если пользователь просит что-то конкретное — добавляй детали этого объекта
+                
+                Пример:
+                Запрос: "чёрный кот на подоконнике"
+                Ответ: "A sleek black cat sitting on a wooden windowsill, soft morning light streaming through the window, creating warm golden shadows on the floor, photorealistic, highly detailed fur texture, 8k resolution, cinematic composition, peaceful atmosphere, shallow depth of field, sharp focus on cat's eyes"
+                
+                Только промпт, без пояснений!"""},
+                {"role": "user", "content": f"Создай промпт для: {user_prompt}"}
+            ],
+            "max_tokens": 200,
+            "temperature": 0.7
+        }
+        
+        prompt_response = requests.post(prompt_url, headers=prompt_headers, json=prompt_data, timeout=30)
+        
+        if prompt_response.status_code == 200:
+            prompt_result = prompt_response.json()
+            enhanced_prompt = prompt_result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+            
+            # Убираем возможные кавычки
+            if enhanced_prompt.startswith('"') and enhanced_prompt.endswith('"'):
+                enhanced_prompt = enhanced_prompt[1:-1]
+            
+            logger.info(f"📝 Сгенерирован промпт: {enhanced_prompt[:100]}...")
+            await status_msg.edit_text(f"🎨 Генерирую картинку по описанию...")
+        else:
+            # Если не получилось создать промпт — используем оригинальный
+            enhanced_prompt = user_prompt
+            logger.warning(f"⚠️ Не удалось создать промпт, используем оригинальный")
+        
+        # ===== ШАГ 2: ГЕНЕРАЦИЯ КАРТИНКИ =====
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -119,7 +169,7 @@ async def generate_image(message: types.Message):
         data = {
             "model": IMAGE_MODEL,
             "input": {
-                "prompt": prompt,
+                "prompt": enhanced_prompt,
                 "aspect_ratio": "1:1",
                 "output_format": "webp"
             },
@@ -129,7 +179,6 @@ async def generate_image(message: types.Message):
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
         response = requests.post(url, headers=headers, json=data, timeout=60)
         
         if response.status_code == 200:
@@ -153,10 +202,9 @@ async def generate_image(message: types.Message):
                         
                         await message.answer_photo(
                             photo=image_file,
-                            caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                            caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n🔍 {enhanced_prompt}"
                         )
                         
-                        # Списываем картинку
                         if trial_remaining > 0:
                             use_trial_image(user_id)
                             logger.info(f"🎁 Использована пробная картинка, осталось: {trial_remaining - 1}")
