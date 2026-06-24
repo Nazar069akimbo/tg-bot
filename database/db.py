@@ -23,6 +23,13 @@ def init_db():
     )
     ''')
     
+    # Добавляем колонки
+    for col in ['image_requests', 'image_limit', 'plan', 'user_mode']:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
+        except sqlite3.OperationalError:
+            pass
+    
     # Таблица referrals
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
@@ -65,22 +72,6 @@ def init_db():
         status TEXT DEFAULT 'new'
     )
     ''')
-    
-    # Добавляем колонки для генерации картинок
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN image_requests INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN image_limit INTEGER DEFAULT 3")
-    except sqlite3.OperationalError:
-        pass
-    
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'basic'")
-    except sqlite3.OperationalError:
-        pass
     
     conn.commit()
     print("✅ База данных инициализирована")
@@ -226,13 +217,6 @@ def set_user_plan(user_id, plan):
     conn.commit()
     cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
-
-# Добавляем колонку для режима работы пользователя
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN user_mode TEXT DEFAULT 'text'")
-except sqlite3.OperationalError:
-    pass
-conn.commit()
 
 def get_user_mode(user_id):
     user = get_user(user_id)
