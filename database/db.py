@@ -27,7 +27,14 @@ def init_db():
     )
     ''')
     
-    # Таблица referrals
+    # ПРИНУДИТЕЛЬНО добавляем колонку user_mode (если её нет)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN user_mode TEXT DEFAULT 'text'")
+        print("✅ Добавлена колонка user_mode")
+    except sqlite3.OperationalError:
+        print("ℹ️ Колонка user_mode уже существует")
+    
+    # Другие таблицы
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +45,6 @@ def init_db():
     )
     ''')
     
-    # Таблица admins
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -46,7 +52,6 @@ def init_db():
     )
     ''')
     
-    # Таблица payments
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,7 +63,6 @@ def init_db():
     )
     ''')
     
-    # Таблица messages_to_admin
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,13 +73,6 @@ def init_db():
         status TEXT DEFAULT 'new'
     )
     ''')
-    
-    # Добавляем недостающие колонки, если они есть
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode']:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
-        except sqlite3.OperationalError:
-            pass
     
     conn.commit()
     print("✅ База данных готова")
