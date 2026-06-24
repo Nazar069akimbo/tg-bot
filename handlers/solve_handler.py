@@ -12,17 +12,19 @@ import io
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
+BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')  # используем ту же переменную
 
 from handlers.settings_handler import user_modes
 
-IMAGE_MODEL = "flux-schnell"
+# ===== МОДЕЛЬ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
+IMAGE_MODEL = "flux-schnell"  # 1499 CAPS за картинку
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
+    # Проверяем, не в режиме ли админ поиска
     try:
         from handlers.admin_handler import user_pages
         state = user_pages.get(message.from_user.id, {})
@@ -36,12 +38,14 @@ async def handle_message(message: types.Message):
         await message.answer("👋 Напиши /start", reply_markup=main_menu())
         return
     
+    # Получаем режим пользователя (текст/картинка)
     mode = user_modes.get(message.from_user.id, "text")
     
     if mode == "image":
         await generate_image(message)
     else:
         await generate_text(message)
+
 
 async def generate_text(message: types.Message):
     ok, remaining = can_request(message.from_user.id)
@@ -64,9 +68,11 @@ async def generate_text(message: types.Message):
     
     await status_msg.edit_text(result_text)
 
+
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
+    # Проверяем лимиты
     can_gen, remaining = can_generate_image(user_id)
     if not can_gen:
         await message.answer(
@@ -81,6 +87,7 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
+        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -88,6 +95,7 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
+        # ===== REPLICATE ШЛЮЗ (BotHub) =====
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
@@ -103,68 +111,64 @@ async def generate_image(message: types.Message):
             },
             "bothub": {
                 "include_usage": True,
-                "return_base64": True
+                "return_base64": False  # False = возвращаем URL
             }
         }
         
-        logger.info(f"🖼️ Запрос к {IMAGE_MODEL}")
-        response = requests.post(url, headers=headers, json=data, timeout=120)
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL}, запрос: {prompt[:30]}...")
+        response = requests.post(url, headers=headers, json=data, timeout=60)
         
         if response.status_code == 200:
             result = response.json()
             logger.info(f"📦 Ответ получен: {list(result.keys())}")
             
-            image_data = None
+            # Получаем URL
+            image_url = result.get('url')
             
-            # Пробуем получить изображение
-            if 'image' in result:
-                img = result['image']
-                if isinstance(img, str):
-                    # Если это base64
-                    try:
-                        image_data = base64.b64decode(img)
-                        logger.info(f"✅ Base64 декодирован, размер: {len(image_data)}")
-                    except:
-                        # Если это URL
-                        resp = requests.get(img, timeout=30)
-                        if resp.status_code == 200:
-                            image_data = resp.content
-                            logger.info(f"✅ Скачано по URL, размер: {len(image_data)}")
-            elif 'image_base64' in result:
-                image_data = base64.b64decode(result['image_base64'])
-                logger.info(f"✅ image_base64 декодирован, размер: {len(image_data)}")
-            elif 'url' in result:
-                url_img = result['url']
-                if isinstance(url_img, list):
-                    url_img = url_img[0]
-                resp = requests.get(url_img, timeout=30)
-                if resp.status_code == 200:
-                    image_data = resp.content
-                    logger.info(f"✅ Скачано по url, размер: {len(image_data)}")
+            # Если url в виде списка — берём первый
+            if isinstance(image_url, list) and len(image_url) > 0:
+                image_url = image_url[0]
             
-            if image_data and len(image_data) > 1000:
-                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                await asyncio.sleep(0.2)
-                
-                from aiogram.types import BufferedInputFile
-                image_file = BufferedInputFile(image_data, filename="image.webp")
-                
-                await message.answer_photo(
-                    photo=image_file,
-                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-                )
-                add_image_request(user_id)
-                await status_msg.delete()
+            if image_url:
+                # Скачиваем картинку по URL
+                img_response = requests.get(image_url, timeout=30)
+                if img_response.status_code == 200:
+                    image_data = img_response.content
+                    logger.info(f"✅ Скачано картинка, размер: {len(image_data)} байт")
+                    
+                    if len(image_data) > 1000:
+                        await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                        await asyncio.sleep(0.2)
+                        
+                        from aiogram.types import BufferedInputFile
+                        image_file = BufferedInputFile(image_data, filename="image.webp")
+                        
+                        await message.answer_photo(
+                            photo=image_file,
+                            caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                        )
+                        add_image_request(user_id)
+                        await status_msg.delete()
+                        return
+                    else:
+                        logger.error(f"❌ Скачано слишком мало данных: {len(image_data)} байт")
+                else:
+                    logger.error(f"❌ Не удалось скачать картинку: {img_response.status_code}")
             else:
-                logger.error(f"❌ Не удалось получить изображение: {result}")
-                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
+                logger.error(f"❌ Нет URL в ответе: {result}")
+                
+            await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
         else:
             logger.error(f"❌ Ошибка API: {response.status_code} - {response.text[:200]}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут")
+        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
+
 
 @router.callback_query(F.data == "ask_question")
 async def ask_question(callback: types.CallbackQuery):
