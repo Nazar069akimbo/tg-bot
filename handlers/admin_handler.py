@@ -65,6 +65,7 @@ def user_actions_kb(user_id):
             [InlineKeyboardButton(text="🔴 Заблокировать", callback_data=f"block_user_{user_id}")],
             [InlineKeyboardButton(text="🟢 Разблокировать", callback_data=f"unblock_user_{user_id}")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data=f"give_premium_user_{user_id}")],
+            [InlineKeyboardButton(text="💎 Забрать Premium", callback_data=f"remove_premium_{user_id}")],
             [InlineKeyboardButton(text="📊 Статистика пользователя", callback_data=f"user_stats_{user_id}")],
             [InlineKeyboardButton(text="✏️ Отправить сообщение", callback_data=f"send_message_{user_id}")],
             [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="a_users_list")]
@@ -363,6 +364,25 @@ async def premium_days_set(callback: types.CallbackQuery):
     await callback.answer(f"✅ Premium выдан пользователю {user_id} на {days} дней", show_alert=True)
     await show_user_info(callback, user_id)
 
+@router.callback_query(F.data.startswith("remove_premium_"))
+async def remove_premium(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[2])
+    
+    from database.db import is_premium
+    if not is_premium(user_id):
+        await callback.answer("❌ У пользователя нет Premium", show_alert=True)
+        return
+    
+    cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
+    conn.commit()
+    
+    await callback.answer(f"✅ Premium у пользователя {user_id} отключён", show_alert=True)
+    await show_user_info(callback, user_id)
+
 @router.callback_query(F.data.startswith("back_to_user_"))
 async def back_to_user(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -444,8 +464,6 @@ async def select_user_for_premium(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=premium_days_kb(user_id))
     await callback.answer()
 
-# ============ ПОИСК ПОЛЬЗОВАТЕЛЯ ============
-
 @router.callback_query(F.data == "a_search_user")
 async def a_search_user(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -464,8 +482,6 @@ async def a_search_user(callback: types.CallbackQuery):
         "⏹ Отмена: /cancel"
     )
     await callback.answer()
-
-# ============ ВХОДЯЩИЕ ОБРАЩЕНИЯ ============
 
 @router.callback_query(F.data == "a_messages")
 async def a_messages(callback: types.CallbackQuery):
@@ -496,8 +512,6 @@ async def a_messages(callback: types.CallbackQuery):
     
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
     await callback.answer()
-
-# ============ ОБЩЕНИЕ С ПОЛЬЗОВАТЕЛЕМ ============
 
 @router.callback_query(F.data.startswith("send_message_"))
 async def send_message_to_user(callback: types.CallbackQuery):
@@ -549,8 +563,6 @@ async def reply_to_user(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ============ БЭКАП ============
-
 @router.callback_query(F.data == "a_backup")
 async def a_backup(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -599,8 +611,6 @@ async def a_restore_db(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=admin_kb())
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=admin_kb())
-
-# ============ УПРАВЛЕНИЕ БЭКАПАМИ ============
 
 @router.callback_query(F.data == "a_backup_manage")
 async def a_backup_manage(callback: types.CallbackQuery):
@@ -761,8 +771,6 @@ async def a_backup_delete_all(callback: types.CallbackQuery):
     
     await a_backup_delete(callback)
 
-# ============ РАССЫЛКА ============
-
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -781,8 +789,6 @@ async def a_broadcast(callback: types.CallbackQuery):
         await callback.message.delete()
         await callback.message.answer(text)
     await callback.answer()
-
-# ============ ОБРАБОТЧИК СООБЩЕНИЙ ДЛЯ АДМИНА ============
 
 @router.message(F.text)
 async def handle_admin_messages(message: types.Message):
@@ -969,8 +975,6 @@ async def confirm_broadcast(callback: types.CallbackQuery):
     
     await status_msg.edit_text(final_text, reply_markup=admin_kb())
     user_pages.pop(callback.from_user.id, None)
-
-# ============ ЛИМИТЫ ============
 
 @router.callback_query(F.data == "a_limits")
 async def a_limits(callback: types.CallbackQuery):
