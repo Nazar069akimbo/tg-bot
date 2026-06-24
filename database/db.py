@@ -2,16 +2,21 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'repsolver.db')
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+DB_PATH = 'data/repsolver.db'
+
+# ВРЕМЕННО УДАЛЯЕМ СТАРУЮ БД
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+    print("🗑️ Старая БД удалена")
+
+os.makedirs('data', exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Таблица users
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -19,31 +24,16 @@ def init_db():
         free_requests INTEGER DEFAULT 0,
         total_requests INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
-        mode TEXT DEFAULT 'chat'
+        mode TEXT DEFAULT 'chat',
+        image_requests INTEGER DEFAULT 0,
+        image_limit INTEGER DEFAULT 3,
+        plan TEXT DEFAULT 'basic',
+        user_mode TEXT DEFAULT 'text'
     )
     ''')
     
-    # ПРИНУДИТЕЛЬНО добавляем все колонки
-    columns_to_add = [
-        ('image_requests', 'INTEGER DEFAULT 0'),
-        ('image_limit', 'INTEGER DEFAULT 3'),
-        ('plan', 'TEXT DEFAULT "basic"'),
-        ('user_mode', 'TEXT DEFAULT "text"')
-    ]
-    
-    for col_name, col_type in columns_to_add:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
-            print(f"✅ Добавлена колонка {col_name}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e):
-                print(f"ℹ️ Колонка {col_name} уже существует")
-            else:
-                print(f"⚠️ Ошибка: {e}")
-    
-    # Таблица referrals
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -52,17 +42,15 @@ def init_db():
     )
     ''')
     
-    # Таблица admins
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
+    CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
-    # Таблица payments
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -72,9 +60,8 @@ def init_db():
     )
     ''')
     
-    # Таблица messages_to_admin
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
+    CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -85,7 +72,7 @@ def init_db():
     ''')
     
     conn.commit()
-    print("✅ База данных инициализирована")
+    print("✅ База данных создана с новыми колонками")
 
 def init_settings():
     cursor.execute('''
@@ -188,35 +175,28 @@ def get_stats():
 
 def get_user_plan(user_id):
     user = get_user(user_id)
-    if user and len(user) > 8:
-        return user[8]
+    if user:
+        return user[9] if len(user) > 9 else 'basic'
     return 'basic'
 
 def get_image_limit(user_id):
     user = get_user(user_id)
     if not user:
         return 3
-    plan = user[8] if len(user) > 8 else 'basic'
-    limits = {
-        'basic': 3,
-        'premium': 50,
-        'pro': 200
-    }
+    plan = user[9] if len(user) > 9 else 'basic'
+    limits = {'basic': 3, 'premium': 50, 'pro': 200}
     return limits.get(plan, 3)
 
 def can_generate_image(user_id):
     user = get_user(user_id)
     if not user:
         return True, 3
-    
     if user[3] and datetime.now().isoformat() < user[3]:
         return True, 999999
-    
-    plan = user[8] if len(user) > 8 else 'basic'
+    plan = user[9] if len(user) > 9 else 'basic'
     limits = {'basic': 3, 'premium': 50, 'pro': 200}
     limit = limits.get(plan, 3)
-    used = user[6] if len(user) > 6 else 0
-    
+    used = user[8] if len(user) > 8 else 0
     return used < limit, limit - used
 
 def add_image_request(user_id):
@@ -231,8 +211,8 @@ def set_user_plan(user_id, plan):
 
 def get_user_mode(user_id):
     user = get_user(user_id)
-    if user and len(user) > 9:
-        return user[9]
+    if user and len(user) > 11:
+        return user[11]
     return 'text'
 
 def set_user_mode(user_id, mode):
