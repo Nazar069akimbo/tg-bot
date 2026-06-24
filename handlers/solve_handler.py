@@ -7,6 +7,7 @@ import asyncio
 import requests
 import os
 import json
+import re
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
+
+# ===== БЕСПЛАТНАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "gpt-oss-120b:free"  # 0 CAPS!
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -85,50 +89,35 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== BOTHUB API ДЛЯ КАРТИНОК =====
-        # Используем chat completions с моделью, которая умеет генерировать картинки
         url = "https://openai.bothub.chat/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
         }
+        
         data = {
-            "model": "gpt-image",  # модель для генерации картинок
+            "model": IMAGE_MODEL,
             "messages": [
-                {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только ссылку на картинку в формате: http://..."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только прямую ссылку на картинку (URL). Никакого другого текста."},
+                {"role": "user", "content": f"Создай изображение: {prompt}"}
             ],
-            "max_tokens": 1000,
+            "max_tokens": 500,
             "temperature": 0.8
         }
         
-        logger.info(f"🖼️ Запрос к BotHub: {prompt[:50]}...")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL}, запрос: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=120)
         
-        logger.info(f"📊 Статус ответа: {response.status_code}")
+        logger.info(f"📊 Статус: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"📦 Ответ: {json.dumps(result)[:500]}...")
+            content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
             
-            # Пробуем получить URL картинки из ответа
-            image_url = None
+            urls = re.findall(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp)', content)
             
-            # Вариант 1: прямой URL в ответе
-            if 'choices' in result and len(result['choices']) > 0:
-                content = result['choices'][0].get('message', {}).get('content', '')
-                # Ищем URL в тексте
-                import re
-                urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', content)
-                if urls:
-                    image_url = urls[0]
-            
-            # Вариант 2: если есть data поле
-            if not image_url and 'data' in result:
-                if isinstance(result['data'], list) and len(result['data']) > 0:
-                    image_url = result['data'][0].get('url')
-            
-            if image_url:
+            if urls:
+                image_url = urls[0]
                 await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
                 await asyncio.sleep(0.3)
                 
@@ -139,14 +128,14 @@ async def generate_image(message: types.Message):
                 add_image_request(user_id)
                 await status_msg.delete()
             else:
-                logger.error(f"❌ Нет URL в ответе: {result}")
-                await status_msg.edit_text("❌ Не удалось получить URL картинки. Попробуй другой запрос.")
+                logger.warning(f"⚠️ Нет URL в ответе: {content[:200]}")
+                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
         else:
-            logger.error(f"❌ Ошибка BotHub: {response.status_code} - {response.text[:500]}")
-            await status_msg.edit_text(f"❌ Ошибка генерации (код {response.status_code}). Попробуй позже.")
+            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
     except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут BotHub")
+        logger.error("❌ Таймаут")
         await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
