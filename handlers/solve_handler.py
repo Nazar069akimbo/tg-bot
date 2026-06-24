@@ -14,7 +14,8 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-IMAGE_MODEL = "flux-schnell"  # 1 499 CAPS за картинку
+# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "gpt-image-square"  # 272 CAPS за картинку!
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -105,7 +106,7 @@ async def generate_image(message: types.Message):
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (272 CAPS)")
         response = requests.post(url, headers=headers, json=data, timeout=120)
         
         if response.status_code == 200:
