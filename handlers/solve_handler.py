@@ -6,7 +6,6 @@ import logging
 import asyncio
 import requests
 import os
-import urllib.parse
 import io
 import time
 
@@ -85,48 +84,51 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        encoded_prompt = urllib.parse.quote(prompt)
+        # ===== LEXICA API (БЕСПЛАТНО, БЕЗ КЛЮЧА) =====
+        # Лучше понимает запросы
+        url = "https://lexica.qvantum.xyz/api/generate"
+        payload = {
+            "prompt": prompt,
+            "width": 512,
+            "height": 512,
+            "steps": 20,
+            "cfg": 7,
+            "sampler": "euler"
+        }
         
-        # Пробуем с разными размерами
-        sizes = ["1024x1024", "512x512", "800x800"]
-        image_data = None
+        logger.info(f"🖼️ Запрос: {prompt[:50]}...")
+        response = requests.post(url, json=payload, timeout=60)
         
-        for size in sizes:
-            try:
-                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={size.split('x')[0]}&height={size.split('x')[1]}&nologo=true"
-                logger.info(f"🖼️ Пробую размер: {size}")
-                
-                response = requests.get(image_url, timeout=30)
-                
-                if response.status_code == 200 and len(response.content) > 1000:
-                    image_data = response.content
-                    logger.info(f"✅ Успешно! Размер: {size}, байт: {len(image_data)}")
-                    break
-                else:
-                    logger.warning(f"⚠️ Размер {size} не удался: {response.status_code}, размер: {len(response.content)}")
-                    await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.warning(f"⚠️ Ошибка с размером {size}: {e}")
-                continue
-        
-        if image_data and len(image_data) > 1000:
-            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+        if response.status_code == 200:
+            data = response.json()
+            image_base64 = data.get('image')
             
-            from aiogram.types import BufferedInputFile
-            image_file = BufferedInputFile(image_data, filename="image.jpg")
-            
-            await message.answer_photo(
-                photo=image_file,
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-            )
-            add_image_request(user_id)
-            await status_msg.delete()
+            if image_base64:
+                import base64
+                image_data = base64.b64decode(image_base64)
+                
+                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                
+                from aiogram.types import BufferedInputFile
+                image_file = BufferedInputFile(image_data, filename="image.png")
+                
+                await message.answer_photo(
+                    photo=image_file,
+                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                )
+                add_image_request(user_id)
+                await status_msg.delete()
+            else:
+                await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
         else:
-            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
+            logger.error(f"❌ Ошибка: {response.status_code}")
+            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
+    except requests.exceptions.Timeout:
+        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
         logger.error(f"Image error: {e}")
-        await status_msg.edit_text(f"❌ Ошибка. Попробуй позже.")
+        await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
 async def ask_question(callback: types.CallbackQuery):
