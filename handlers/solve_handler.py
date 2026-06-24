@@ -85,28 +85,48 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        url = "https://api.bothub.chat/v1/images/generations"
+        # ===== BOTHUB API ДЛЯ КАРТИНОК =====
+        # Используем chat completions с моделью, которая умеет генерировать картинки
+        url = "https://openai.bothub.chat/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
         }
         data = {
-            "model": "gpt-image",
-            "prompt": prompt,
-            "n": 1,
-            "size": "512x512"
+            "model": "gpt-image",  # модель для генерации картинок
+            "messages": [
+                {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только ссылку на картинку в формате: http://..."},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.8
         }
         
-        logger.info(f"🖼️ Запрос к Bothub: {prompt[:50]}...")
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        logger.info(f"🖼️ Запрос к BotHub: {prompt[:50]}...")
+        response = requests.post(url, headers=headers, json=data, timeout=120)
         
         logger.info(f"📊 Статус ответа: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"📦 Ответ Bothub: {json.dumps(result)[:200]}...")
+            logger.info(f"📦 Ответ: {json.dumps(result)[:500]}...")
             
-            image_url = result.get('data', [{}])[0].get('url')
+            # Пробуем получить URL картинки из ответа
+            image_url = None
+            
+            # Вариант 1: прямой URL в ответе
+            if 'choices' in result and len(result['choices']) > 0:
+                content = result['choices'][0].get('message', {}).get('content', '')
+                # Ищем URL в тексте
+                import re
+                urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', content)
+                if urls:
+                    image_url = urls[0]
+            
+            # Вариант 2: если есть data поле
+            if not image_url and 'data' in result:
+                if isinstance(result['data'], list) and len(result['data']) > 0:
+                    image_url = result['data'][0].get('url')
             
             if image_url:
                 await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
@@ -122,11 +142,11 @@ async def generate_image(message: types.Message):
                 logger.error(f"❌ Нет URL в ответе: {result}")
                 await status_msg.edit_text("❌ Не удалось получить URL картинки. Попробуй другой запрос.")
         else:
-            logger.error(f"❌ Ошибка Bothub: {response.status_code} - {response.text[:200]}")
+            logger.error(f"❌ Ошибка BotHub: {response.status_code} - {response.text[:500]}")
             await status_msg.edit_text(f"❌ Ошибка генерации (код {response.status_code}). Попробуй позже.")
             
     except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут Bothub")
+        logger.error("❌ Таймаут BotHub")
         await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
