@@ -15,27 +15,7 @@ ADMIN_CODE = "30121979"
 # Временное хранилище для состояний
 user_pages = {}
 
-# ============ СОЗДАНИЕ ТАБЛИЦЫ ДЛЯ ОБРАЩЕНИЙ (если её нет) ============
-def init_messages_table():
-    try:
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS messages_to_admin (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            text TEXT,
-            date TEXT,
-            status TEXT DEFAULT 'new'
-        )
-        ''')
-        conn.commit()
-    except:
-        pass
-
-init_messages_table()
-
 def admin_kb():
-    """Главное меню админа"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats")],
@@ -46,6 +26,7 @@ def admin_kb():
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
             [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],
+            [InlineKeyboardButton(text="💾 Восстановить БД", callback_data="a_restore_db")],
             [InlineKeyboardButton(text="🗑️ Управление бэкапами", callback_data="a_backup_manage")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ]
@@ -373,8 +354,8 @@ async def premium_days_set(callback: types.CallbackQuery):
     try:
         await callback.bot.send_message(
             user_id,
-            f"🎉 Администратор выдал вам Premium на {days} дней!\n\n"
-            f"Теперь у вас безлимит запросов и 3000 символов на запрос."
+            f"🎉 Администратор выдал вам Premium на {days} дней!\n"
+            f"Теперь у вас безлимит запросов и картинок!"
         )
     except:
         pass
@@ -463,8 +444,6 @@ async def select_user_for_premium(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=premium_days_kb(user_id))
     await callback.answer()
 
-# ============ ПОИСК ПОЛЬЗОВАТЕЛЯ ============
-
 @router.callback_query(F.data == "a_search_user")
 async def a_search_user(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -484,23 +463,10 @@ async def a_search_user(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ============ ВХОДЯЩИЕ ОБРАЩЕНИЯ ============
-
 @router.callback_query(F.data == "a_messages")
 async def a_messages(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
-        return
-    
-    # Проверяем, есть ли таблица
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
-    if not cursor.fetchone():
-        await callback.message.edit_text(
-            "📩 **Входящие обращения**\n\n"
-            "Пока нет обращений.",
-            reply_markup=admin_kb()
-        )
-        await callback.answer()
         return
     
     cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
@@ -526,8 +492,6 @@ async def a_messages(callback: types.CallbackQuery):
     
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
     await callback.answer()
-
-# ============ ОБЩЕНИЕ С ПОЛЬЗОВАТЕЛЕМ ============
 
 @router.callback_query(F.data.startswith("send_message_"))
 async def send_message_to_user(callback: types.CallbackQuery):
@@ -579,8 +543,6 @@ async def reply_to_user(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ============ БЭКАП ============
-
 @router.callback_query(F.data == "a_backup")
 async def a_backup(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -604,12 +566,31 @@ async def a_backup(callback: types.CallbackQuery):
         
         await callback.message.edit_text(text, reply_markup=admin_kb())
     except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=admin_kb()
-        )
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=admin_kb())
 
-# ============ УПРАВЛЕНИЕ БЭКАПАМИ ============
+@router.callback_query(F.data == "a_restore_db")
+async def a_restore_db(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    await callback.message.edit_text("⏳ Восстанавливаю БД из GitHub...")
+    
+    try:
+        backup = GitHubBackup()
+        result = backup.restore_latest_backup()
+        
+        if result:
+            text = "✅ **БД ВОССТАНОВЛЕНА!**\n\n"
+            text += "📁 Последний бэкап загружен из GitHub\n"
+            text += "🔄 Бот будет перезапущен автоматически"
+        else:
+            text = "❌ **ОШИБКА ВОССТАНОВЛЕНИЯ!**\n\n"
+            text += "Проверьте, есть ли бэкапы в репозитории."
+        
+        await callback.message.edit_text(text, reply_markup=admin_kb())
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=admin_kb())
 
 @router.callback_query(F.data == "a_backup_manage")
 async def a_backup_manage(callback: types.CallbackQuery):
@@ -670,10 +651,7 @@ async def a_backup_list(callback: types.CallbackQuery):
         
         await callback.message.edit_text(text, reply_markup=backup_manage_kb())
     except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=backup_manage_kb()
-        )
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=backup_manage_kb())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("a_backup_delete_"))
@@ -741,10 +719,7 @@ async def confirm_delete(callback: types.CallbackQuery):
             
             await callback.message.edit_text(text, reply_markup=admin_kb())
         except Exception as e:
-            await callback.message.edit_text(
-                f"❌ Ошибка: {e}",
-                reply_markup=backup_manage_kb()
-            )
+            await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=backup_manage_kb())
         return
     
     try:
@@ -766,10 +741,7 @@ async def confirm_delete(callback: types.CallbackQuery):
         
         await callback.message.edit_text(text, reply_markup=admin_kb())
     except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=backup_manage_kb()
-        )
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=backup_manage_kb())
 
 @router.callback_query(F.data == "a_backup_delete_all")
 async def a_backup_delete_all(callback: types.CallbackQuery):
@@ -778,8 +750,6 @@ async def a_backup_delete_all(callback: types.CallbackQuery):
         return
     
     await a_backup_delete(callback)
-
-# ============ РАССЫЛКА ============
 
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast(callback: types.CallbackQuery):
@@ -799,8 +769,6 @@ async def a_broadcast(callback: types.CallbackQuery):
         await callback.message.delete()
         await callback.message.answer(text)
     await callback.answer()
-
-# ============ ОБРАБОТЧИКИ СООБЩЕНИЙ ============
 
 @router.message(F.text)
 async def handle_messages(message: types.Message):
@@ -987,8 +955,6 @@ async def confirm_broadcast(callback: types.CallbackQuery):
     
     await status_msg.edit_text(final_text, reply_markup=admin_kb())
     user_pages.pop(callback.from_user.id, None)
-
-# ============ ЛИМИТЫ ============
 
 @router.callback_query(F.data == "a_limits")
 async def a_limits(callback: types.CallbackQuery):
