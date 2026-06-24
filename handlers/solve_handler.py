@@ -6,7 +6,7 @@ import logging
 import asyncio
 import requests
 import os
-import json
+import re
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -15,8 +15,13 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
-IMAGE_MODEL = "flux"  # 0.00175 Pollen за картинку!
+# ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК (через чат-комплишн) =====
+IMAGE_MODELS = [
+    "gpt-4.1-nano",
+    "gpt-5-nano",
+    "gpt-5.4-nano",
+    "gpt-4o-mini"
+]
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -82,52 +87,75 @@ async def generate_image(message: types.Message):
         prompt = message.text
         
         for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
             try:
                 await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
             except:
                 pass
         
-        # ===== FLUX — САМАЯ ДЕШЁВАЯ =====
-        url = "https://api.bothub.chat/v1/images/generations"
+        url = "https://openai.bothub.chat/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        data = {
-            "model": IMAGE_MODEL,
-            "prompt": prompt,
-            "n": 1,
-            "size": "512x512"
-        }
+        image_url = None
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (самая дешёвая!), запрос: {prompt[:50]}...")
-        response = requests.post(url, headers=headers, json=data, timeout=120)
-        
-        logger.info(f"📊 Статус: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            image_url = result.get('data', [{}])[0].get('url')
-            
-            if image_url:
-                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                await asyncio.sleep(0.3)
+        for model in IMAGE_MODELS:
+            try:
+                data = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только прямую ссылку на картинку (URL). Никакого другого текста."},
+                        {"role": "user", "content": f"Создай изображение: {prompt}"}
+                    ],
+                    "max_tokens": 300,
+                    "temperature": 0.8
+                }
                 
-                await message.answer_photo(
-                    photo=image_url,
-                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-                )
-                add_image_request(user_id)
-                await status_msg.delete()
-            else:
-                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
-        elif response.status_code == 403:
-            await status_msg.edit_text("❌ Нет доступа к flux. Попробуй gptimage или zimage.")
+                logger.info(f"🖼️ Пробую модель: {model}")
+                response = requests.post(url, headers=headers, json=data, timeout=60)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    
+                    # Ищем URL
+                    urls = re.findall(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp)', content)
+                    if urls:
+                        image_url = urls[0]
+                        logger.info(f"✅ Найдена картинка через {model}")
+                        break
+                    else:
+                        # Если модель вернула прямую ссылку без картинки
+                        if "http" in content and (".jpg" in content or ".png" in content or ".jpeg" in content):
+                            image_url = content.strip()
+                            break
+                        logger.warning(f"⚠️ Нет URL в ответе {model}")
+                else:
+                    logger.warning(f"⚠️ Модель {model} вернула {response.status_code}")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка с моделью {model}: {e}")
+                continue
+        
+        if image_url:
+            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+            await asyncio.sleep(0.2)
+            
+            await message.answer_photo(
+                photo=image_url,
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+            )
+            add_image_request(user_id)
+            await status_msg.delete()
         else:
-            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
-            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
+            await status_msg.edit_text(
+                "❌ Не удалось сгенерировать картинку.\n\n"
+                "Попробуй:\n"
+                "• написать более детальное описание\n"
+                "• использовать английский язык\n"
+                "• попробовать позже"
+            )
             
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
