@@ -7,6 +7,7 @@ import asyncio
 import requests
 import os
 import urllib.parse
+import io
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -76,7 +77,6 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -84,29 +84,33 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== POLLINATIONS.AI =====
+        # ===== POLLINATIONS.AI ЧЕРЕЗ СКАЧИВАНИЕ =====
         encoded_prompt = urllib.parse.quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        # Проверяем, что URL работает
-        response = requests.get(image_url, timeout=10)
+        # Скачиваем картинку
+        response = requests.get(image_url, timeout=30)
         
         if response.status_code == 200:
             await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-            await asyncio.sleep(0.2)
+            
+            # Отправляем как файл
+            from aiogram.types import BufferedInputFile
+            image_data = io.BytesIO(response.content)
+            image_file = BufferedInputFile(image_data.getvalue(), filename="image.jpg")
             
             await message.answer_photo(
-                photo=image_url,
+                photo=image_file,
                 caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
             )
             add_image_request(user_id)
             await status_msg.delete()
         else:
-            await status_msg.edit_text(f"❌ Ошибка: {response.status_code}. Попробуй другой запрос.")
+            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"Image error: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:50]}. Попробуй позже.")
+        await status_msg.edit_text(f"❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
 async def ask_question(callback: types.CallbackQuery):
