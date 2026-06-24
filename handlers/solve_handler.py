@@ -6,7 +6,6 @@ import logging
 import asyncio
 import requests
 import os
-import json
 import re
 
 router = Router()
@@ -16,16 +15,12 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== СПИСОК МОДЕЛЕЙ ДЛЯ КАРТИНОК (от самых дешёвых) =====
+# ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК (через чат-комплишн) =====
 IMAGE_MODELS = [
-    "gpt-5-image-mini",          # самая дешёвая
-    "gpt-image-1-mini",
-    "gpt-image-1.5",
-    "gpt-image-2",
-    "gpt-image-1",
-    "mai-image-2.5",
-    "seedream-4.5",
-    "grok-imagine-image-quality"
+    "gpt-5-nano",
+    "gpt-4.1-nano",
+    "gpt-5.4-nano",
+    "gpt-4o-mini"
 ]
 
 @router.message(F.text)
@@ -92,29 +87,30 @@ async def generate_image(message: types.Message):
         prompt = message.text
         
         for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
             try:
                 await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
             except:
                 pass
         
-        url = "https://api.bothub.chat/v1/images/generations"
+        url = "https://openai.bothub.chat/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
         }
         
         image_url = None
-        last_error = None
         
-        # Перебираем все модели из списка
         for model in IMAGE_MODELS:
             try:
                 data = {
                     "model": model,
-                    "prompt": prompt,
-                    "n": 1,
-                    "size": "512x512"
+                    "messages": [
+                        {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только прямую ссылку на картинку (URL). Никакого другого текста."},
+                        {"role": "user", "content": f"Создай изображение: {prompt}"}
+                    ],
+                    "max_tokens": 300,
+                    "temperature": 0.8
                 }
                 
                 logger.info(f"🖼️ Пробую модель: {model}")
@@ -122,22 +118,28 @@ async def generate_image(message: types.Message):
                 
                 if response.status_code == 200:
                     result = response.json()
-                    image_url = result.get('data', [{}])[0].get('url')
-                    if image_url:
+                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    
+                    urls = re.findall(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp)', content)
+                    if urls:
+                        image_url = urls[0]
                         logger.info(f"✅ Найдена картинка через {model}")
                         break
                     else:
+                        # Если модель вернула описание, а не ссылку
+                        if "http" in content:
+                            image_url = content.strip()
+                            break
                         logger.warning(f"⚠️ Нет URL в ответе {model}")
                 else:
                     logger.warning(f"⚠️ Модель {model} вернула {response.status_code}")
-                    last_error = response.status_code
             except Exception as e:
                 logger.warning(f"⚠️ Ошибка с моделью {model}: {e}")
                 continue
         
         if image_url:
             await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
             
             await message.answer_photo(
                 photo=image_url,
