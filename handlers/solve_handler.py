@@ -16,8 +16,9 @@ BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== БЕСПЛАТНАЯ МОДЕЛЬ =====
-IMAGE_MODEL = "gpt-oss-120b:free"  # 0 CAPS!
+# ===== МОДЕЛИ ДЛЯ КАРТИНОК (из твоего списка) =====
+# Самая дешёвая: gpt-image-1-mini
+IMAGE_MODEL = "gpt-image-1-mini"  # или gpt-image-1.5, gpt-image-2, mai-image-2.5
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -89,7 +90,8 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        url = "https://openai.bothub.chat/v1/chat/completions"
+        # ===== ПРАВИЛЬНЫЙ ЭНДПОИНТ ДЛЯ КАРТИНОК =====
+        url = "https://api.bothub.chat/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
             "Content-Type": "application/json"
@@ -97,12 +99,9 @@ async def generate_image(message: types.Message):
         
         data = {
             "model": IMAGE_MODEL,
-            "messages": [
-                {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только прямую ссылку на картинку (URL). Никакого другого текста."},
-                {"role": "user", "content": f"Создай изображение: {prompt}"}
-            ],
-            "max_tokens": 500,
-            "temperature": 0.8
+            "prompt": prompt,
+            "n": 1,
+            "size": "512x512"
         }
         
         logger.info(f"🖼️ Модель: {IMAGE_MODEL}, запрос: {prompt[:50]}...")
@@ -112,12 +111,9 @@ async def generate_image(message: types.Message):
         
         if response.status_code == 200:
             result = response.json()
-            content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            image_url = result.get('data', [{}])[0].get('url')
             
-            urls = re.findall(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp)', content)
-            
-            if urls:
-                image_url = urls[0]
+            if image_url:
                 await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
                 await asyncio.sleep(0.3)
                 
@@ -128,8 +124,9 @@ async def generate_image(message: types.Message):
                 add_image_request(user_id)
                 await status_msg.delete()
             else:
-                logger.warning(f"⚠️ Нет URL в ответе: {content[:200]}")
                 await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
+        elif response.status_code == 403:
+            await status_msg.edit_text("❌ Нет доступа к этой модели. Попробуй другую.")
         else:
             logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
