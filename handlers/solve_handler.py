@@ -1,5 +1,5 @@
 from aiogram import Router, types, F
-from database.db import get_user, can_request, add_request, is_premium
+from database.db import get_user, can_request, add_request, is_premium, can_generate_image, add_image_request
 from ai import solve_problem
 from keyboards import main_menu
 import logging
@@ -56,7 +56,10 @@ async def generate_text(message: types.Message):
     
     remaining_after = remaining - 1 if not premium else "∞"
     result_text = f"🧠 {answer}\n\n"
-    result_text += f"🎯 Осталось запросов: {remaining_after}" if not premium else "💎 Premium — безлимит"
+    if not premium:
+        result_text += f"🎯 Осталось запросов: {remaining_after}"
+    else:
+        result_text += "💎 Premium — безлимит"
     
     await status_msg.edit_text(result_text)
 
