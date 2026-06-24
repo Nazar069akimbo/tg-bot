@@ -6,13 +6,13 @@ import logging
 import asyncio
 import requests
 import os
+import json
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
 
-# Импортируем хранилище режимов из settings_handler
 from handlers.settings_handler import user_modes
 
 @router.message(F.text)
@@ -20,7 +20,6 @@ async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
-    # Проверяем админа
     try:
         from handlers.admin_handler import user_pages
         state = user_pages.get(message.from_user.id, {})
@@ -34,7 +33,6 @@ async def handle_message(message: types.Message):
         await message.answer("👋 Напиши /start", reply_markup=main_menu())
         return
     
-    # Получаем режим из памяти
     mode = user_modes.get(message.from_user.id, "text")
     
     if mode == "image":
@@ -99,10 +97,15 @@ async def generate_image(message: types.Message):
             "size": "512x512"
         }
         
+        logger.info(f"🖼️ Запрос к Bothub: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=60)
+        
+        logger.info(f"📊 Статус ответа: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
+            logger.info(f"📦 Ответ Bothub: {json.dumps(result)[:200]}...")
+            
             image_url = result.get('data', [{}])[0].get('url')
             
             if image_url:
@@ -116,12 +119,17 @@ async def generate_image(message: types.Message):
                 add_image_request(user_id)
                 await status_msg.delete()
             else:
-                await status_msg.edit_text("❌ Не удалось сгенерировать картинку.")
+                logger.error(f"❌ Нет URL в ответе: {result}")
+                await status_msg.edit_text("❌ Не удалось получить URL картинки. Попробуй другой запрос.")
         else:
-            await status_msg.edit_text("❌ Ошибка генерации. Попробуй позже.")
+            logger.error(f"❌ Ошибка Bothub: {response.status_code} - {response.text[:200]}")
+            await status_msg.edit_text(f"❌ Ошибка генерации (код {response.status_code}). Попробуй позже.")
             
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут Bothub")
+        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
-        logger.error(f"Image error: {e}")
+        logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
