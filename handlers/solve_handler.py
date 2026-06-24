@@ -6,6 +6,7 @@ import logging
 import asyncio
 import requests
 import os
+import base64
 import io
 
 router = Router()
@@ -102,55 +103,67 @@ async def generate_image(message: types.Message):
             },
             "bothub": {
                 "include_usage": True,
-                "return_base64": True  # ← ВАЖНО: возвращаем Base64, а не ссылку
+                "return_base64": True
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
+        logger.info(f"🖼️ Запрос к {IMAGE_MODEL}")
         response = requests.post(url, headers=headers, json=data, timeout=120)
         
         if response.status_code == 200:
             result = response.json()
+            logger.info(f"📦 Ответ получен: {list(result.keys())}")
             
-            # Получаем Base64
-            image_base64 = result.get('image_base64')
-            if not image_base64:
-                # Если нет base64, пробуем получить url и скачать
-                image_url = result.get('url')
-                if image_url:
-                    if isinstance(image_url, list):
-                        image_url = image_url[0]
-                    img_response = requests.get(image_url, timeout=30)
-                    if img_response.status_code == 200:
-                        image_data = img_response.content
-                    else:
-                        await status_msg.edit_text("❌ Не удалось скачать картинку.")
-                        return
-                else:
-                    await status_msg.edit_text("❌ Не удалось получить картинку.")
-                    return
+            image_data = None
+            
+            # Пробуем получить изображение
+            if 'image' in result:
+                img = result['image']
+                if isinstance(img, str):
+                    # Если это base64
+                    try:
+                        image_data = base64.b64decode(img)
+                        logger.info(f"✅ Base64 декодирован, размер: {len(image_data)}")
+                    except:
+                        # Если это URL
+                        resp = requests.get(img, timeout=30)
+                        if resp.status_code == 200:
+                            image_data = resp.content
+                            logger.info(f"✅ Скачано по URL, размер: {len(image_data)}")
+            elif 'image_base64' in result:
+                image_data = base64.b64decode(result['image_base64'])
+                logger.info(f"✅ image_base64 декодирован, размер: {len(image_data)}")
+            elif 'url' in result:
+                url_img = result['url']
+                if isinstance(url_img, list):
+                    url_img = url_img[0]
+                resp = requests.get(url_img, timeout=30)
+                if resp.status_code == 200:
+                    image_data = resp.content
+                    logger.info(f"✅ Скачано по url, размер: {len(image_data)}")
+            
+            if image_data and len(image_data) > 1000:
+                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                await asyncio.sleep(0.2)
+                
+                from aiogram.types import BufferedInputFile
+                image_file = BufferedInputFile(image_data, filename="image.webp")
+                
+                await message.answer_photo(
+                    photo=image_file,
+                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                )
+                add_image_request(user_id)
+                await status_msg.delete()
             else:
-                import base64
-                image_data = base64.b64decode(image_base64)
-            
-            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-            await asyncio.sleep(0.2)
-            
-            from aiogram.types import BufferedInputFile
-            image_file = BufferedInputFile(image_data, filename="image.webp")
-            
-            await message.answer_photo(
-                photo=image_file,
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-            )
-            add_image_request(user_id)
-            await status_msg.delete()
+                logger.error(f"❌ Не удалось получить изображение: {result}")
+                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
         else:
-            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+            logger.error(f"❌ Ошибка API: {response.status_code} - {response.text[:200]}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
     except Exception as e:
-        logger.error(f"Image error: {e}")
+        logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
