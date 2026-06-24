@@ -1,6 +1,6 @@
 from aiogram import Router, types
 from aiogram.filters import Command
-from database.db import create_user, get_user, add_referral, cursor
+from database.db import create_user, get_user, add_referral, set_user_mode
 from keyboards import main_menu
 import logging
 
@@ -27,9 +27,9 @@ async def start_cmd(message: types.Message):
     
     if not user:
         create_user(user_id, message.from_user.username or "")
+        set_user_mode(user_id, "text")  # По умолчанию режим Текст
         logger.info(f"New user registered: {user_id}")
         
-        # Обработка реферала
         if referrer_id and referrer_id != user_id:
             ref_user = get_user(referrer_id)
             if ref_user:
@@ -38,8 +38,6 @@ async def start_cmd(message: types.Message):
                 logger.info(f"Referral saved: {referrer_id} -> {user_id}")
             else:
                 logger.warning(f"Referrer {referrer_id} not found")
-        else:
-            logger.info(f"No valid referral")
     else:
         logger.info(f"Existing user: {user_id}")
     
@@ -49,6 +47,8 @@ async def start_cmd(message: types.Message):
         "✅ 10 запросов в день бесплатно\n"
         "💎 Premium: безлимит\n"
         "👥 Приведи друга → +5 запросов\n\n"
-        "Просто напиши свой вопрос!",
+        "📌 Настрой режим в меню ⚙️ Настройки\n"
+        "• 🧠 Текст — отвечаю на вопросы\n"
+        "• 🖼️ Картинка — рисую по описанию",
         reply_markup=main_menu()
     )

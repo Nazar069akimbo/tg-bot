@@ -226,3 +226,20 @@ def set_user_plan(user_id, plan):
     conn.commit()
     cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
+
+# Добавляем колонку для режима работы пользователя
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN user_mode TEXT DEFAULT 'text'")
+except sqlite3.OperationalError:
+    pass
+conn.commit()
+
+def get_user_mode(user_id):
+    user = get_user(user_id)
+    if user and len(user) > 9:
+        return user[9]
+    return 'text'
+
+def set_user_mode(user_id, mode):
+    cursor.execute("UPDATE users SET user_mode = ? WHERE user_id = ?", (mode, user_id))
+    conn.commit()

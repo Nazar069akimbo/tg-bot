@@ -4,8 +4,8 @@ def main_menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🧠 Задать вопрос", callback_data="ask_question"),
-                InlineKeyboardButton(text="🖼️ Сгенерировать картинку", callback_data="generate_image")
+                InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
+                InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
             ],
             [
                 InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
@@ -22,6 +22,16 @@ def main_menu():
             [
                 InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"),
                 InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")
+            ]
+        ]
+    )
+
+def mode_selector():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
+                InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
             ]
         ]
     )
