@@ -17,8 +17,9 @@ BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-IMAGE_MODEL = "flux-schnell"
-PROMPT_MODEL = "gpt-4.1-nano"  # Дешёвая для создания промптов
+# ===== МОДЕЛИ =====
+IMAGE_MODEL = "flux-schnell"           # 1 499 CAPS за картинку
+PROMPT_MODEL = "deepseek-v4-flash"     # как в обычном текстовом запросе
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -102,7 +103,7 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # ===== ШАГ 1: ГЕНЕРАЦИЯ ПРОМПТА =====
+        # ===== ШАГ 1: ГЕНЕРАЦИЯ ПРОМПТА (через DeepSeek) =====
         await status_msg.edit_text("🔍 Создаю детальное описание...")
         
         prompt_url = "https://openai.bothub.chat/v1/chat/completions"
@@ -141,14 +142,12 @@ async def generate_image(message: types.Message):
             prompt_result = prompt_response.json()
             enhanced_prompt = prompt_result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
             
-            # Убираем возможные кавычки
             if enhanced_prompt.startswith('"') and enhanced_prompt.endswith('"'):
                 enhanced_prompt = enhanced_prompt[1:-1]
             
             logger.info(f"📝 Сгенерирован промпт: {enhanced_prompt[:100]}...")
             await status_msg.edit_text(f"🎨 Генерирую картинку по описанию...")
         else:
-            # Если не получилось создать промпт — используем оригинальный
             enhanced_prompt = user_prompt
             logger.warning(f"⚠️ Не удалось создать промпт, используем оригинальный")
         
