@@ -6,13 +6,15 @@ import logging
 import asyncio
 import requests
 import os
-import urllib.parse
-import io
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
+
 from handlers.settings_handler import user_modes
+
+IMAGE_MODEL = "flux-schnell"  # 1 499 CAPS за картинку
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -84,26 +86,50 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== POLLINATIONS.AI =====
-        encoded_prompt = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
+        url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
+        headers = {
+            "Authorization": f"Bearer {BOTHUB_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        response = requests.get(image_url, timeout=30)
+        data = {
+            "model": IMAGE_MODEL,
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": "1:1",
+                "output_format": "webp"
+            },
+            "bothub": {
+                "include_usage": True,
+                "return_base64": False
+            }
+        }
         
-        if response.status_code == 200 and len(response.content) > 1000:
-            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
+        response = requests.post(url, headers=headers, json=data, timeout=120)
+        
+        if response.status_code == 200:
+            result = response.json()
+            image_url = result.get('url')
             
-            from aiogram.types import BufferedInputFile
-            image_file = BufferedInputFile(response.content, filename="image.jpg")
-            
-            await message.answer_photo(
-                photo=image_file,
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-            )
-            add_image_request(user_id)
-            await status_msg.delete()
+            if image_url:
+                if isinstance(image_url, list):
+                    image_url = image_url[0]
+                
+                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                await asyncio.sleep(0.2)
+                
+                await message.answer_photo(
+                    photo=image_url,
+                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                )
+                add_image_request(user_id)
+                await status_msg.delete()
+            else:
+                await status_msg.edit_text("❌ Не удалось получить картинку.")
         else:
-            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
+            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
     except Exception as e:
         logger.error(f"Image error: {e}")
