@@ -25,13 +25,3 @@ def main_menu():
             ]
         ]
     )
-
-def mode_selector():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
-                InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
-            ]
-        ]
-    )

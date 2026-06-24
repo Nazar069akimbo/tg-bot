@@ -17,7 +17,7 @@ async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
-    # Проверяем, админ ли это в режиме поиска
+    # Проверяем админа
     try:
         from handlers.admin_handler import user_pages
         state = user_pages.get(message.from_user.id, {})
@@ -28,13 +28,10 @@ async def handle_message(message: types.Message):
     
     user = get_user(message.from_user.id)
     if not user:
-        await message.answer(
-            "👋 Напишите /start для регистрации",
-            reply_markup=main_menu()
-        )
+        await message.answer("👋 Напиши /start", reply_markup=main_menu())
         return
     
-    # ============ ОПРЕДЕЛЯЕМ РЕЖИМ ============
+    # Получаем режим пользователя
     mode = get_user_mode(message.from_user.id)
     
     if mode == "image":
@@ -42,15 +39,10 @@ async def handle_message(message: types.Message):
     else:
         await generate_text(message)
 
-# ============ ГЕНЕРАЦИЯ ТЕКСТА ============
 async def generate_text(message: types.Message):
     ok, remaining = can_request(message.from_user.id)
     if not ok:
-        await message.answer(
-            f"🔒 Лимит исчерпан!\n\n"
-            f"Осталось: 0\n\n"
-            f"💎 Купите Premium: /subscribe"
-        )
+        await message.answer("🔒 Лимит исчерпан! Купи Premium: /subscribe")
         return
     
     premium = is_premium(message.from_user.id)
@@ -61,14 +53,10 @@ async def generate_text(message: types.Message):
     
     remaining_after = remaining - 1 if not premium else "∞"
     result_text = f"🧠 {answer}\n\n"
-    if not premium:
-        result_text += f"🎯 Осталось запросов: {remaining_after}"
-    else:
-        result_text += f"💎 Premium — безлимит"
+    result_text += f"🎯 Осталось запросов: {remaining_after}" if not premium else "💎 Premium — безлимит"
     
     await status_msg.edit_text(result_text)
 
-# ============ ГЕНЕРАЦИЯ КАРТИНКИ ============
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
@@ -76,7 +64,7 @@ async def generate_image(message: types.Message):
     if not can_gen:
         await message.answer(
             f"❌ Лимит картинок исчерпан!\n\n"
-            f"🎯 Осталось: {remaining}\n"
+            f"Осталось: {remaining}\n"
             f"💎 Купи Premium: /subscribe"
         )
         return
@@ -86,9 +74,7 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
-        # Прогресс
-        progress = [10, 25, 45, 60, 75, 90]
-        for p in progress:
+        for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.3)
             try:
                 await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
@@ -119,7 +105,7 @@ async def generate_image(message: types.Message):
                 
                 await message.answer_photo(
                     photo=image_url,
-                    caption=f"🖼️ **Твоя картинка**\n📝 Запрос: {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
                 )
                 add_image_request(user_id)
                 await status_msg.delete()
