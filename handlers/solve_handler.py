@@ -8,6 +8,7 @@ import requests
 import os
 import urllib.parse
 import io
+import time
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -84,20 +85,35 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== POLLINATIONS.AI ЧЕРЕЗ СКАЧИВАНИЕ =====
         encoded_prompt = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        # Скачиваем картинку
-        response = requests.get(image_url, timeout=30)
+        # Пробуем с разными размерами
+        sizes = ["1024x1024", "512x512", "800x800"]
+        image_data = None
         
-        if response.status_code == 200:
+        for size in sizes:
+            try:
+                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={size.split('x')[0]}&height={size.split('x')[1]}&nologo=true"
+                logger.info(f"🖼️ Пробую размер: {size}")
+                
+                response = requests.get(image_url, timeout=30)
+                
+                if response.status_code == 200 and len(response.content) > 1000:
+                    image_data = response.content
+                    logger.info(f"✅ Успешно! Размер: {size}, байт: {len(image_data)}")
+                    break
+                else:
+                    logger.warning(f"⚠️ Размер {size} не удался: {response.status_code}, размер: {len(response.content)}")
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка с размером {size}: {e}")
+                continue
+        
+        if image_data and len(image_data) > 1000:
             await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
             
-            # Отправляем как файл
             from aiogram.types import BufferedInputFile
-            image_data = io.BytesIO(response.content)
-            image_file = BufferedInputFile(image_data.getvalue(), filename="image.jpg")
+            image_file = BufferedInputFile(image_data, filename="image.jpg")
             
             await message.answer_photo(
                 photo=image_file,
@@ -106,7 +122,7 @@ async def generate_image(message: types.Message):
             add_image_request(user_id)
             await status_msg.delete()
         else:
-            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй другой запрос.")
+            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"Image error: {e}")
