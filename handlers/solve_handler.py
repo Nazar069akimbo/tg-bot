@@ -1,5 +1,6 @@
 from aiogram import Router, types, F
 from database.db import get_user, can_request, add_request, is_premium, can_generate_image, add_image_request
+from database.db import is_trial_active, get_trial_remaining, use_trial_image
 from ai import solve_problem
 from keyboards import main_menu
 import logging
@@ -15,7 +16,6 @@ BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== РАБОЧАЯ МОДЕЛЬ =====
 IMAGE_MODEL = "flux-schnell"
 
 @router.message(F.text)
@@ -69,11 +69,31 @@ async def generate_text(message: types.Message):
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
+    # ===== ПРОВЕРКА ПРОБНОГО ПЕРИОДА =====
+    trial_remaining = get_trial_remaining(user_id)
     can_gen, remaining = can_generate_image(user_id)
-    if not can_gen:
+    
+    # Если есть пробный период и остались картинки
+    if trial_remaining > 0:
+        can_gen = True
+        remaining = trial_remaining
+        logger.info(f"🎁 Пробный период: осталось {trial_remaining} картинок")
+    else:
+        # Проверяем, активен ли пробный период (показываем сообщение)
+        if is_trial_active(user_id) and trial_remaining == 0:
+            await message.answer(
+                f"🎁 **Пробный период активен, но лимит исчерпан!**\n\n"
+                f"📊 Сегодня использовано: 5/5 картинок\n"
+                f"⏳ Завтра лимит обновится\n\n"
+                f"💎 Купи Premium для безлимита: /subscribe"
+            )
+            return
+    
+    # Если нет пробного периода и нет Premium
+    if not can_gen and not is_trial_active(user_id):
         await message.answer(
             f"❌ Лимит картинок исчерпан!\n\n"
-            f"Осталось: {remaining}\n"
+            f"📊 Осталось: {remaining}\n"
             f"💎 Купи Premium: /subscribe"
         )
         return
@@ -135,7 +155,14 @@ async def generate_image(message: types.Message):
                             photo=image_file,
                             caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
                         )
-                        add_image_request(user_id)
+                        
+                        # Списываем картинку
+                        if trial_remaining > 0:
+                            use_trial_image(user_id)
+                            logger.info(f"🎁 Использована пробная картинка, осталось: {trial_remaining - 1}")
+                        else:
+                            add_image_request(user_id)
+                        
                         await status_msg.delete()
                         return
             

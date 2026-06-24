@@ -219,3 +219,62 @@ def get_user_mode(user_id):
 def set_user_mode(user_id, mode):
     cursor.execute("UPDATE users SET user_mode = ? WHERE user_id = ?", (mode, user_id))
     conn.commit()
+
+# Добавляем колонки для пробного периода
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN trial_start TEXT")
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN trial_used INTEGER DEFAULT 0")
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN trial_active INTEGER DEFAULT 0")
+except sqlite3.OperationalError:
+    pass
+
+conn.commit()
+print("✅ Добавлены колонки для пробного периода")
+
+def get_trial_info(user_id):
+    """Возвращает информацию о пробном периоде"""
+    user = get_user(user_id)
+    if not user or len(user) < 12:
+        return None, 0, False
+    
+    trial_start = user[9] if len(user) > 9 else None
+    trial_used = user[10] if len(user) > 10 else 0
+    trial_active = user[11] if len(user) > 11 else 0
+    
+    return trial_start, trial_used, bool(trial_active)
+
+def is_trial_active(user_id):
+    """Проверяет, активен ли пробный период"""
+    trial_start, trial_used, trial_active = get_trial_info(user_id)
+    
+    if not trial_active or not trial_start:
+        return False
+    
+    # Проверяем, прошло ли 2 дня
+    from datetime import datetime
+    start_date = datetime.fromisoformat(trial_start)
+    days_passed = (datetime.now() - start_date).days
+    
+    return days_passed < 2  # 2 дня
+
+def get_trial_remaining(user_id):
+    """Возвращает сколько картинок осталось в пробном периоде"""
+    if not is_trial_active(user_id):
+        return 0
+    
+    _, trial_used, _ = get_trial_info(user_id)
+    trial_limit = 5
+    return max(0, trial_limit - trial_used)
+
+def use_trial_image(user_id):
+    """Использовать одну картинку из пробного периода"""
+    cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
