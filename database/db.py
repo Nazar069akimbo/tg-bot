@@ -3,15 +3,21 @@ from datetime import datetime, timedelta
 import os
 
 DB_PATH = 'data/repsolver.db'
+
+# ===== ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БД =====
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+    print("🗑️ СТАРАЯ БД УДАЛЕНА — создаём новую с правильными колонками")
+
 os.makedirs('data', exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Таблица users
+    # Таблица users со ВСЕМИ колонками
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -27,16 +33,8 @@ def init_db():
     )
     ''')
     
-    # ПРИНУДИТЕЛЬНО добавляем колонку user_mode (если её нет)
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN user_mode TEXT DEFAULT 'text'")
-        print("✅ Добавлена колонка user_mode")
-    except sqlite3.OperationalError:
-        print("ℹ️ Колонка user_mode уже существует")
-    
-    # Другие таблицы
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -46,14 +44,14 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
+    CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -64,7 +62,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
+    CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -75,7 +73,7 @@ def init_db():
     ''')
     
     conn.commit()
-    print("✅ База данных готова")
+    print("✅ Новая БД создана со ВСЕМИ колонками")
 
 def init_settings():
     cursor.execute('''
