@@ -15,8 +15,8 @@ BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
-IMAGE_MODEL = "gpt-image-square"  # 272 CAPS за картинку!
+# ===== РАБОЧАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "flux-schnell"
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -90,7 +90,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== REPLICATE ШЛЮЗ (BotHub) =====
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
@@ -110,14 +109,14 @@ async def generate_image(message: types.Message):
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (272 CAPS)")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
         response = requests.post(url, headers=headers, json=data, timeout=60)
         
         if response.status_code == 200:
             result = response.json()
             
             image_url = result.get('url')
-            if isinstance(image_url, list) and len(image_url) > 0:
+            if isinstance(image_url, list):
                 image_url = image_url[0]
             
             if image_url:
@@ -139,16 +138,10 @@ async def generate_image(message: types.Message):
                         add_image_request(user_id)
                         await status_msg.delete()
                         return
-                    else:
-                        logger.error(f"❌ Мало данных: {len(image_data)} байт")
-                else:
-                    logger.error(f"❌ Ошибка скачивания: {img_response.status_code}")
-            else:
-                logger.error(f"❌ Нет URL: {result}")
-                
+            
             await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
         else:
-            logger.error(f"❌ Ошибка API: {response.status_code}")
+            logger.error(f"❌ Ошибка: {response.status_code}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
     except Exception as e:
