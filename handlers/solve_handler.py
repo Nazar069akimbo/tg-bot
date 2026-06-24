@@ -71,11 +71,12 @@ async def generate_image(message: types.Message):
         )
         return
     
-    status_msg = await message.answer("🎨 Генерирую картинку... 0%")
+    status_msg = await message.answer("🎨 Генерирую картинку...")
     
     try:
         prompt = message.text
         
+        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -83,12 +84,12 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== POLLINATIONS.AI — РАБОТАЕТ 100% =====
+        # ===== POLLINATIONS.AI =====
         encoded_prompt = urllib.parse.quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        # Проверяем доступность
-        response = requests.head(image_url, timeout=10)
+        # Проверяем, что URL работает
+        response = requests.get(image_url, timeout=10)
         
         if response.status_code == 200:
             await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
@@ -101,11 +102,11 @@ async def generate_image(message: types.Message):
             add_image_request(user_id)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
+            await status_msg.edit_text(f"❌ Ошибка: {response.status_code}. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"Image error: {e}")
-        await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:50]}. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
 async def ask_question(callback: types.CallbackQuery):
