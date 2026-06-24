@@ -6,25 +6,23 @@ import logging
 import asyncio
 import requests
 import os
-import base64
 import io
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')  # используем ту же переменную
+BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== МОДЕЛЬ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
-IMAGE_MODEL = "flux-schnell"  # 1499 CAPS за картинку
+# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "gpt-image-square"  # 272 CAPS за картинку!
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
-    # Проверяем, не в режиме ли админ поиска
     try:
         from handlers.admin_handler import user_pages
         state = user_pages.get(message.from_user.id, {})
@@ -38,7 +36,6 @@ async def handle_message(message: types.Message):
         await message.answer("👋 Напиши /start", reply_markup=main_menu())
         return
     
-    # Получаем режим пользователя (текст/картинка)
     mode = user_modes.get(message.from_user.id, "text")
     
     if mode == "image":
@@ -72,7 +69,6 @@ async def generate_text(message: types.Message):
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
-    # Проверяем лимиты
     can_gen, remaining = can_generate_image(user_id)
     if not can_gen:
         await message.answer(
@@ -87,7 +83,6 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -111,30 +106,24 @@ async def generate_image(message: types.Message):
             },
             "bothub": {
                 "include_usage": True,
-                "return_base64": False  # False = возвращаем URL
+                "return_base64": False
             }
         }
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}, запрос: {prompt[:30]}...")
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (272 CAPS)")
         response = requests.post(url, headers=headers, json=data, timeout=60)
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"📦 Ответ получен: {list(result.keys())}")
             
-            # Получаем URL
             image_url = result.get('url')
-            
-            # Если url в виде списка — берём первый
             if isinstance(image_url, list) and len(image_url) > 0:
                 image_url = image_url[0]
             
             if image_url:
-                # Скачиваем картинку по URL
                 img_response = requests.get(image_url, timeout=30)
                 if img_response.status_code == 200:
                     image_data = img_response.content
-                    logger.info(f"✅ Скачано картинка, размер: {len(image_data)} байт")
                     
                     if len(image_data) > 1000:
                         await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
@@ -151,20 +140,17 @@ async def generate_image(message: types.Message):
                         await status_msg.delete()
                         return
                     else:
-                        logger.error(f"❌ Скачано слишком мало данных: {len(image_data)} байт")
+                        logger.error(f"❌ Мало данных: {len(image_data)} байт")
                 else:
-                    logger.error(f"❌ Не удалось скачать картинку: {img_response.status_code}")
+                    logger.error(f"❌ Ошибка скачивания: {img_response.status_code}")
             else:
-                logger.error(f"❌ Нет URL в ответе: {result}")
+                logger.error(f"❌ Нет URL: {result}")
                 
             await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
         else:
-            logger.error(f"❌ Ошибка API: {response.status_code} - {response.text[:200]}")
+            logger.error(f"❌ Ошибка API: {response.status_code}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
-    except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут")
-        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
