@@ -6,12 +6,17 @@ import logging
 import asyncio
 import requests
 import os
-import urllib.parse
+import json
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
+
 from handlers.settings_handler import user_modes
+
+# ===== САМАЯ ДЕШЁВАЯ МОДЕЛЬ =====
+IMAGE_MODEL = "flux"  # 0.00175 Pollen за картинку!
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -76,36 +81,56 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.3)
             try:
                 await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
             except:
                 pass
         
-        # ===== БЕСПЛАТНЫЙ API (без ключа) =====
-        encoded_prompt = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
+        # ===== FLUX — САМАЯ ДЕШЁВАЯ =====
+        url = "https://api.bothub.chat/v1/images/generations"
+        headers = {
+            "Authorization": f"Bearer {BOTHUB_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        # Проверяем доступность
-        response = requests.head(image_url, timeout=10)
+        data = {
+            "model": IMAGE_MODEL,
+            "prompt": prompt,
+            "n": 1,
+            "size": "512x512"
+        }
+        
+        logger.info(f"🖼️ Модель: {IMAGE_MODEL} (самая дешёвая!), запрос: {prompt[:50]}...")
+        response = requests.post(url, headers=headers, json=data, timeout=120)
+        
+        logger.info(f"📊 Статус: {response.status_code}")
         
         if response.status_code == 200:
-            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-            await asyncio.sleep(0.2)
+            result = response.json()
+            image_url = result.get('data', [{}])[0].get('url')
             
-            await message.answer_photo(
-                photo=image_url,
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-            )
-            add_image_request(user_id)
-            await status_msg.delete()
+            if image_url:
+                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                await asyncio.sleep(0.3)
+                
+                await message.answer_photo(
+                    photo=image_url,
+                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+                )
+                add_image_request(user_id)
+                await status_msg.delete()
+            else:
+                await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
+        elif response.status_code == 403:
+            await status_msg.edit_text("❌ Нет доступа к flux. Попробуй gptimage или zimage.")
         else:
-            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
+            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
             
     except Exception as e:
-        logger.error(f"Image error: {e}")
+        logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
