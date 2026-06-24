@@ -1,5 +1,5 @@
 from aiogram import Router, types, F
-from database.db import get_user, can_request, add_request, is_premium, get_user_mode
+from database.db import get_user, can_request, add_request, is_premium
 from ai import solve_problem
 from keyboards import main_menu
 import logging
@@ -11,6 +11,9 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
+
+# Импортируем хранилище режимов из settings_handler
+from handlers.settings_handler import user_modes
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -31,8 +34,8 @@ async def handle_message(message: types.Message):
         await message.answer("👋 Напиши /start", reply_markup=main_menu())
         return
     
-    # Получаем режим пользователя
-    mode = get_user_mode(message.from_user.id)
+    # Получаем режим из памяти
+    mode = user_modes.get(message.from_user.id, "text")
     
     if mode == "image":
         await generate_image(message)
