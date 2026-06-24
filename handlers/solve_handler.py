@@ -6,22 +6,12 @@ import logging
 import asyncio
 import requests
 import os
-import re
+import urllib.parse
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
-
 from handlers.settings_handler import user_modes
-
-# ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК (через чат-комплишн) =====
-IMAGE_MODELS = [
-    "gpt-5-nano",
-    "gpt-4.1-nano",
-    "gpt-5.4-nano",
-    "gpt-4o-mini"
-]
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -86,6 +76,7 @@ async def generate_image(message: types.Message):
     try:
         prompt = message.text
         
+        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -93,51 +84,14 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        url = "https://openai.bothub.chat/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {BOTHUB_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        # ===== БЕСПЛАТНЫЙ API (без ключа) =====
+        encoded_prompt = urllib.parse.quote(prompt)
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        image_url = None
+        # Проверяем доступность
+        response = requests.head(image_url, timeout=10)
         
-        for model in IMAGE_MODELS:
-            try:
-                data = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": "Ты — генератор изображений. Создай картинку по описанию. Верни только прямую ссылку на картинку (URL). Никакого другого текста."},
-                        {"role": "user", "content": f"Создай изображение: {prompt}"}
-                    ],
-                    "max_tokens": 300,
-                    "temperature": 0.8
-                }
-                
-                logger.info(f"🖼️ Пробую модель: {model}")
-                response = requests.post(url, headers=headers, json=data, timeout=60)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                    
-                    urls = re.findall(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp)', content)
-                    if urls:
-                        image_url = urls[0]
-                        logger.info(f"✅ Найдена картинка через {model}")
-                        break
-                    else:
-                        # Если модель вернула описание, а не ссылку
-                        if "http" in content:
-                            image_url = content.strip()
-                            break
-                        logger.warning(f"⚠️ Нет URL в ответе {model}")
-                else:
-                    logger.warning(f"⚠️ Модель {model} вернула {response.status_code}")
-            except Exception as e:
-                logger.warning(f"⚠️ Ошибка с моделью {model}: {e}")
-                continue
-        
-        if image_url:
+        if response.status_code == 200:
             await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
             await asyncio.sleep(0.2)
             
@@ -148,16 +102,10 @@ async def generate_image(message: types.Message):
             add_image_request(user_id)
             await status_msg.delete()
         else:
-            await status_msg.edit_text(
-                "❌ Не удалось сгенерировать картинку.\n\n"
-                "Попробуй:\n"
-                "• написать более детальное описание\n"
-                "• использовать английский язык\n"
-                "• попробовать позже"
-            )
+            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
             
     except Exception as e:
-        logger.error(f"❌ Image error: {e}")
+        logger.error(f"Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
 @router.callback_query(F.data == "ask_question")
