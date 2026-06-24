@@ -23,12 +23,23 @@ def init_db():
     )
     ''')
     
-    # Добавляем колонки
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode']:
+    # ПРИНУДИТЕЛЬНО добавляем все колонки
+    columns_to_add = [
+        ('image_requests', 'INTEGER DEFAULT 0'),
+        ('image_limit', 'INTEGER DEFAULT 3'),
+        ('plan', 'TEXT DEFAULT "basic"'),
+        ('user_mode', 'TEXT DEFAULT "text"')
+    ]
+    
+    for col_name, col_type in columns_to_add:
         try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
-        except sqlite3.OperationalError:
-            pass
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+            print(f"✅ Добавлена колонка {col_name}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                print(f"ℹ️ Колонка {col_name} уже существует")
+            else:
+                print(f"⚠️ Ошибка: {e}")
     
     # Таблица referrals
     cursor.execute('''
