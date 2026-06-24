@@ -6,16 +6,16 @@ import logging
 import asyncio
 import requests
 import os
+import io
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
+BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
-# ===== ЕДИНСТВЕННАЯ РАБОЧАЯ МОДЕЛЬ =====
-IMAGE_MODEL = "flux-schnell"  # 1499 CAPS
+IMAGE_MODEL = "flux-schnell"
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -87,7 +87,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== REPLICATE ШЛЮЗ (РАБОТАЕТ) =====
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {BOTHUB_API_KEY}",
@@ -103,7 +102,7 @@ async def generate_image(message: types.Message):
             },
             "bothub": {
                 "include_usage": True,
-                "return_base64": False
+                "return_base64": True  # ← ВАЖНО: возвращаем Base64, а не ссылку
             }
         }
         
@@ -112,23 +111,40 @@ async def generate_image(message: types.Message):
         
         if response.status_code == 200:
             result = response.json()
-            image_url = result.get('url')
             
-            if image_url:
-                if isinstance(image_url, list):
-                    image_url = image_url[0]
-                
-                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                await asyncio.sleep(0.2)
-                
-                await message.answer_photo(
-                    photo=image_url,
-                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-                )
-                add_image_request(user_id)
-                await status_msg.delete()
+            # Получаем Base64
+            image_base64 = result.get('image_base64')
+            if not image_base64:
+                # Если нет base64, пробуем получить url и скачать
+                image_url = result.get('url')
+                if image_url:
+                    if isinstance(image_url, list):
+                        image_url = image_url[0]
+                    img_response = requests.get(image_url, timeout=30)
+                    if img_response.status_code == 200:
+                        image_data = img_response.content
+                    else:
+                        await status_msg.edit_text("❌ Не удалось скачать картинку.")
+                        return
+                else:
+                    await status_msg.edit_text("❌ Не удалось получить картинку.")
+                    return
             else:
-                await status_msg.edit_text("❌ Не удалось получить картинку.")
+                import base64
+                image_data = base64.b64decode(image_base64)
+            
+            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+            await asyncio.sleep(0.2)
+            
+            from aiogram.types import BufferedInputFile
+            image_file = BufferedInputFile(image_data, filename="image.webp")
+            
+            await message.answer_photo(
+                photo=image_file,
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+            )
+            add_image_request(user_id)
+            await status_msg.delete()
         else:
             logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
             await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
