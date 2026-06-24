@@ -6,18 +6,13 @@ import logging
 import asyncio
 import requests
 import os
-import json
-import base64
+import urllib.parse
+import io
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('BOTHUB_API_KEY')
-
 from handlers.settings_handler import user_modes
-
-# ===== МОДЕЛЬ ДЛЯ КАРТИНОК (OpenAI шлюз) =====
-IMAGE_MODEL = "gemini-3.1-flash-image-preview"  # или gpt-image-2
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -89,59 +84,26 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # ===== OPENAI ШЛЮЗ =====
-        url = "https://openai.bothub.chat/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {BOTHUB_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        # ===== POLLINATIONS.AI =====
+        encoded_prompt = urllib.parse.quote(prompt)
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        data = {
-            "model": IMAGE_MODEL,
-            "messages": [
-                {"role": "user", "content": f"Нарисуй: {prompt}"}
-            ]
-        }
+        response = requests.get(image_url, timeout=30)
         
-        logger.info(f"🖼️ Модель: {IMAGE_MODEL}")
-        response = requests.post(url, headers=headers, json=data, timeout=120)
-        
-        if response.status_code == 200:
-            result = response.json()
+        if response.status_code == 200 and len(response.content) > 1000:
+            await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
             
-            # Извлекаем изображение из ответа
-            images = result.get('choices', [{}])[0].get('message', {}).get('images', [])
+            from aiogram.types import BufferedInputFile
+            image_file = BufferedInputFile(response.content, filename="image.jpg")
             
-            if images and len(images) > 0:
-                image_data = images[0].get('image_url', {}).get('url', '')
-                
-                # Убираем префикс "data:image/png;base64,"
-                if image_data.startswith('data:image'):
-                    image_data = image_data.split(',')[1]
-                
-                # Декодируем Base64
-                import base64
-                image_bytes = base64.b64decode(image_data)
-                
-                await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                await asyncio.sleep(0.2)
-                
-                from aiogram.types import BufferedInputFile
-                image_file = BufferedInputFile(image_bytes, filename="image.png")
-                
-                await message.answer_photo(
-                    photo=image_file,
-                    caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
-                )
-                add_image_request(user_id)
-                await status_msg.delete()
-            else:
-                # Если нет images, пробуем получить текст
-                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                await status_msg.edit_text(f"❌ {content}")
+            await message.answer_photo(
+                photo=image_file,
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+            )
+            add_image_request(user_id)
+            await status_msg.delete()
         else:
-            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
-            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
+            await status_msg.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"Image error: {e}")
