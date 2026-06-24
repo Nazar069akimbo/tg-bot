@@ -3,20 +3,15 @@ from datetime import datetime, timedelta
 import os
 
 DB_PATH = 'data/repsolver.db'
-
-# ВРЕМЕННО УДАЛЯЕМ СТАРУЮ БД
-if os.path.exists(DB_PATH):
-    os.remove(DB_PATH)
-    print("🗑️ Старая БД удалена")
-
 os.makedirs('data', exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
+    # Таблица users
     cursor.execute('''
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -32,8 +27,9 @@ def init_db():
     )
     ''')
     
+    # Таблица referrals
     cursor.execute('''
-    CREATE TABLE referrals (
+    CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -42,15 +38,17 @@ def init_db():
     )
     ''')
     
+    # Таблица admins
     cursor.execute('''
-    CREATE TABLE admins (
+    CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
+    # Таблица payments
     cursor.execute('''
-    CREATE TABLE payments (
+    CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -60,8 +58,9 @@ def init_db():
     )
     ''')
     
+    # Таблица messages_to_admin
     cursor.execute('''
-    CREATE TABLE messages_to_admin (
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -71,8 +70,15 @@ def init_db():
     )
     ''')
     
+    # Добавляем недостающие колонки, если они есть
+    for col in ['image_requests', 'image_limit', 'plan', 'user_mode']:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
+        except sqlite3.OperationalError:
+            pass
+    
     conn.commit()
-    print("✅ База данных создана с новыми колонками")
+    print("✅ База данных готова")
 
 def init_settings():
     cursor.execute('''
@@ -175,8 +181,8 @@ def get_stats():
 
 def get_user_plan(user_id):
     user = get_user(user_id)
-    if user:
-        return user[9] if len(user) > 9 else 'basic'
+    if user and len(user) > 9:
+        return user[9]
     return 'basic'
 
 def get_image_limit(user_id):
