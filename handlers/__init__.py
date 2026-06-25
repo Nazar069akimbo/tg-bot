@@ -9,4 +9,3 @@ from . import admin_handler
 from . import leaderboard_handler
 from . import help_handler
 from . import contact_handler
-from . import image_handler

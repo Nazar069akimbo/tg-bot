@@ -1,5 +1,4 @@
 from aiogram import Router, types, F
-from aiogram.filters import Command
 from database.db import get_user, cursor, conn, is_admin
 from keyboards import main_menu
 import logging
@@ -8,7 +7,6 @@ import os
 
 router = Router()
 logger = logging.getLogger(__name__)
-
 user_pages = {}
 
 @router.callback_query(F.data == "contact_admin")
@@ -77,8 +75,7 @@ async def handle_contact(message: types.Message):
             pass
         
         await message.answer(
-            "✅ Ваше обращение отправлено администратору!\n\n"
-            "Ожидайте ответа.",
+            "✅ Ваше обращение отправлено администратору!\n\nОжидайте ответа.",
             reply_markup=main_menu()
         )
     except Exception as e:

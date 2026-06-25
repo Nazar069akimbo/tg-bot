@@ -89,9 +89,9 @@ async def select_plan(callback: types.CallbackQuery):
     plan = callback.data.replace("plan_", "")
     
     plans = {
-        'basic': {'price': '0 ⭐', 'images': '3', 'description': 'Бесплатный базовый план'},
-        'premium': {'price': '49 ⭐', 'images': '50', 'description': '50 картинок/день + безлимит текста'},
-        'pro': {'price': '99 ⭐', 'images': '200', 'description': '200 картинок/день + безлимит текста'}
+        'basic': {'price': '0 ⭐', 'images': '3'},
+        'premium': {'price': '49 ⭐', 'images': '50'},
+        'pro': {'price': '99 ⭐', 'images': '200'}
     }
     
     info = plans.get(plan, {})
@@ -108,13 +108,9 @@ async def select_plan(callback: types.CallbackQuery):
     await callback.message.edit_text(
         f"✅ **План обновлён!**\n\n"
         f"📊 Твой план: {plan.upper()}\n"
-        f"🖼️ Картинок в день: {info.get('images', '3')}\n"
-        f"💬 Текстовые запросы: безлимит\n\n"
-        f"💰 Стоимость: {info.get('price', '0 ⭐')}",
+        f"🖼️ Картинок в день: {info.get('images', '3')}",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]
-            ]
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]]
         )
     )
     await callback.answer()
@@ -172,28 +168,19 @@ async def payment_success(message: types.Message):
     try:
         backup = GitHubBackup()
         backup.backup_db(reason='покупка Premium')
-        logger.info(f"✅ Бэкап сделан после покупки Premium пользователем {message.from_user.id}")
     except Exception as e:
         logger.error(f"❌ Ошибка бэкапа: {e}")
     
-    await message.answer(
-        f"✅ Premium на {days} дней активирован!\n"
-        f"📊 План обновлён на PREMIUM — 50 картинок/день!"
-    )
+    await message.answer(f"✅ Premium на {days} дней активирован!\n📊 План: PREMIUM — 50 картинок/день!")
 
 @router.callback_query(F.data == "cancel_premium")
 async def cancel_premium(callback: types.CallbackQuery):
-    from database.db import cursor, conn
     cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (callback.from_user.id,))
     conn.commit()
     await callback.answer("✅ Premium отключён", show_alert=True)
     await callback.message.edit_text(
-        "✅ **Premium отключён**\n\n"
-        "Ты вернулся на базовый план.\n"
-        "3 картинки в день, 10 текстовых запросов.",
+        "✅ **Premium отключён**\n\nТы вернулся на базовый план.\n3 картинки в день, 10 текстовых запросов.",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]
-            ]
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]]
         )
     )

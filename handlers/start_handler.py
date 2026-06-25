@@ -14,7 +14,6 @@ async def start_cmd(message: types.Message):
     user = get_user(user_id)
     
     logger.info(f"Start command from {user_id}")
-    logger.info(f"Full message: {message.text}")
     
     args = message.text.split()
     referrer_id = None
@@ -22,7 +21,6 @@ async def start_cmd(message: types.Message):
     if len(args) > 1:
         try:
             referrer_id = int(args[1])
-            logger.info(f"Referral ID: {referrer_id}")
         except:
             pass
     
@@ -42,7 +40,6 @@ async def start_cmd(message: types.Message):
             if ref_user:
                 add_referral(referrer_id, user_id)
                 await message.answer("👤 Вы были приглашены! Реферер получил +5 запросов.")
-                logger.info(f"Referral: {referrer_id} -> {user_id}")
     else:
         logger.info(f"Existing user: {user_id}")
     

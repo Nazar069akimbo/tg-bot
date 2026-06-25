@@ -7,12 +7,11 @@ import logging
 import asyncio
 import requests
 import os
-import io
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-BOTHUB_API_KEY = os.getenv('OPENAI_API_KEY')
+API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
 
@@ -44,7 +43,6 @@ async def handle_message(message: types.Message):
     else:
         await generate_text(message)
 
-
 async def generate_text(message: types.Message):
     ok, remaining = can_request(message.from_user.id)
     if not ok:
@@ -65,7 +63,6 @@ async def generate_text(message: types.Message):
         result_text += "💎 Premium — безлимит"
     
     await status_msg.edit_text(result_text)
-
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
@@ -100,29 +97,28 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
+        # Генерация промпта
         await status_msg.edit_text("🔍 Создаю детальное описание...")
         
         prompt_url = "https://openai.bothub.chat/v1/chat/completions"
         prompt_headers = {
-            "Authorization": f"Bearer {BOTHUB_API_KEY}",
+            "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "application/json"
         }
         
         prompt_data = {
             "model": PROMPT_MODEL,
             "messages": [
-                {"role": "system", "content": """Ты — профессиональный промпт-инженер для генерации изображений. 
-                Твоя задача — превратить короткий запрос пользователя в детальный английский промпт для нейросети (Flux, Stable Diffusion, DALL-E).
-                
-                Правила:
-                1. Всегда отвечай ТОЛЬКО на английском языке
-                2. Промпт должен быть от 30 до 60 слов
-                3. Добавляй детали: стиль, освещение, настроение, цвета, композицию
-                4. Используй ключевые слова для качества: photorealistic, 8k, highly detailed, masterpiece, sharp focus
-                5. Если пользователь просит что-то конкретное — добавляй детали этого объекта
-                
-                Только промпт, без пояснений!"""},
-                {"role": "user", "content": f"Создай промпт для: {user_prompt}"}
+                {"role": "system", "content": """You are a professional prompt engineer. Convert the user's request into a detailed English prompt for Flux/Stable Diffusion.
+
+Rules:
+1. ALWAYS respond ONLY in English
+2. Prompt should be 30-60 words
+3. Add details: style, lighting, mood, colors
+4. Use quality keywords: photorealistic, 8k, highly detailed
+
+Only the prompt, no explanations!"""},
+                {"role": "user", "content": f"Create a prompt for: {user_prompt}"}
             ],
             "max_tokens": 200,
             "temperature": 0.7
@@ -133,16 +129,15 @@ async def generate_image(message: types.Message):
         if prompt_response.status_code == 200:
             prompt_result = prompt_response.json()
             enhanced_prompt = prompt_result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
-            
             if enhanced_prompt.startswith('"') and enhanced_prompt.endswith('"'):
                 enhanced_prompt = enhanced_prompt[1:-1]
-            
-            logger.info(f"📝 Сгенерирован промпт: {enhanced_prompt[:100]}...")
+            logger.info(f"📝 Промпт: {enhanced_prompt[:100]}...")
             await status_msg.edit_text(f"🎨 Генерирую картинку...")
         else:
             enhanced_prompt = user_prompt
-            logger.warning(f"⚠️ Не удалось создать промпт, используем оригинальный")
+            logger.warning(f"⚠️ Не удалось создать промпт")
         
+        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -150,9 +145,10 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
+        # Генерация картинки
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
-            "Authorization": f"Bearer {BOTHUB_API_KEY}",
+            "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "application/json"
         }
         
@@ -173,7 +169,6 @@ async def generate_image(message: types.Message):
         
         if response.status_code == 200:
             result = response.json()
-            
             image_url = result.get('url')
             if isinstance(image_url, list):
                 image_url = image_url[0]
@@ -197,28 +192,22 @@ async def generate_image(message: types.Message):
                         
                         if trial_remaining > 0:
                             use_trial_image(user_id)
-                            logger.info(f"🎁 Использована пробная картинка, осталось: {trial_remaining - 1}")
                         else:
                             add_image_request(user_id)
                         
                         await status_msg.delete()
                         return
-            
-            await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
-        else:
-            logger.error(f"❌ Ошибка: {response.status_code}")
-            await status_msg.edit_text(f"❌ Ошибка {response.status_code}. Попробуй позже.")
+        
+        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
 
-
 @router.callback_query(F.data == "ask_question")
 async def ask_question(callback: types.CallbackQuery):
     await callback.answer("Напиши свой вопрос в чат!", show_alert=True)
     await callback.message.edit_text(
-        "🧠 **Задать вопрос**\n\n"
-        "Просто напиши мне свой вопрос в чат!",
+        "🧠 **Задать вопрос**\n\nПросто напиши мне свой вопрос в чат!",
         reply_markup=main_menu()
     )

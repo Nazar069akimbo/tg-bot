@@ -16,7 +16,6 @@ class GitHubBackup:
         if not self.token:
             logger.error("❌ GITHUB_TOKEN не найден!")
             return
-        
         if not self.repo:
             logger.error("❌ GITHUB_BACKUP_REPO не найден!")
             return

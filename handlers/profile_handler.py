@@ -9,24 +9,16 @@ router = Router()
 async def profile_cmd(message: types.Message):
     user = get_user(message.from_user.id)
     if not user:
-        await message.answer(
-            "❌ Вы не зарегистрированы!\n\n"
-            "Нажмите /start для регистрации.",
-            reply_markup=main_menu()
-        )
+        await message.answer("❌ Вы не зарегистрированы!\n\nНажмите /start", reply_markup=main_menu())
         return
     
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-    if cursor.fetchone():
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
-        referrals_count = cursor.fetchone()[0]
-    else:
-        referrals_count = 0
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
+    referrals_count = cursor.fetchone()[0] or 0
     
     plan = get_user_plan(message.from_user.id)
     image_limit = get_image_limit(message.from_user.id)
-    
     premium = user[3][:10] if user[3] else "нет"
+    
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
@@ -43,25 +35,17 @@ async def profile_callback(callback: types.CallbackQuery):
     try:
         user = get_user(callback.from_user.id)
         if not user:
-            await callback.message.edit_text(
-                "❌ Вы не зарегистрированы!\n\n"
-                "Нажмите /start для регистрации.",
-                reply_markup=main_menu()
-            )
+            await callback.message.edit_text("❌ Вы не зарегистрированы!\n\nНажмите /start", reply_markup=main_menu())
             await callback.answer()
             return
         
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-        if cursor.fetchone():
-            cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (callback.from_user.id,))
-            referrals_count = cursor.fetchone()[0]
-        else:
-            referrals_count = 0
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (callback.from_user.id,))
+        referrals_count = cursor.fetchone()[0] or 0
         
         plan = get_user_plan(callback.from_user.id)
         image_limit = get_image_limit(callback.from_user.id)
-        
         premium = user[3][:10] if user[3] else "нет"
+        
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"

@@ -8,10 +8,7 @@ router = Router()
 async def stats_cmd(message: types.Message):
     user = get_user(message.from_user.id)
     if not user:
-        await message.answer(
-            "❌ Вы не зарегистрированы!\n\n"
-            "Нажмите /start для регистрации."
-        )
+        await message.answer("❌ Вы не зарегистрированы!\n\nНажмите /start")
         return
     
     ok, remaining = can_request(message.from_user.id)
@@ -32,10 +29,7 @@ async def stats_callback(callback: types.CallbackQuery):
     try:
         user = get_user(callback.from_user.id)
         if not user:
-            await callback.message.edit_text(
-                "❌ Вы не зарегистрированы!\n\n"
-                "Нажмите /start для регистрации."
-            )
+            await callback.message.edit_text("❌ Вы не зарегистрированы!\n\nНажмите /start")
             await callback.answer()
             return
         

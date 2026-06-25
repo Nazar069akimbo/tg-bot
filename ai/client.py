@@ -7,7 +7,7 @@ load_dotenv()
 
 API_KEY = os.getenv("OPENAI_API_KEY")
 if not API_KEY:
-    print("⚠️ OPENAI_API_KEY не найден в .env файле!")
+    print("⚠️ OPENAI_API_KEY не найден!")
 
 client = OpenAI(
     api_key=API_KEY,

@@ -7,11 +7,9 @@ import asyncio
 from datetime import datetime
 from backup_github import GitHubBackup
 import requests
-import os
 
 router = Router()
 ADMIN_CODE = "30121979"
-
 user_pages = {}
 
 def admin_kb():
@@ -492,11 +490,7 @@ async def a_messages(callback: types.CallbackQuery):
     messages = cursor.fetchall()
     
     if not messages:
-        await callback.message.edit_text(
-            "📩 **Входящие обращения**\n\n"
-            "Новых обращений нет.",
-            reply_markup=admin_kb()
-        )
+        await callback.message.edit_text("📩 **Входящие обращения**\n\nНовых обращений нет.", reply_markup=admin_kb())
         await callback.answer()
         return
     
@@ -581,7 +575,7 @@ async def a_backup(callback: types.CallbackQuery):
             text += f"🕐 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         else:
             text = "❌ **ОШИБКА СОЗДАНИЯ БЭКАПА!**\n\n"
-            text += "Проверьте логи для деталей."
+            text += "Проверьте логи."
         
         await callback.message.edit_text(text, reply_markup=admin_kb())
     except Exception as e:
@@ -601,8 +595,7 @@ async def a_restore_db(callback: types.CallbackQuery):
         
         if result:
             text = "✅ **БД ВОССТАНОВЛЕНА!**\n\n"
-            text += "📁 Последний бэкап загружен из GitHub\n"
-            text += "🔄 Бот будет перезапущен автоматически"
+            text += "📁 Последний бэкап загружен из GitHub"
         else:
             text = "❌ **ОШИБКА ВОССТАНОВЛЕНИЯ!**\n\n"
             text += "Проверьте, есть ли бэкапы в репозитории."
@@ -646,10 +639,7 @@ async def a_backup_list(callback: types.CallbackQuery):
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
-            await callback.message.edit_text(
-                "❌ Не удалось получить список бэкапов",
-                reply_markup=backup_manage_kb()
-            )
+            await callback.message.edit_text("❌ Не удалось получить список бэкапов", reply_markup=backup_manage_kb())
             await callback.answer()
             return
         
@@ -658,8 +648,7 @@ async def a_backup_list(callback: types.CallbackQuery):
         db_files.sort(key=lambda x: x['name'], reverse=True)
         
         if not db_files:
-            text = "📋 **СПИСОК БЭКАПОВ**\n\n"
-            text += "Нет бэкапов"
+            text = "📋 **СПИСОК БЭКАПОВ**\n\nНет бэкапов"
         else:
             text = f"📋 **СПИСОК БЭКАПОВ**\n\n"
             text += f"Всего: {len(db_files)}\n\n"
@@ -796,6 +785,7 @@ async def handle_admin_messages(message: types.Message):
     
     state = user_pages.get(message.from_user.id, {})
     
+    # ПОИСК ПОЛЬЗОВАТЕЛЯ
     if state.get("state") == "waiting_user_search":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)
@@ -832,6 +822,7 @@ async def handle_admin_messages(message: types.Message):
         
         return
     
+    # ОТПРАВКА СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЮ
     if state.get("state") == "waiting_admin_message":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)
@@ -859,6 +850,7 @@ async def handle_admin_messages(message: types.Message):
         
         return
     
+    # РАССЫЛКА
     if state.get("state") == "waiting_broadcast":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)

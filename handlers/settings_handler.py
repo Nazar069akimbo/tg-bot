@@ -1,11 +1,8 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user_mode, set_user_mode
 from keyboards import main_menu
 
 router = Router()
-
-# Храним режимы пользователей в памяти
 user_modes = {}
 
 @router.message(Command("settings"))
@@ -24,9 +21,7 @@ async def mode_text(callback: types.CallbackQuery):
     user_modes[callback.from_user.id] = "text"
     await callback.answer("✅ Режим: 🧠 Текст", show_alert=True)
     await callback.message.edit_text(
-        "🧠 **Режим Текст**\n\n"
-        "Теперь я буду отвечать на твои вопросы текстом.\n\n"
-        "Просто напиши что-нибудь!",
+        "🧠 **Режим Текст**\n\nТеперь я буду отвечать на твои вопросы текстом.",
         reply_markup=main_menu()
     )
 
@@ -35,8 +30,6 @@ async def mode_image(callback: types.CallbackQuery):
     user_modes[callback.from_user.id] = "image"
     await callback.answer("✅ Режим: 🖼️ Картинка", show_alert=True)
     await callback.message.edit_text(
-        "🖼️ **Режим Картинка**\n\n"
-        "Теперь я буду генерировать картинки по твоим описаниям.\n\n"
-        "Просто напиши, что хочешь увидеть!",
+        "🖼️ **Режим Картинка**\n\nТеперь я буду генерировать картинки по твоим описаниям.",
         reply_markup=main_menu()
     )

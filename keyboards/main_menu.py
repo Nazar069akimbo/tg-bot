@@ -1,33 +1,27 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_menu():
-    try:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
-                    InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
-                ],
-                [
-                    InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
-                    InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
-                ],
-                [
-                    InlineKeyboardButton(text="👥 Рефералы", callback_data="referral"),
-                    InlineKeyboardButton(text="💎 Premium", callback_data="premium")
-                ],
-                [
-                    InlineKeyboardButton(text="📩 Обращение к админу", callback_data="contact_admin"),
-                    InlineKeyboardButton(text="❓ Помощь", callback_data="help")
-                ],
-                [
-                    InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"),
-                    InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")
-                ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
+                InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
+            ],
+            [
+                InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+                InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+            ],
+            [
+                InlineKeyboardButton(text="👥 Рефералы", callback_data="referral"),
+                InlineKeyboardButton(text="💎 Premium", callback_data="premium")
+            ],
+            [
+                InlineKeyboardButton(text="📩 Обращение к админу", callback_data="contact_admin"),
+                InlineKeyboardButton(text="❓ Помощь", callback_data="help")
+            ],
+            [
+                InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"),
+                InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")
             ]
-        )
-        return kb
-    except Exception as e:
-        import logging
-        logging.error(f"Failed to create keyboard: {e}")
-        return None
+        ]
+    )

@@ -28,7 +28,7 @@ from handlers import (
     start_handler, stats_handler, profile_handler, 
     settings_handler, subscribe_handler, referral_handler, 
     solve_handler, admin_handler, leaderboard_handler, help_handler,
-    contact_handler, image_handler
+    contact_handler
 )
 from middleware import AuthMiddleware
 from backup_github import GitHubBackup
@@ -104,7 +104,6 @@ async def main():
     dp.include_router(leaderboard_handler.router)
     dp.include_router(help_handler.router)
     dp.include_router(contact_handler.router)
-    dp.include_router(image_handler.router)
     
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)
