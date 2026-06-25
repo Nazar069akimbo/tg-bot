@@ -13,23 +13,18 @@ async def start_cmd(message: types.Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     
-    logger.info(f"Start command from {user_id}")
-    logger.info(f"Full message: {message.text}")
-    
     args = message.text.split()
     referrer_id = None
     
     if len(args) > 1:
         try:
             referrer_id = int(args[1])
-            logger.info(f"Referral ID: {referrer_id}")
         except:
             pass
     
     if not user:
         create_user(user_id, message.from_user.username or "")
         
-        # ===== АКТИВАЦИЯ ПРОБНОГО ПЕРИОДА =====
         cursor.execute("""
             UPDATE users 
             SET trial_start = ?, trial_used = 0, trial_active = 1 
@@ -43,9 +38,6 @@ async def start_cmd(message: types.Message):
             if ref_user:
                 add_referral(referrer_id, user_id)
                 await message.answer("👤 Вы были приглашены! Реферер получил +5 запросов.")
-                logger.info(f"Referral: {referrer_id} -> {user_id}")
-    else:
-        logger.info(f"Existing user: {user_id}")
     
     await message.answer(
         "🤖 **Vertex AI**\n\n"

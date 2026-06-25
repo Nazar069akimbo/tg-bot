@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 import secrets
 from datetime import datetime
-from database.db import cursor, conn, add_premium, set_user_plan, get_user_plan
+from database.db import cursor, conn, add_premium, set_user_plan, get_user_plan, is_premium
 from backup_github import GitHubBackup
 import logging
 
@@ -25,9 +25,9 @@ def get_subscribe_kb():
 def get_plans_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Basic — 3 картинки/день", callback_data="plan_basic")],
-            [InlineKeyboardButton(text="💎 Premium — 50 картинок/день", callback_data="plan_premium")],
-            [InlineKeyboardButton(text="🔥 Pro — 200 картинок/день", callback_data="plan_pro")],
+            [InlineKeyboardButton(text="📊 Basic — 3 картинки/день (бесплатно)", callback_data="plan_basic")],
+            [InlineKeyboardButton(text="💎 Premium — 50 картинок/день (49⭐/мес)", callback_data="plan_premium")],
+            [InlineKeyboardButton(text="🔥 Pro — 200 картинок/день (99⭐/мес)", callback_data="plan_pro")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]
         ]
     )
@@ -77,8 +77,8 @@ async def change_plan(callback: types.CallbackQuery):
         "📊 **Смена плана**\n\n"
         "Выберите план:\n\n"
         "• Basic — 3 картинки/день (бесплатно)\n"
-        "• Premium — 50 картинок/день\n"
-        "• Pro — 200 картинок/день\n\n"
+        "• Premium — 50 картинок/день (49⭐/мес)\n"
+        "• Pro — 200 картинок/день (99⭐/мес)\n\n"
         "💰 Premium и Pro доступны после покупки Premium!",
         reply_markup=get_plans_kb()
     )
@@ -96,8 +96,6 @@ async def select_plan(callback: types.CallbackQuery):
     
     info = plans.get(plan, {})
     
-    # Проверяем, купил ли пользователь Premium для платных планов
-    from database.db import is_premium
     has_premium = is_premium(callback.from_user.id)
     
     if plan != 'basic' and not has_premium:
@@ -146,6 +144,7 @@ async def pay_callback(callback: types.CallbackQuery):
         )
         await callback.answer()
     except Exception as e:
+        logger.error(f"Payment error: {e}")
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
         await callback.answer()
 
@@ -168,8 +167,6 @@ async def payment_success(message: types.Message):
         conn.commit()
     
     add_premium(message.from_user.id, days)
-    
-    # Автоматически ставим Premium план
     set_user_plan(message.from_user.id, 'premium')
     
     try:
@@ -182,4 +179,20 @@ async def payment_success(message: types.Message):
     await message.answer(
         f"✅ Premium на {days} дней активирован!\n"
         f"📊 План обновлён на PREMIUM — 50 картинок/день!"
+    )
+
+@router.callback_query(F.data == "cancel_premium")
+async def cancel_premium(callback: types.CallbackQuery):
+    cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (callback.from_user.id,))
+    conn.commit()
+    await callback.answer("✅ Premium отключён", show_alert=True)
+    await callback.message.edit_text(
+        "✅ **Premium отключён**\n\n"
+        "Ты вернулся на базовый план.\n"
+        "3 картинки в день, 10 текстовых запросов.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="premium")]
+            ]
+        )
     )

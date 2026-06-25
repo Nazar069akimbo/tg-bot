@@ -1,5 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from database.db import get_user_mode, set_user_mode
 from keyboards import main_menu
 
 router = Router()
@@ -15,7 +16,8 @@ async def settings_cmd(message: types.Message):
     await message.answer(
         f"⚙️ **Настройки**\n\n"
         f"📊 Текущий режим: {mode_text}\n\n"
-        f"Выбери режим в главном меню: 🧠 Текст или 🖼️ Картинка"
+        f"Выбери режим в главном меню: 🧠 Текст или 🖼️ Картинка",
+        reply_markup=main_menu()
     )
 
 @router.callback_query(F.data == "mode_text")

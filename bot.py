@@ -28,7 +28,7 @@ from handlers import (
     start_handler, stats_handler, profile_handler, 
     settings_handler, subscribe_handler, referral_handler, 
     solve_handler, admin_handler, leaderboard_handler, help_handler,
-    contact_handler, image_handler
+    contact_handler
 )
 from middleware import AuthMiddleware
 from backup_github import GitHubBackup
@@ -57,7 +57,6 @@ async def set_commands():
         BotCommand(command="settings", description="⚙️ Настройки"),
         BotCommand(command="subscribe", description="💎 Premium"),
         BotCommand(command="referral", description="👥 Рефералы"),
-        BotCommand(command="image", description="🖼️ Сгенерировать картинку"),
     ]
     await bot.set_my_commands(commands)
 
@@ -94,18 +93,20 @@ async def main():
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     
+    # ВАЖНО: Порядок регистрации хендлеров
+    # Админские хендлеры должны быть ПЕРВЫМИ
+    dp.include_router(admin_handler.router)
     dp.include_router(start_handler.router)
     dp.include_router(stats_handler.router)
     dp.include_router(profile_handler.router)
     dp.include_router(settings_handler.router)
     dp.include_router(subscribe_handler.router)
     dp.include_router(referral_handler.router)
-    dp.include_router(solve_handler.router)
-    dp.include_router(admin_handler.router)
     dp.include_router(leaderboard_handler.router)
     dp.include_router(help_handler.router)
     dp.include_router(contact_handler.router)
-    dp.include_router(image_handler.router)
+    # Основной обработчик текста должен быть ПОСЛЕДНИМ
+    dp.include_router(solve_handler.router)
     
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)

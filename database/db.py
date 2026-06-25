@@ -22,7 +22,10 @@ def init_db():
         image_requests INTEGER DEFAULT 0,
         image_limit INTEGER DEFAULT 3,
         plan TEXT DEFAULT 'basic',
-        user_mode TEXT DEFAULT 'text'
+        user_mode TEXT DEFAULT 'text',
+        trial_start TEXT,
+        trial_used INTEGER DEFAULT 0,
+        trial_active INTEGER DEFAULT 0
     )
     ''')
     
@@ -65,8 +68,7 @@ def init_db():
     )
     ''')
     
-    # Добавляем недостающие колонки
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode']:
+    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active']:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
         except sqlite3.OperationalError:
@@ -94,8 +96,8 @@ def get_user(user_id):
     return cursor.fetchone()
 
 def create_user(user_id, username):
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined) VALUES (?, ?, ?)",
-                   (user_id, username, datetime.now().isoformat()))
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, trial_start, trial_active) VALUES (?, ?, ?, ?, ?)",
+                   (user_id, username, datetime.now().isoformat(), datetime.now().isoformat(), 1))
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
@@ -128,6 +130,8 @@ def is_premium(user_id):
 def add_premium(user_id, days):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
     cursor.execute("UPDATE users SET premium_until = ? WHERE user_id = ?", (new_date, user_id))
+    conn.commit()
+    cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def can_request(user_id):
@@ -185,7 +189,11 @@ def get_image_limit(user_id):
     if not user:
         return 3
     plan = user[9] if len(user) > 9 else 'basic'
-    limits = {'basic': 3, 'premium': 50, 'pro': 200}
+    limits = {
+        'basic': 3,
+        'premium': 50,
+        'pro': 200
+    }
     return limits.get(plan, 3)
 
 def can_generate_image(user_id):
@@ -220,61 +228,31 @@ def set_user_mode(user_id, mode):
     cursor.execute("UPDATE users SET user_mode = ? WHERE user_id = ?", (mode, user_id))
     conn.commit()
 
-# Добавляем колонки для пробного периода
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN trial_start TEXT")
-except sqlite3.OperationalError:
-    pass
-
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN trial_used INTEGER DEFAULT 0")
-except sqlite3.OperationalError:
-    pass
-
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN trial_active INTEGER DEFAULT 0")
-except sqlite3.OperationalError:
-    pass
-
-conn.commit()
-print("✅ Добавлены колонки для пробного периода")
-
 def get_trial_info(user_id):
-    """Возвращает информацию о пробном периоде"""
     user = get_user(user_id)
     if not user or len(user) < 12:
         return None, 0, False
-    
     trial_start = user[9] if len(user) > 9 else None
     trial_used = user[10] if len(user) > 10 else 0
     trial_active = user[11] if len(user) > 11 else 0
-    
     return trial_start, trial_used, bool(trial_active)
 
 def is_trial_active(user_id):
-    """Проверяет, активен ли пробный период"""
     trial_start, trial_used, trial_active = get_trial_info(user_id)
-    
     if not trial_active or not trial_start:
         return False
-    
-    # Проверяем, прошло ли 2 дня
     from datetime import datetime
     start_date = datetime.fromisoformat(trial_start)
     days_passed = (datetime.now() - start_date).days
-    
-    return days_passed < 2  # 2 дня
+    return days_passed < 2
 
 def get_trial_remaining(user_id):
-    """Возвращает сколько картинок осталось в пробном периоде"""
     if not is_trial_active(user_id):
         return 0
-    
     _, trial_used, _ = get_trial_info(user_id)
     trial_limit = 5
     return max(0, trial_limit - trial_used)
 
 def use_trial_image(user_id):
-    """Использовать одну картинку из пробного периода"""
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
