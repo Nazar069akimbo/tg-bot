@@ -16,3 +16,4 @@ data/
 test_backup.txt
 credentials.json
 token.pickle
+.env
