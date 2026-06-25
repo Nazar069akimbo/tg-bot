@@ -210,7 +210,7 @@ async def a_users_list(callback: types.CallbackQuery, page=0):
             name = u[1] or "без имени"
             text += f"🆔 `{u[0]}` — {name}\n"
             text += f"   {status} | {premium} Запросов: {u[2]}\n"
-            text += f"   👉 Нажмите /user_{u[0]}\n\n"
+            text += f"   👉 /user_{u[0]}\n\n"
     
     kb = user_management_kb(page, total_pages)
     try:
@@ -268,6 +268,10 @@ async def show_user_info(target, user_id):
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
     mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
     
+    # Получаем последние обращения пользователя
+    cursor.execute("SELECT text, date, status FROM messages_to_admin WHERE user_id = ? ORDER BY date DESC LIMIT 3", (user_id,))
+    messages = cursor.fetchall()
+    
     text = f"👤 **ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ**\n\n"
     text += f"🆔 ID: `{user_id}`\n"
     text += f"👤 Имя: {u[0] or 'без имени'}\n"
@@ -277,6 +281,12 @@ async def show_user_info(target, user_id):
     text += f"💎 Premium: {premium_status}\n"
     text += f"📅 Premium до: {premium_until}\n"
     text += f"🔒 Статус: {block_status}"
+    
+    if messages:
+        text += "\n📩 **Последние обращения:**\n"
+        for msg in messages:
+            status = "🆕" if msg[2] == "new" else "✅"
+            text += f"{status} {msg[0][:30]}... ({msg[1][:10]})\n"
     
     kb = user_actions_kb(user_id)
     
@@ -484,6 +494,13 @@ async def a_search_user(callback: types.CallbackQuery):
 async def a_messages(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    
+    # Проверяем существование таблицы
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
+    if not cursor.fetchone():
+        await callback.message.edit_text("📩 **Входящие обращения**\n\nНет обращений.", reply_markup=admin_kb())
+        await callback.answer()
         return
     
     cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
@@ -699,7 +716,7 @@ async def a_backup_delete(callback: types.CallbackQuery):
     )
     
     await callback.message.edit_text(
-        f"⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
+        f"⚠️ **ПОДВЕРДИТЕ УДАЛЕНИЕ**\n\n"
         f"Вы собираетесь удалить все бэкапы старше {days} дней.\n\n"
         f"Это действие НЕЛЬЗЯ будет отменить!",
         reply_markup=kb

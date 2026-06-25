@@ -39,6 +39,7 @@ async def handle_contact(message: types.Message):
         return
     
     try:
+        # Создаём таблицу, если её нет
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
+from handlers.admin_handler import user_pages as admin_pages
+from handlers.contact_handler import user_pages as contact_pages
 
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
@@ -23,13 +25,15 @@ async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
-    try:
-        from handlers.admin_handler import user_pages
-        state = user_pages.get(message.from_user.id, {})
-        if state.get("state") in ["waiting_user_search", "waiting_admin_message"]:
-            return
-    except:
-        pass
+    # Проверяем, не админ ли это в режиме поиска/рассылки
+    admin_state = admin_pages.get(message.from_user.id, {})
+    if admin_state.get("state") in ["waiting_user_search", "waiting_admin_message", "waiting_broadcast", "confirm_broadcast"]:
+        return
+    
+    # Проверяем, не обращение ли это к админу
+    contact_state = contact_pages.get(message.from_user.id, {})
+    if contact_state.get("state") == "waiting_contact":
+        return
     
     user = get_user(message.from_user.id)
     if not user:
@@ -109,15 +113,7 @@ async def generate_image(message: types.Message):
         prompt_data = {
             "model": PROMPT_MODEL,
             "messages": [
-                {"role": "system", "content": """You are a professional prompt engineer. Convert the user's request into a detailed English prompt for Flux/Stable Diffusion.
-
-Rules:
-1. ALWAYS respond ONLY in English
-2. Prompt should be 30-60 words
-3. Add details: style, lighting, mood, colors
-4. Use quality keywords: photorealistic, 8k, highly detailed
-
-Only the prompt, no explanations!"""},
+                {"role": "system", "content": "You are a professional prompt engineer. Convert the user's request into a detailed English prompt for Flux/Stable Diffusion. Rules: 1. ALWAYS respond ONLY in English 2. Prompt should be 30-60 words 3. Add details: style, lighting, mood, colors 4. Use quality keywords: photorealistic, 8k, highly detailed. Only the prompt, no explanations!"},
                 {"role": "user", "content": f"Create a prompt for: {user_prompt}"}
             ],
             "max_tokens": 200,
