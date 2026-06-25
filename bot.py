@@ -4,7 +4,6 @@ import asyncio
 import logging
 import threading
 import time
-import requests
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
@@ -29,7 +28,7 @@ from handlers import (
     start_handler, stats_handler, profile_handler, 
     settings_handler, subscribe_handler, referral_handler, 
     solve_handler, admin_handler, leaderboard_handler, help_handler,
-    contact_handler
+    contact_handler, image_handler
 )
 from middleware import AuthMiddleware
 from backup_github import GitHubBackup
@@ -50,30 +49,6 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-async def force_reset_bot():
-    """Принудительно сбрасывает все сессии бота через Telegram API"""
-    logger.info("🔄 Принудительный сброс сессий бота...")
-    
-    # Закрываем все активные сессии через Telegram API
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/logOut"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            logger.info("✅ Все старые сессии закрыты через logOut")
-        else:
-            logger.warning(f"⚠️ logOut ответ: {response.status_code}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка logOut: {e}")
-    
-    # Ждём
-    await asyncio.sleep(3)
-    
-    # Удаляем webhook
-    await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("✅ Webhook удалён, pending updates сброшены")
-    
-    await asyncio.sleep(2)
-
 async def set_commands():
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
@@ -87,9 +62,6 @@ async def set_commands():
 
 async def main():
     logger.info("🚀 Запуск бота...")
-    
-    # Сначала принудительно сбрасываем все сессии
-    await force_reset_bot()
     
     thread = Thread(target=run_flask)
     thread.daemon = True
@@ -112,7 +84,7 @@ async def main():
     
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
-    logger.info("✅ Запущен планировщик бэкапов")
+    logger.info("✅ Запущен планировщик бэкапов (каждый час)")
     
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
@@ -121,33 +93,21 @@ async def main():
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     
-    dp.include_router(admin_handler.router)
     dp.include_router(start_handler.router)
     dp.include_router(stats_handler.router)
     dp.include_router(profile_handler.router)
     dp.include_router(settings_handler.router)
     dp.include_router(subscribe_handler.router)
     dp.include_router(referral_handler.router)
+    dp.include_router(solve_handler.router)
+    dp.include_router(admin_handler.router)
     dp.include_router(leaderboard_handler.router)
     dp.include_router(help_handler.router)
     dp.include_router(contact_handler.router)
-    dp.include_router(solve_handler.router)
+    dp.include_router(image_handler.router)
     
-    logger.info("📡 Запуск POLLING...")
-    
-    # Бесконечный цикл с авто-восстановлением
-    while True:
-        try:
-            await dp.start_polling(bot, skip_updates=True, timeout=30)
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"❌ Polling error: {error_msg}")
-            
-            if "Conflict" in error_msg or "terminated" in error_msg:
-                logger.info("🔄 Обнаружен конфликт сессий, выполняю сброс...")
-                await force_reset_bot()
-            
-            await asyncio.sleep(5)
+    logger.info("✅ Бот готов!")
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     try:

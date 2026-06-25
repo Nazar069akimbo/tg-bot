@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 import secrets
 from datetime import datetime
-from database.db import cursor, conn, add_premium, set_user_plan, get_user_plan, is_premium
+from database.db import cursor, conn, add_premium, set_user_plan, get_user_plan
 from backup_github import GitHubBackup
 import logging
 
@@ -96,6 +96,7 @@ async def select_plan(callback: types.CallbackQuery):
     
     info = plans.get(plan, {})
     
+    from database.db import is_premium
     has_premium = is_premium(callback.from_user.id)
     
     if plan != 'basic' and not has_premium:
@@ -144,7 +145,6 @@ async def pay_callback(callback: types.CallbackQuery):
         )
         await callback.answer()
     except Exception as e:
-        logger.error(f"Payment error: {e}")
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
         await callback.answer()
 
@@ -183,6 +183,7 @@ async def payment_success(message: types.Message):
 
 @router.callback_query(F.data == "cancel_premium")
 async def cancel_premium(callback: types.CallbackQuery):
+    from database.db import cursor, conn
     cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (callback.from_user.id,))
     conn.commit()
     await callback.answer("✅ Premium отключён", show_alert=True)

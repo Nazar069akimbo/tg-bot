@@ -19,18 +19,22 @@ async def referral_cmd(message: types.Message):
     
     link = f"https://t.me/Vertex1bot?start={user_id}"
     
-    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-    count = cursor.fetchone()[0]
-    
-    cursor.execute("""
-        SELECT u.user_id, u.username, r.joined 
-        FROM referrals r 
-        JOIN users u ON r.referred_id = u.user_id 
-        WHERE r.referrer_id = ? 
-        ORDER BY r.joined DESC 
-        LIMIT 10
-    """, (user_id,))
-    referrals = cursor.fetchall()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+        count = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT u.user_id, u.username, r.joined 
+            FROM referrals r 
+            JOIN users u ON r.referred_id = u.user_id 
+            WHERE r.referrer_id = ? 
+            ORDER BY r.joined DESC 
+            LIMIT 10
+        """, (user_id,))
+        referrals = cursor.fetchall()
+    except:
+        count = 0
+        referrals = []
     
     text = f"👥 **Реферальная система**\n\n"
     text += f"📊 Приглашено: {count}\n"
@@ -43,12 +47,14 @@ async def referral_cmd(message: types.Message):
             name = ref[1] or f"User_{ref[0]}"
             date = ref[2][:10] if ref[2] else "неизвестно"
             text += f"{i}. {name} — {date}\n"
+        if len(referrals) > 5:
+            text += f"\n... и еще {len(referrals) - 5} человек"
     else:
         text += "📋 **Приглашенных пока нет**\n"
         text += "Поделись ссылкой с друзьями!"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Поделиться ссылкой", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
+        [InlineKeyboardButton(text="📤 Поделиться ссылкой", callback_data="share_referral")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
     
@@ -57,51 +63,84 @@ async def referral_cmd(message: types.Message):
 
 @router.callback_query(F.data == "referral")
 async def referral_callback(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    
-    user = get_user(user_id)
-    if not user:
+    try:
+        user_id = callback.from_user.id
+        
+        user = get_user(user_id)
+        if not user:
+            await callback.message.edit_text(
+                "👋 Напишите /start для регистрации",
+                reply_markup=main_menu()
+            )
+            await callback.answer()
+            return
+        
+        link = f"https://t.me/Vertex1bot?start={user_id}"
+        
+        try:
+            cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+            count = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT u.user_id, u.username, r.joined 
+                FROM referrals r 
+                JOIN users u ON r.referred_id = u.user_id 
+                WHERE r.referrer_id = ? 
+                ORDER BY r.joined DESC 
+                LIMIT 10
+            """, (user_id,))
+            referrals = cursor.fetchall()
+        except:
+            count = 0
+            referrals = []
+        
+        text = f"👥 **Реферальная система**\n\n"
+        text += f"📊 Приглашено: {count}\n"
+        text += f"💰 Бонус: +5 запросов за каждого\n\n"
+        text += f"🔗 Твоя ссылка:\n`{link}`\n\n"
+        
+        if referrals:
+            text += "📋 **Приглашенные:**\n"
+            for i, ref in enumerate(referrals[:5], 1):
+                name = ref[1] or f"User_{ref[0]}"
+                date = ref[2][:10] if ref[2] else "неизвестно"
+                text += f"{i}. {name} — {date}\n"
+            if len(referrals) > 5:
+                text += f"\n... и еще {len(referrals) - 5} человек"
+        else:
+            text += "📋 **Приглашенных пока нет**\n"
+            text += "Поделись ссылкой с друзьями!"
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Поделиться ссылкой", callback_data="share_referral")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ])
+        
+        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await callback.answer()
+
+
+@router.callback_query(F.data == "share_referral")
+async def share_referral(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        link = f"https://t.me/Vertex1bot?start={user_id}"
+        
+        share_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="referral")]
+        ])
+        
         await callback.message.edit_text(
-            "👋 Напишите /start для регистрации",
-            reply_markup=main_menu()
+            f"📤 **Поделиться ссылкой**\n\n"
+            f"Нажми на кнопку ниже, чтобы отправить ссылку другу:\n\n"
+            f"`{link}`",
+            reply_markup=share_kb
         )
         await callback.answer()
-        return
-    
-    link = f"https://t.me/Vertex1bot?start={user_id}"
-    
-    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-    count = cursor.fetchone()[0]
-    
-    cursor.execute("""
-        SELECT u.user_id, u.username, r.joined 
-        FROM referrals r 
-        JOIN users u ON r.referred_id = u.user_id 
-        WHERE r.referrer_id = ? 
-        ORDER BY r.joined DESC 
-        LIMIT 10
-    """, (user_id,))
-    referrals = cursor.fetchall()
-    
-    text = f"👥 **Реферальная система**\n\n"
-    text += f"📊 Приглашено: {count}\n"
-    text += f"💰 Бонус: +5 запросов за каждого\n\n"
-    text += f"🔗 Твоя ссылка:\n`{link}`\n\n"
-    
-    if referrals:
-        text += "📋 **Приглашенные:**\n"
-        for i, ref in enumerate(referrals[:5], 1):
-            name = ref[1] or f"User_{ref[0]}"
-            date = ref[2][:10] if ref[2] else "неизвестно"
-            text += f"{i}. {name} — {date}\n"
-    else:
-        text += "📋 **Приглашенных пока нет**\n"
-        text += "Поделись ссылкой с друзьями!"
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Поделиться ссылкой", url=f"https://t.me/share/url?url={link}&text=🤖 Привет! Использую Vertex AI — мощный ИИ-помощник в Telegram! Присоединяйся! 🚀")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ])
-    
-    await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await callback.answer()

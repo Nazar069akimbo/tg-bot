@@ -28,7 +28,6 @@ class GitHubBackup:
         logger.info(f"✅ GitHub бэкап инициализирован для {self.repo}")
     
     def backup_db(self, db_path='data/repsolver.db', reason='автоматический'):
-        """Создает бэкап БД и загружает в GitHub"""
         try:
             if not os.path.exists(db_path):
                 logger.warning(f"⚠️ Файл {db_path} не найден")
@@ -67,8 +66,6 @@ class GitHubBackup:
             if response.status_code in [200, 201]:
                 logger.info(f"✅ Бэкап загружен в GitHub ({reason}): {file_path}")
                 os.remove(backup_name)
-                
-                # Чистим старые бэкапы (старше 7 дней)
                 self.cleanup_old_backups(days=7)
                 return True
             else:
@@ -81,7 +78,6 @@ class GitHubBackup:
             return False
     
     def restore_latest_backup(self, db_path='data/repsolver.db'):
-        """Восстанавливает последний бэкап из GitHub"""
         try:
             url = f'https://api.github.com/repos/{self.repo}/contents/backups'
             response = requests.get(url, headers=self.headers)
@@ -120,7 +116,6 @@ class GitHubBackup:
             return False
     
     def cleanup_old_backups(self, days=7):
-        """Удаляет бэкапы старше указанного количества дней"""
         try:
             url = f'https://api.github.com/repos/{self.repo}/contents/backups'
             response = requests.get(url, headers=self.headers)

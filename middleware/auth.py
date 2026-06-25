@@ -4,7 +4,6 @@ from aiogram.types import TelegramObject, Message, CallbackQuery
 from database.db import get_user, cursor
 
 class AuthMiddleware(BaseMiddleware):
-    """Middleware для проверки авторизации"""
     async def __call__(
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],

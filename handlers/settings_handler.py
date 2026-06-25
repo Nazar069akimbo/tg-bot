@@ -16,8 +16,7 @@ async def settings_cmd(message: types.Message):
     await message.answer(
         f"⚙️ **Настройки**\n\n"
         f"📊 Текущий режим: {mode_text}\n\n"
-        f"Выбери режим в главном меню: 🧠 Текст или 🖼️ Картинка",
-        reply_markup=main_menu()
+        f"Выбери режим в главном меню: 🧠 Текст или 🖼️ Картинка"
     )
 
 @router.callback_query(F.data == "mode_text")

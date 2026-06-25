@@ -27,7 +27,7 @@ async def contact_admin_start(callback: types.CallbackQuery):
     user_pages[callback.from_user.id] = {"state": "waiting_contact"}
     await callback.answer()
 
-@router.message(F.text, lambda msg: not msg.text.startswith('/'))
+@router.message(F.text)
 async def handle_contact(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
@@ -70,7 +70,8 @@ async def handle_contact(message: types.Message):
                 admin_id,
                 f"📩 **Новое обращение!**\n\n"
                 f"👤 Пользователь: `{user_id}`\n"
-                f"📝 Текст:\n{message.text}"
+                f"📝 Текст:\n{message.text}\n\n"
+                f"Ответь через команду: /reply_{user_id}"
             )
         except:
             pass
