@@ -63,6 +63,14 @@ async def set_commands():
 async def main():
     logger.info("🚀 Запуск бота...")
     
+    # Сначала удаляем webhook и все pending updates
+    logger.info("🗑️ Удаляю webhook...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("✅ Webhook удалён")
+    
+    # Ждём чтобы Telegram точно обработал
+    await asyncio.sleep(2)
+    
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
@@ -93,8 +101,6 @@ async def main():
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     
-    # ВАЖНО: Порядок регистрации хендлеров
-    # Админские хендлеры должны быть ПЕРВЫМИ
     dp.include_router(admin_handler.router)
     dp.include_router(start_handler.router)
     dp.include_router(stats_handler.router)
@@ -105,11 +111,19 @@ async def main():
     dp.include_router(leaderboard_handler.router)
     dp.include_router(help_handler.router)
     dp.include_router(contact_handler.router)
-    # Основной обработчик текста должен быть ПОСЛЕДНИМ
     dp.include_router(solve_handler.router)
     
+    logger.info("📡 Запуск POLLING...")
     logger.info("✅ Бот готов!")
-    await dp.start_polling(bot, skip_updates=True)
+    
+    # Бесконечный цикл с авто-восстановлением
+    while True:
+        try:
+            await dp.start_polling(bot, skip_updates=True, timeout=30)
+        except Exception as e:
+            logger.error(f"❌ Polling error: {e}")
+            logger.info("🔄 Перезапуск polling через 3 секунды...")
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     try:
