@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
+    username = message.from_user.username or ""
+    
+    logger.info(f"📥 Start command from user_id={user_id}, username={username}")
+    
     user = get_user(user_id)
     
     args = message.text.split()
@@ -19,11 +23,13 @@ async def start_cmd(message: types.Message):
     if len(args) > 1:
         try:
             referrer_id = int(args[1])
+            logger.info(f"🔗 Referral link detected: referrer_id={referrer_id}")
         except:
             pass
     
     if not user:
-        create_user(user_id, message.from_user.username or "")
+        logger.info(f"👤 New user: creating user_id={user_id}")
+        create_user(user_id, username)
         
         cursor.execute("""
             UPDATE users 
@@ -31,15 +37,25 @@ async def start_cmd(message: types.Message):
             WHERE user_id = ?
         """, (datetime.now().isoformat(), user_id))
         conn.commit()
-        logger.info(f"✅ Пробный период активирован для {user_id}")
+        logger.info(f"✅ Trial period activated for {user_id}")
         
         if referrer_id and referrer_id != user_id:
             ref_user = get_user(referrer_id)
             if ref_user:
                 add_referral(referrer_id, user_id)
-                await message.answer("👤 Вы были приглашены! Реферер получил +5 запросов.")
+                logger.info(f"✅ Referral: {referrer_id} -> {user_id}")
+                try:
+                    await message.bot.send_message(
+                        referrer_id,
+                        f"🎉 По вашей ссылке зарегистрировался новый пользователь!\n"
+                        f"Вам начислено +5 запросов."
+                    )
+                except:
+                    pass
+    else:
+        logger.info(f"👤 Existing user: user_id={user_id}")
     
-    await message.answer(
+    text = (
         "🤖 **Vertex AI**\n\n"
         "🧠 Искусственный интеллект в твоем Telegram!\n\n"
         "🎁 **Пробный период:**\n"
@@ -48,6 +64,12 @@ async def start_cmd(message: types.Message):
         "✅ 10 текстовых запросов/день\n"
         "💎 Premium: безлимит\n"
         "👥 Приведи друга → +5 запросов\n\n"
-        "Просто напиши свой вопрос!",
-        reply_markup=main_menu()
+        "Просто напиши свой вопрос!"
     )
+    
+    try:
+        await message.answer(text, reply_markup=main_menu())
+        logger.info(f"✅ Start message sent to user_id={user_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send start message: {e}")
+        await message.answer(text)
