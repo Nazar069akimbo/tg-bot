@@ -5,12 +5,18 @@ import os
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
+# ===== ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БД =====
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+    print("🗑️ Старая БД удалена, создаём новую")
+
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
+    # ===== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ =====
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -29,8 +35,9 @@ def init_db():
     )
     ''')
     
+    # ===== ТАБЛИЦА РЕФЕРАЛОВ =====
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -39,15 +46,17 @@ def init_db():
     )
     ''')
     
+    # ===== ТАБЛИЦА АДМИНОВ =====
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
+    CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
+    # ===== ТАБЛИЦА ПЛАТЕЖЕЙ =====
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -57,8 +66,9 @@ def init_db():
     )
     ''')
     
+    # ===== ТАБЛИЦА ОБРАЩЕНИЙ К АДМИНУ =====
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
+    CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -68,14 +78,13 @@ def init_db():
     )
     ''')
     
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active']:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT 'text'")
-        except sqlite3.OperationalError:
-            pass
-    
     conn.commit()
-    print("✅ База данных готова")
+    print("✅ База данных создана заново")
+    print("✅ Таблица users создана")
+    print("✅ Таблица referrals создана")
+    print("✅ Таблица admins создана")
+    print("✅ Таблица payments создана")
+    print("✅ Таблица messages_to_admin создана")
 
 def init_settings():
     cursor.execute('''
@@ -189,11 +198,7 @@ def get_image_limit(user_id):
     if not user:
         return 3
     plan = user[9] if len(user) > 9 else 'basic'
-    limits = {
-        'basic': 3,
-        'premium': 50,
-        'pro': 200
-    }
+    limits = {'basic': 3, 'premium': 50, 'pro': 200}
     return limits.get(plan, 3)
 
 def can_generate_image(user_id):
@@ -241,7 +246,6 @@ def is_trial_active(user_id):
     trial_start, trial_used, trial_active = get_trial_info(user_id)
     if not trial_active or not trial_start:
         return False
-    from datetime import datetime
     start_date = datetime.fromisoformat(trial_start)
     days_passed = (datetime.now() - start_date).days
     return days_passed < 2
@@ -256,37 +260,3 @@ def get_trial_remaining(user_id):
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
-
-def init_db():
-    # ... существующий код ...
-    
-    # Таблица для обращений к админу
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        date TEXT,
-        status TEXT DEFAULT 'new'
-    )
-    ''')
-    conn.commit()
-    print("✅ Таблица messages_to_admin создана")
-
-def init_db():
-    # ... существующий код ...
-    
-    # Таблица для обращений к админу
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        date TEXT,
-        status TEXT DEFAULT 'new'
-    )
-    ''')
-    conn.commit()
-    print("✅ Таблица messages_to_admin создана")
