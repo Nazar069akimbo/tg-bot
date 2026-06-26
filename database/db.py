@@ -9,6 +9,7 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
+    # Создаём таблицу users
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -30,6 +31,7 @@ def init_db():
     )
     ''')
     
+    # Создаём таблицу referrals
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +42,7 @@ def init_db():
     )
     ''')
     
+    # Создаём таблицу admins
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -47,6 +50,7 @@ def init_db():
     )
     ''')
     
+    # Создаём таблицу payments
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +62,7 @@ def init_db():
     )
     ''')
     
+    # Создаём таблицу messages_to_admin
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,31 +74,51 @@ def init_db():
     )
     ''')
     
-    # Добавляем колонки если их нет
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active', 'last_image_reset']:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} DEFAULT '0'")
-        except sqlite3.OperationalError:
-            pass
-    
-    conn.commit()
-    print("✅ База данных готова")
-
-def init_settings():
+    # Создаём таблицу settings
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
     ''')
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_input_chars', '500')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_output_words', '50')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('premium_input_chars', '3000')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('premium_output_words', '300')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('image_limit_free', '3')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('image_limit_premium', '50')")
+    
+    # Добавляем колонки если их нет
+    columns_to_add = [
+        ('image_requests', 'INTEGER DEFAULT 0'),
+        ('image_limit', 'INTEGER DEFAULT 3'),
+        ('plan', 'TEXT DEFAULT "basic"'),
+        ('user_mode', 'TEXT DEFAULT "text"'),
+        ('trial_start', 'TEXT'),
+        ('trial_used', 'INTEGER DEFAULT 0'),
+        ('trial_active', 'INTEGER DEFAULT 0'),
+        ('last_image_reset', 'TEXT')
+    ]
+    
+    for col, type_def in columns_to_add:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {type_def}")
+        except sqlite3.OperationalError:
+            pass
+    
+    # Добавляем настройки
+    settings = [
+        ('free_input_chars', '500'),
+        ('free_output_words', '50'),
+        ('premium_input_chars', '3000'),
+        ('premium_output_words', '300'),
+        ('image_limit_free', '3'),
+        ('image_limit_premium', '50')
+    ]
+    
+    for key, value in settings:
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    
     conn.commit()
-    print("✅ Настройки инициализированы")
+    print("✅ База данных готова")
+
+def init_settings():
+    # Уже сделано в init_db
+    pass
 
 def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -133,7 +158,10 @@ def is_premium(user_id):
     user = get_user(user_id)
     if not user or not user[3]:
         return False
-    return datetime.now().isoformat() < user[3]
+    try:
+        return datetime.now().isoformat() < user[3]
+    except:
+        return False
 
 def add_premium(user_id, days):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
@@ -142,12 +170,10 @@ def add_premium(user_id, days):
     cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
     conn.commit()
 
-# ============ ТЕКСТОВЫЕ ЗАПРОСЫ ============
 def can_request(user_id):
     user = get_user(user_id)
     if not user:
         return True, 10
-    # Premium - безлимит
     if user[3] and datetime.now().isoformat() < user[3]:
         return True, 999999
     used = user[4] or 0
@@ -158,16 +184,13 @@ def add_request(user_id):
     cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
-# ============ КАРТИНКИ ============
 def reset_image_count_if_needed(user_id):
-    """Сбрасывает счётчик картинок если прошёл день"""
     user = get_user(user_id)
     if not user:
         return
     
     last_reset = user[13] if len(user) > 13 else None
     if not last_reset:
-        # Если нет даты сброса - устанавливаем
         cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", 
                       (datetime.now().isoformat(), user_id))
         conn.commit()
@@ -177,7 +200,6 @@ def reset_image_count_if_needed(user_id):
         last_date = datetime.fromisoformat(last_reset)
         today = datetime.now()
         
-        # Если прошёл день - сбрасываем счётчик
         if last_date.date() < today.date():
             cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
                           (today.isoformat(), user_id))
@@ -187,48 +209,38 @@ def reset_image_count_if_needed(user_id):
         pass
 
 def get_image_limit(user_id):
-    """Получить лимит картинок для пользователя"""
     user = get_user(user_id)
     if not user:
         return 3
     
-    # Premium пользователи
     if user[3] and datetime.now().isoformat() < user[3]:
         return int(get_setting('image_limit_premium') or 50)
     
-    # Обычные пользователи
     return int(get_setting('image_limit_free') or 3)
 
 def can_generate_image(user_id):
-    """Проверяет может ли пользователь генерировать картинку"""
     user = get_user(user_id)
     if not user:
         return True, 3
     
-    # Сбрасываем счётчик если прошёл день
     reset_image_count_if_needed(user_id)
     
-    # Проверяем лимит
     limit = get_image_limit(user_id)
     used = user[8] if len(user) > 8 else 0
     
-    # Premium - больше лимит
     if user[3] and datetime.now().isoformat() < user[3]:
         limit = int(get_setting('image_limit_premium') or 50)
         remaining = limit - used
         return used < limit, remaining
     
-    # Обычные пользователи - 3 картинки в день
     remaining = limit - used
     return used < limit, remaining
 
 def add_image_request(user_id):
-    """Увеличивает счётчик использованных картинок"""
     cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def get_image_stats(user_id):
-    """Получить статистику по картинкам"""
     user = get_user(user_id)
     if not user:
         return 0, 3, False
@@ -257,7 +269,7 @@ def get_setting(key):
     return '0'
 
 def set_setting(key, value):
-    cursor.execute("UPDATE settings SET value = ? WHERE key = ?", (value, key))
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
 
 def get_stats():
@@ -304,9 +316,12 @@ def is_trial_active(user_id):
     trial_start, trial_used, trial_active = get_trial_info(user_id)
     if not trial_active or not trial_start:
         return False
-    start_date = datetime.fromisoformat(trial_start)
-    days_passed = (datetime.now() - start_date).days
-    return days_passed < 2
+    try:
+        start_date = datetime.fromisoformat(trial_start)
+        days_passed = (datetime.now() - start_date).days
+        return days_passed < 2
+    except:
+        return False
 
 def get_trial_remaining(user_id):
     if not is_trial_active(user_id):
