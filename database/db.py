@@ -5,17 +5,12 @@ import os
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# ===== ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БД =====
-if os.path.exists(DB_PATH):
-    os.remove(DB_PATH)
-    print("🗑️ Старая БД удалена, создаём новую")
-
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
     cursor.execute('''
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -35,7 +30,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE referrals (
+    CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -45,14 +40,14 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE admins (
+    CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
     cursor.execute('''
-    CREATE TABLE payments (
+    CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -63,7 +58,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE messages_to_admin (
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -73,9 +68,14 @@ def init_db():
     )
     ''')
     
+    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active']:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} DEFAULT '0'")
+        except sqlite3.OperationalError:
+            pass
+    
     conn.commit()
-    print("✅ База данных создана заново")
-    print("✅ Ограничение: 3 картинки в день для всех")
+    print("✅ База данных готова")
 
 def init_settings():
     cursor.execute('''
@@ -185,35 +185,13 @@ def get_user_plan(user_id):
     return 'basic'
 
 def get_image_limit(user_id):
-    return 3  # ===== ВСЕГДА 3 КАРТИНКИ В ДЕНЬ =====
+    return 3
 
 def can_generate_image(user_id):
     user = get_user(user_id)
     if not user:
         return True, 3
-    
-    # ===== ПРОВЕРКА ПОСЛЕДНИХ ЗАПИСЕЙ =====
-    cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    used = result[0] if result else 0
-    
-    # Сбрасываем счётчик, если прошёл день
-    # Проверяем последнее обновление (храним в отдельной колонке)
-    cursor.execute("SELECT last_image_date FROM users WHERE user_id = ?", (user_id,))
-    last_date = cursor.fetchone()
-    
-    if last_date and last_date[0]:
-        last_date = datetime.fromisoformat(last_date[0])
-        if (datetime.now() - last_date).days >= 1:
-            # Новый день — сбрасываем
-            cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
-            conn.commit()
-            used = 0
-    
-    # Обновляем дату последнего запроса
-    cursor.execute("UPDATE users SET last_image_date = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
-    conn.commit()
-    
+    used = user[8] if len(user) > 8 else 0
     limit = 3
     return used < limit, limit - used
 
@@ -262,10 +240,3 @@ def get_trial_remaining(user_id):
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
-# Добавляем колонку для отслеживания даты последней картинки
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN last_image_date TEXT")
-except sqlite3.OperationalError:
-    pass
-conn.commit()
-print("✅ Колонка last_image_date добавлена")
