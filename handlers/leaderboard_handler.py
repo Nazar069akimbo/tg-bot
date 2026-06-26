@@ -1,8 +1,11 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import cursor
+from keyboards import main_menu
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 @router.message(Command("leaderboard"))
 async def leaderboard_cmd(message: types.Message):
@@ -10,7 +13,7 @@ async def leaderboard_cmd(message: types.Message):
     users = cursor.fetchall()
     
     if not users:
-        await message.answer("🏆 Пока нет данных")
+        await message.answer("🏆 Пока нет данных", reply_markup=main_menu())
         return
     
     text = "🏆 **Рейтинг**\n\n"
@@ -20,16 +23,18 @@ async def leaderboard_cmd(message: types.Message):
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач\n"
     
-    await message.answer(text)
+    await message.answer(text, reply_markup=main_menu())
 
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_callback(callback: types.CallbackQuery):
     try:
+        logger.info(f"Leaderboard callback from {callback.from_user.id}")
+        
         cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
         users = cursor.fetchall()
         
         if not users:
-            await callback.message.edit_text("🏆 Пока нет данных")
+            await callback.message.edit_text("🏆 Пока нет данных", reply_markup=main_menu())
             await callback.answer()
             return
         
@@ -40,7 +45,8 @@ async def leaderboard_callback(callback: types.CallbackQuery):
             medal = medals[i-1] if i <= 3 else f"{i}."
             text += f"{medal} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач\n"
         
-        await callback.message.edit_text(text)
+        await callback.message.edit_text(text, reply_markup=main_menu())
         await callback.answer()
     except Exception as e:
-        await callback.answer()
+        logger.error(f"Leaderboard callback error: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)

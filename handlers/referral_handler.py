@@ -58,6 +58,8 @@ async def referral_cmd(message: types.Message):
 @router.callback_query(F.data == "referral")
 async def referral_callback(callback: types.CallbackQuery):
     try:
+        logger.info(f"Referral callback from {callback.from_user.id}")
+        
         user_id = callback.from_user.id
         user = get_user(user_id)
         
@@ -105,8 +107,8 @@ async def referral_callback(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=kb)
         await callback.answer()
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await callback.answer()
+        logger.error(f"Referral callback error: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 @router.callback_query(F.data == "share_referral")
 async def share_referral(callback: types.CallbackQuery):
@@ -125,5 +127,5 @@ async def share_referral(callback: types.CallbackQuery):
         )
         await callback.answer()
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await callback.answer()
+        logger.error(f"Share referral error: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
