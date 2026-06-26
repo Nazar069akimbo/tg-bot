@@ -14,7 +14,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # ===== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ =====
     cursor.execute('''
     CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
@@ -35,7 +34,6 @@ def init_db():
     )
     ''')
     
-    # ===== ТАБЛИЦА РЕФЕРАЛОВ =====
     cursor.execute('''
     CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +44,6 @@ def init_db():
     )
     ''')
     
-    # ===== ТАБЛИЦА АДМИНОВ =====
     cursor.execute('''
     CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
@@ -54,7 +51,6 @@ def init_db():
     )
     ''')
     
-    # ===== ТАБЛИЦА ПЛАТЕЖЕЙ =====
     cursor.execute('''
     CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +62,6 @@ def init_db():
     )
     ''')
     
-    # ===== ТАБЛИЦА ОБРАЩЕНИЙ К АДМИНУ =====
     cursor.execute('''
     CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,11 +75,7 @@ def init_db():
     
     conn.commit()
     print("✅ База данных создана заново")
-    print("✅ Таблица users создана")
-    print("✅ Таблица referrals создана")
-    print("✅ Таблица admins создана")
-    print("✅ Таблица payments создана")
-    print("✅ Таблица messages_to_admin создана")
+    print("✅ Ограничение: 3 картинки в день для всех")
 
 def init_settings():
     cursor.execute('''
@@ -194,23 +185,36 @@ def get_user_plan(user_id):
     return 'basic'
 
 def get_image_limit(user_id):
-    user = get_user(user_id)
-    if not user:
-        return 3
-    plan = user[9] if len(user) > 9 else 'basic'
-    limits = {'basic': 3, 'premium': 50, 'pro': 200}
-    return limits.get(plan, 3)
+    return 3  # ===== ВСЕГДА 3 КАРТИНКИ В ДЕНЬ =====
 
 def can_generate_image(user_id):
     user = get_user(user_id)
     if not user:
         return True, 3
-    if user[3] and datetime.now().isoformat() < user[3]:
-        return True, 999999
-    plan = user[9] if len(user) > 9 else 'basic'
-    limits = {'basic': 3, 'premium': 50, 'pro': 200}
-    limit = limits.get(plan, 3)
-    used = user[8] if len(user) > 8 else 0
+    
+    # ===== ПРОВЕРКА ПОСЛЕДНИХ ЗАПИСЕЙ =====
+    cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    used = result[0] if result else 0
+    
+    # Сбрасываем счётчик, если прошёл день
+    # Проверяем последнее обновление (храним в отдельной колонке)
+    cursor.execute("SELECT last_image_date FROM users WHERE user_id = ?", (user_id,))
+    last_date = cursor.fetchone()
+    
+    if last_date and last_date[0]:
+        last_date = datetime.fromisoformat(last_date[0])
+        if (datetime.now() - last_date).days >= 1:
+            # Новый день — сбрасываем
+            cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
+            conn.commit()
+            used = 0
+    
+    # Обновляем дату последнего запроса
+    cursor.execute("UPDATE users SET last_image_date = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+    conn.commit()
+    
+    limit = 3
     return used < limit, limit - used
 
 def add_image_request(user_id):
@@ -219,8 +223,6 @@ def add_image_request(user_id):
 
 def set_user_plan(user_id, plan):
     cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
-    conn.commit()
-    cursor.execute("UPDATE users SET image_requests = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def get_user_mode(user_id):
@@ -260,3 +262,10 @@ def get_trial_remaining(user_id):
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
+# Добавляем колонку для отслеживания даты последней картинки
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN last_image_date TEXT")
+except sqlite3.OperationalError:
+    pass
+conn.commit()
+print("✅ Колонка last_image_date добавлена")
