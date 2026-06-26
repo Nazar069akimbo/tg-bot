@@ -151,6 +151,10 @@ async def a_stats(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
+    # Проверяем, есть ли таблица
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
+    has_table = cursor.fetchone() is not None
+    
     cursor.execute("SELECT COUNT(*) FROM users")
     total = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM users WHERE premium_until IS NOT NULL AND premium_until > datetime('now')")
@@ -161,8 +165,11 @@ async def a_stats(callback: types.CallbackQuery):
     blocked = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM admins")
     admins = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM messages_to_admin WHERE status = 'new'")
-    new_messages = cursor.fetchone()[0]
+    
+    new_messages = 0
+    if has_table:
+        cursor.execute("SELECT COUNT(*) FROM messages_to_admin WHERE status = 'new'")
+        new_messages = cursor.fetchone()[0]
     
     text = f"📊 **СТАТИСТИКА**\n\n"
     text += f"👥 Всего пользователей: {total}\n"
@@ -268,8 +275,9 @@ async def show_user_info(target, user_id):
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
     mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
     
-    cursor.execute("SELECT text, date, status FROM messages_to_admin WHERE user_id = ? ORDER BY date DESC LIMIT 3", (user_id,))
-    messages = cursor.fetchall()
+    # Проверяем таблицу messages_to_admin
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
+    has_table = cursor.fetchone() is not None
     
     text = f"👤 **ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ**\n\n"
     text += f"🆔 ID: `{user_id}`\n"
@@ -281,11 +289,14 @@ async def show_user_info(target, user_id):
     text += f"📅 Premium до: {premium_until}\n"
     text += f"🔒 Статус: {block_status}"
     
-    if messages:
-        text += "\n📩 **Последние обращения:**\n"
-        for msg in messages:
-            status = "🆕" if msg[2] == "new" else "✅"
-            text += f"{status} {msg[0][:30]}... ({msg[1][:10]})\n"
+    if has_table:
+        cursor.execute("SELECT text, date, status FROM messages_to_admin WHERE user_id = ? ORDER BY date DESC LIMIT 3", (user_id,))
+        messages = cursor.fetchall()
+        if messages:
+            text += "\n📩 **Последние обращения:**\n"
+            for msg in messages:
+                status = "🆕" if msg[2] == "new" else "✅"
+                text += f"{status} {msg[0][:30]}... ({msg[1][:10]})\n"
     
     kb = user_actions_kb(user_id)
     
@@ -557,29 +568,27 @@ async def reply_to_user(message: types.Message):
         user_id = int(parts[0].replace("/reply_", ""))
         reply_text = " ".join(parts[1:])
         
-        # ===== ОТПРАВЛЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ =====
+        # Проверяем, есть ли таблица
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
+        if cursor.fetchone():
+            cursor.execute(
+                "UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", 
+                (user_id,)
+            )
+            conn.commit()
+        
+        # Отправляем сообщение пользователю
         try:
             await message.bot.send_message(
                 user_id,
                 f"📩 **Ответ от администратора:**\n\n{reply_text}"
             )
-            await message.answer(f"✅ Сообщение отправлено пользователю `{user_id}`")
+            await message.answer(
+                f"✅ **Сообщение отправлено пользователю `{user_id}`**\n\n"
+                f"📝 Текст:\n{reply_text}"
+            )
         except Exception as e:
             await message.answer(f"❌ Не удалось отправить: {e}")
-            return
-        
-        cursor.execute(
-            "UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", 
-            (user_id,)
-        )
-        conn.commit()
-        
-        await message.answer(
-            f"✅ **Сообщение доставлено!**\n\n"
-            f"👤 Пользователь: `{user_id}`\n"
-            f"📝 Текст:\n{reply_text}\n\n"
-            f"💬 Статус обращения обновлён на 'Обработано'"
-        )
         
     except ValueError:
         await message.answer("❌ Неверный ID пользователя")
@@ -871,8 +880,7 @@ async def handle_admin_messages(message: types.Message):
                 f"📩 **Сообщение от администратора:**\n\n{message.text}"
             )
             await message.answer(
-                f"✅ Сообщение отправлено пользователю `{target_user}`",
-                reply_markup=admin_kb()
+                f"✅ Сообщение отправлено пользователю `{target_user}`"
             )
             user_pages.pop(message.from_user.id, None)
         except Exception as e:

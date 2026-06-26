@@ -256,3 +256,37 @@ def get_trial_remaining(user_id):
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
+
+def init_db():
+    # ... существующий код ...
+    
+    # Таблица для обращений к админу
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        date TEXT,
+        status TEXT DEFAULT 'new'
+    )
+    ''')
+    conn.commit()
+    print("✅ Таблица messages_to_admin создана")
+
+def init_db():
+    # ... существующий код ...
+    
+    # Таблица для обращений к админу
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        date TEXT,
+        status TEXT DEFAULT 'new'
+    )
+    ''')
+    conn.commit()
+    print("✅ Таблица messages_to_admin создана")
