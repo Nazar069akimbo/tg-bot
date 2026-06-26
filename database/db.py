@@ -25,7 +25,8 @@ def init_db():
         user_mode TEXT DEFAULT 'text',
         trial_start TEXT,
         trial_used INTEGER DEFAULT 0,
-        trial_active INTEGER DEFAULT 0
+        trial_active INTEGER DEFAULT 0,
+        last_image_reset TEXT
     )
     ''')
     
@@ -68,7 +69,8 @@ def init_db():
     )
     ''')
     
-    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active']:
+    # Добавляем колонки если их нет
+    for col in ['image_requests', 'image_limit', 'plan', 'user_mode', 'trial_start', 'trial_used', 'trial_active', 'last_image_reset']:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col} DEFAULT '0'")
         except sqlite3.OperationalError:
@@ -88,6 +90,8 @@ def init_settings():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_output_words', '50')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('premium_input_chars', '3000')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('premium_output_words', '300')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('image_limit_free', '3')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('image_limit_premium', '50')")
     conn.commit()
     print("✅ Настройки инициализированы")
 
@@ -96,8 +100,12 @@ def get_user(user_id):
     return cursor.fetchone()
 
 def create_user(user_id, username):
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, trial_start, trial_active) VALUES (?, ?, ?, ?, ?)",
-                   (user_id, username, datetime.now().isoformat(), datetime.now().isoformat(), 1))
+    now = datetime.now().isoformat()
+    cursor.execute("""
+        INSERT OR IGNORE INTO users 
+        (user_id, username, joined, trial_start, trial_active, last_image_reset) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, username, now, now, 1, now))
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
@@ -134,10 +142,12 @@ def add_premium(user_id, days):
     cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
     conn.commit()
 
+# ============ ТЕКСТОВЫЕ ЗАПРОСЫ ============
 def can_request(user_id):
     user = get_user(user_id)
     if not user:
         return True, 10
+    # Premium - безлимит
     if user[3] and datetime.now().isoformat() < user[3]:
         return True, 999999
     used = user[4] or 0
@@ -147,6 +157,89 @@ def can_request(user_id):
 def add_request(user_id):
     cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
+
+# ============ КАРТИНКИ ============
+def reset_image_count_if_needed(user_id):
+    """Сбрасывает счётчик картинок если прошёл день"""
+    user = get_user(user_id)
+    if not user:
+        return
+    
+    last_reset = user[13] if len(user) > 13 else None
+    if not last_reset:
+        # Если нет даты сброса - устанавливаем
+        cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", 
+                      (datetime.now().isoformat(), user_id))
+        conn.commit()
+        return
+    
+    try:
+        last_date = datetime.fromisoformat(last_reset)
+        today = datetime.now()
+        
+        # Если прошёл день - сбрасываем счётчик
+        if last_date.date() < today.date():
+            cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
+                          (today.isoformat(), user_id))
+            conn.commit()
+            print(f"🔄 Сброшен счётчик картинок для {user_id}")
+    except:
+        pass
+
+def get_image_limit(user_id):
+    """Получить лимит картинок для пользователя"""
+    user = get_user(user_id)
+    if not user:
+        return 3
+    
+    # Premium пользователи
+    if user[3] and datetime.now().isoformat() < user[3]:
+        return int(get_setting('image_limit_premium') or 50)
+    
+    # Обычные пользователи
+    return int(get_setting('image_limit_free') or 3)
+
+def can_generate_image(user_id):
+    """Проверяет может ли пользователь генерировать картинку"""
+    user = get_user(user_id)
+    if not user:
+        return True, 3
+    
+    # Сбрасываем счётчик если прошёл день
+    reset_image_count_if_needed(user_id)
+    
+    # Проверяем лимит
+    limit = get_image_limit(user_id)
+    used = user[8] if len(user) > 8 else 0
+    
+    # Premium - больше лимит
+    if user[3] and datetime.now().isoformat() < user[3]:
+        limit = int(get_setting('image_limit_premium') or 50)
+        remaining = limit - used
+        return used < limit, remaining
+    
+    # Обычные пользователи - 3 картинки в день
+    remaining = limit - used
+    return used < limit, remaining
+
+def add_image_request(user_id):
+    """Увеличивает счётчик использованных картинок"""
+    cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+def get_image_stats(user_id):
+    """Получить статистику по картинкам"""
+    user = get_user(user_id)
+    if not user:
+        return 0, 3, False
+    
+    reset_image_count_if_needed(user_id)
+    
+    used = user[8] if len(user) > 8 else 0
+    limit = get_image_limit(user_id)
+    is_prem = user[3] and datetime.now().isoformat() < user[3]
+    
+    return used, limit, is_prem
 
 def set_mode(user_id, mode):
     cursor.execute("UPDATE users SET mode = ? WHERE user_id = ?", (mode, user_id))
@@ -183,21 +276,6 @@ def get_user_plan(user_id):
     if user and len(user) > 9:
         return user[9]
     return 'basic'
-
-def get_image_limit(user_id):
-    return 3
-
-def can_generate_image(user_id):
-    user = get_user(user_id)
-    if not user:
-        return True, 3
-    used = user[8] if len(user) > 8 else 0
-    limit = 3
-    return used < limit, limit - used
-
-def add_image_request(user_id):
-    cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
 
 def set_user_plan(user_id, plan):
     cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))

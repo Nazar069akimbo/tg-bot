@@ -17,15 +17,15 @@ def admin_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats")],
-            [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="a_users_list")],
-            [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="a_search_user")],
-            [InlineKeyboardButton(text="📩 Входящие обращения", callback_data="a_messages")],
+            [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users_list")],
+            [InlineKeyboardButton(text="🔍 Поиск", callback_data="a_search_user")],
+            [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
             [InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
             [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium_list")],
-            [InlineKeyboardButton(text="💾 Сделать бэкап", callback_data="a_backup")],
-            [InlineKeyboardButton(text="💾 Восстановить БД", callback_data="a_restore_db")],
-            [InlineKeyboardButton(text="🗑️ Управление бэкапами", callback_data="a_backup_manage")],
+            [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+            [InlineKeyboardButton(text="💾 Восстановить", callback_data="a_restore_db")],
+            [InlineKeyboardButton(text="🗑️ Бэкапы", callback_data="a_backup_manage")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ]
     )
@@ -33,11 +33,11 @@ def admin_kb():
 def backup_manage_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Список бэкапов", callback_data="a_backup_list")],
-            [InlineKeyboardButton(text="🗑️ Удалить старше 1 дня", callback_data="a_backup_delete_1")],
-            [InlineKeyboardButton(text="🗑️ Удалить старше 7 дней", callback_data="a_backup_delete_7")],
-            [InlineKeyboardButton(text="🗑️ Удалить старше 30 дней", callback_data="a_backup_delete_30")],
-            [InlineKeyboardButton(text="🗑️ Удалить ВСЕ бэкапы", callback_data="a_backup_delete_all")],
+            [InlineKeyboardButton(text="📋 Список", callback_data="a_backup_list")],
+            [InlineKeyboardButton(text="🗑️ Удалить >1 дня", callback_data="a_backup_delete_1")],
+            [InlineKeyboardButton(text="🗑️ Удалить >7 дней", callback_data="a_backup_delete_7")],
+            [InlineKeyboardButton(text="🗑️ Удалить >30 дней", callback_data="a_backup_delete_30")],
+            [InlineKeyboardButton(text="🗑️ Удалить ВСЕ", callback_data="a_backup_delete_all")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
         ]
     )
@@ -64,9 +64,9 @@ def user_actions_kb(user_id):
             [InlineKeyboardButton(text="🟢 Разблокировать", callback_data=f"unblock_user_{user_id}")],
             [InlineKeyboardButton(text="💎 Выдать Premium", callback_data=f"give_premium_user_{user_id}")],
             [InlineKeyboardButton(text="💎 Забрать Premium", callback_data=f"remove_premium_{user_id}")],
-            [InlineKeyboardButton(text="📊 Статистика пользователя", callback_data=f"user_stats_{user_id}")],
-            [InlineKeyboardButton(text="✏️ Отправить сообщение", callback_data=f"send_message_{user_id}")],
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="a_users_list")]
+            [InlineKeyboardButton(text="📊 Статистика", callback_data=f"user_stats_{user_id}")],
+            [InlineKeyboardButton(text="✏️ Написать", callback_data=f"send_message_{user_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_users_list")]
         ]
     )
 
@@ -171,13 +171,18 @@ async def a_stats(callback: types.CallbackQuery):
         cursor.execute("SELECT COUNT(*) FROM messages_to_admin WHERE status = 'new'")
         new_messages = cursor.fetchone()[0]
     
+    # Статистика по картинкам
+    cursor.execute("SELECT SUM(image_requests) FROM users")
+    total_images = cursor.fetchone()[0] or 0
+    
     text = f"📊 **СТАТИСТИКА**\n\n"
-    text += f"👥 Всего пользователей: {total}\n"
+    text += f"👥 Всего: {total}\n"
     text += f"💎 Premium: {premium}\n"
     text += f"🔴 Заблокировано: {blocked}\n"
-    text += f"📝 Всего запросов: {req}\n"
-    text += f"📩 Новых обращений: {new_messages}\n"
-    text += f"🛡️ Администраторов: {admins}"
+    text += f"📝 Запросов: {req}\n"
+    text += f"🖼️ Картинок: {total_images}\n"
+    text += f"📩 Обращений: {new_messages}\n"
+    text += f"🛡️ Админов: {admins}"
     
     try:
         await callback.message.edit_text(text, reply_markup=admin_kb())
@@ -267,13 +272,14 @@ async def show_user_info(target, user_id):
             await target.answer("❌ Пользователь не найден")
         return
     
-    cursor.execute("SELECT username, joined, premium_until, free_requests, total_requests, is_blocked, mode FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT username, joined, premium_until, free_requests, total_requests, is_blocked, mode, image_requests FROM users WHERE user_id = ?", (user_id,))
     u = cursor.fetchone()
     
     premium_status = "✅ Активен" if u[2] and u[2] > datetime.now().isoformat() else "❌ Не активен"
     premium_until = u[2][:10] if u[2] else "Нет"
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
     mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
+    images = u[7] or 0
     
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
     has_table = cursor.fetchone() is not None
@@ -283,6 +289,7 @@ async def show_user_info(target, user_id):
     text += f"👤 Имя: {u[0] or 'без имени'}\n"
     text += f"📆 Регистрация: {u[1][:10] if u[1] else 'Нет'}\n"
     text += f"📊 Запросов: {u[4] or 0}\n"
+    text += f"🖼️ Картинок: {images}\n"
     text += f"🎯 Режим: {mode}\n"
     text += f"💎 Premium: {premium_status}\n"
     text += f"📅 Premium до: {premium_until}\n"
@@ -1005,14 +1012,19 @@ async def a_limits(callback: types.CallbackQuery):
     free_out = get_setting('free_output_words')
     prem_in = get_setting('premium_input_chars')
     prem_out = get_setting('premium_output_words')
+    img_free = get_setting('image_limit_free')
+    img_prem = get_setting('image_limit_premium')
     
     text = "⚙️ **ТЕКУЩИЕ ЛИМИТЫ**\n\n"
-    text += f"🔹 Бесплатные:\n"
+    text += "🔹 **Текстовые запросы:**\n"
     text += f"  📥 Вход: {free_in} символов\n"
     text += f"  📤 Выход: {free_out} слов\n\n"
-    text += f"🔸 Premium:\n"
+    text += "🔸 **Premium:**\n"
     text += f"  📥 Вход: {prem_in} символов\n"
-    text += f"  📤 Выход: {prem_out} слов"
+    text += f"  📤 Выход: {prem_out} слов\n\n"
+    text += "🖼️ **Картинки:**\n"
+    text += f"  🔹 Бесплатно: {img_free} картинок/день\n"
+    text += f"  🔸 Premium: {img_prem} картинок/день"
     
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1020,6 +1032,8 @@ async def a_limits(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔹 Бесплатные слова", callback_data="l_free_out")],
             [InlineKeyboardButton(text="🔸 Premium символы", callback_data="l_prem_in")],
             [InlineKeyboardButton(text="🔸 Premium слова", callback_data="l_prem_out")],
+            [InlineKeyboardButton(text="🖼️ Лимит картинок (бесплатно)", callback_data="l_img_free")],
+            [InlineKeyboardButton(text="🖼️ Лимит картинок (Premium)", callback_data="l_img_prem")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
         ]
     )
@@ -1041,7 +1055,9 @@ async def l_edit(callback: types.CallbackQuery):
         "l_free_in": "free_input_chars",
         "l_free_out": "free_output_words",
         "l_prem_in": "premium_input_chars",
-        "l_prem_out": "premium_output_words"
+        "l_prem_out": "premium_output_words",
+        "l_img_free": "image_limit_free",
+        "l_img_prem": "image_limit_premium"
     }
     key = key_map.get(callback.data)
     if not key:
@@ -1050,19 +1066,22 @@ async def l_edit(callback: types.CallbackQuery):
     
     current = get_setting(key)
     
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="50", callback_data=f"s_{key}_50")],
-            [InlineKeyboardButton(text="100", callback_data=f"s_{key}_100")],
-            [InlineKeyboardButton(text="200", callback_data=f"s_{key}_200")],
-            [InlineKeyboardButton(text="300", callback_data=f"s_{key}_300")],
-            [InlineKeyboardButton(text="500", callback_data=f"s_{key}_500")],
-            [InlineKeyboardButton(text="1000", callback_data=f"s_{key}_1000")],
-            [InlineKeyboardButton(text="3000", callback_data=f"s_{key}_3000")],
-            [InlineKeyboardButton(text="5000", callback_data=f"s_{key}_5000")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_limits")]
-        ]
-    )
+    # Для картинок показываем другие значения
+    if "image_limit" in key:
+        values = [1, 3, 5, 10, 20, 50, 100, 200]
+    else:
+        values = [50, 100, 200, 300, 500, 1000, 3000, 5000]
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for i, val in enumerate(values):
+        row.append(InlineKeyboardButton(text=str(val), callback_data=f"s_{key}_{val}"))
+        if len(row) == 4:
+            kb.inline_keyboard.append(row)
+            row = []
+    if row:
+        kb.inline_keyboard.append(row)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="a_limits")])
     
     try:
         await callback.message.edit_text(f"📝 Текущее значение: **{current}**\n\nВыберите новое значение:", reply_markup=kb)

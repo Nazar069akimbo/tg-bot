@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user, cursor, get_user_plan, get_image_limit
+from database.db import get_user, cursor, get_user_plan, get_image_stats, is_premium
 from keyboards import main_menu
 
 router = Router()
@@ -16,17 +16,19 @@ async def profile_cmd(message: types.Message):
     referrals_count = cursor.fetchone()[0] or 0
     
     plan = get_user_plan(message.from_user.id)
-    image_limit = get_image_limit(message.from_user.id)
-    premium = user[3][:10] if user[3] else "нет"
+    premium = is_premium(message.from_user.id)
+    
+    # Статистика по картинкам
+    used, limit, is_prem = get_image_stats(message.from_user.id)
     
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10]}\n"
     text += f"📊 Запросов: {user[5] or 0}\n"
     text += f"👥 Приглашено: {referrals_count}\n"
-    text += f"💎 Premium до: {premium}\n"
+    text += f"💎 Premium: {'✅ Активен' if premium else '❌ Нет'}\n"
     text += f"📊 План: {plan.upper()}\n"
-    text += f"🖼️ Картинок/день: {image_limit}"
+    text += f"🖼️ Картинки: {used}/{limit} (сегодня)"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -43,17 +45,18 @@ async def profile_callback(callback: types.CallbackQuery):
         referrals_count = cursor.fetchone()[0] or 0
         
         plan = get_user_plan(callback.from_user.id)
-        image_limit = get_image_limit(callback.from_user.id)
-        premium = user[3][:10] if user[3] else "нет"
+        premium = is_premium(callback.from_user.id)
+        
+        used, limit, is_prem = get_image_stats(callback.from_user.id)
         
         text = f"👤 **Профиль**\n\n"
         text += f"🆔 ID: {user[0]}\n"
         text += f"📆 Регистрация: {user[2][:10]}\n"
         text += f"📊 Запросов: {user[5] or 0}\n"
         text += f"👥 Приглашено: {referrals_count}\n"
-        text += f"💎 Premium до: {premium}\n"
+        text += f"💎 Premium: {'✅ Активен' if premium else '❌ Нет'}\n"
         text += f"📊 План: {plan.upper()}\n"
-        text += f"🖼️ Картинок/день: {image_limit}"
+        text += f"🖼️ Картинки: {used}/{limit} (сегодня)"
         
         await callback.message.edit_text(text, reply_markup=main_menu())
         await callback.answer()

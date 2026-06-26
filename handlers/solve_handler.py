@@ -1,13 +1,18 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user, can_request, add_request, is_premium, can_generate_image, add_image_request
-from database.db import is_trial_active, get_trial_remaining, use_trial_image
+from database.db import (
+    get_user, can_request, add_request, is_premium, 
+    can_generate_image, add_image_request, get_image_stats,
+    is_trial_active, get_trial_remaining, use_trial_image,
+    reset_image_count_if_needed
+)
 from ai import solve_problem
 from keyboards import main_menu
 import logging
 import asyncio
 import requests
 import os
+from datetime import datetime
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -49,7 +54,11 @@ async def handle_message(message: types.Message):
 async def generate_text(message: types.Message):
     ok, remaining = can_request(message.from_user.id)
     if not ok:
-        await message.answer("🔒 Лимит исчерпан! Купи Premium: /subscribe")
+        await message.answer(
+            f"🔒 **Лимит текстовых запросов исчерпан!**\n\n"
+            f"📊 Осталось: 0\n"
+            f"💎 Купи Premium для безлимита: /subscribe"
+        )
         return
     
     premium = is_premium(message.from_user.id)
@@ -70,28 +79,50 @@ async def generate_text(message: types.Message):
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     
-    trial_remaining = get_trial_remaining(user_id)
-    can_gen, remaining = can_generate_image(user_id)
+    # Сбрасываем счётчик если прошёл день
+    reset_image_count_if_needed(user_id)
     
-    if trial_remaining > 0:
+    # Проверяем лимит
+    can_gen, remaining = can_generate_image(user_id)
+    used, limit, is_prem = get_image_stats(user_id)
+    
+    # Проверка пробного периода
+    trial_remaining = get_trial_remaining(user_id)
+    
+    # Логика: если есть пробный период и он активен - используем его
+    if trial_remaining > 0 and not is_prem:
         can_gen = True
         remaining = trial_remaining
+        limit = 5
+        used = 5 - trial_remaining
         logger.info(f"🎁 Пробный период: осталось {trial_remaining} картинок")
-    else:
-        if is_trial_active(user_id) and trial_remaining == 0:
-            await message.answer(
-                f"🎁 **Пробный период активен, но лимит исчерпан!**\n\n"
-                f"📊 Сегодня использовано: 5/5 картинок\n"
-                f"⏳ Завтра лимит обновится\n\n"
-                f"💎 Купи Premium для безлимита: /subscribe"
-            )
-            return
     
-    if not can_gen and not is_trial_active(user_id):
+    # Если не можем генерировать
+    if not can_gen:
+        if is_prem:
+            # Для премиум - если лимит исчерпан (но такого быть не должно)
+            await message.answer(
+                f"❌ **Лимит картинок исчерпан!**\n\n"
+                f"📊 Использовано: {used}/{limit}\n"
+                f"⏳ Подождите до завтра\n"
+                f"💎 У вас Premium, лимит должен обновиться"
+            )
+        else:
+            # Для обычных пользователей
+            await message.answer(
+                f"❌ **Лимит картинок исчерпан!**\n\n"
+                f"📊 Использовано: {used}/{limit}\n"
+                f"⏳ Лимит обновится завтра\n\n"
+                f"💎 Купи Premium для увеличения лимита: /subscribe"
+            )
+        return
+    
+    # Проверка пробного периода - если закончился
+    if is_trial_active(user_id) and trial_remaining == 0 and not is_prem:
         await message.answer(
-            f"❌ Лимит картинок исчерпан!\n\n"
-            f"📊 Осталось: {remaining}\n"
-            f"💎 Купи Premium: /subscribe"
+            f"🎁 **Пробный период закончился!**\n\n"
+            f"📊 Вы использовали все 5 картинок\n"
+            f"💎 Купи Premium для безлимита: /subscribe"
         )
         return
     
@@ -109,7 +140,7 @@ async def generate_image(message: types.Message):
         }
         
         prompt_data = {
-            "model": PROMPT_MODEL,
+            "model": "gpt-4.1-nano",
             "messages": [
                 {"role": "system", "content": "You are a professional prompt engineer. Convert the user's request into a detailed English prompt for Flux/Stable Diffusion. Rules: 1. ALWAYS respond ONLY in English 2. Prompt should be 30-60 words 3. Add details: style, lighting, mood, colors 4. Use quality keywords: photorealistic, 8k, highly detailed. Only the prompt, no explanations!"},
                 {"role": "user", "content": f"Create a prompt for: {user_prompt}"}
@@ -177,15 +208,24 @@ async def generate_image(message: types.Message):
                         from aiogram.types import BufferedInputFile
                         image_file = BufferedInputFile(image_data, filename="image.webp")
                         
-                        await message.answer_photo(
-                            photo=image_file,
-                            caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n🔍 {enhanced_prompt}"
-                        )
-                        
-                        if trial_remaining > 0:
+                        # Увеличиваем счётчик
+                        if trial_remaining > 0 and not is_premium(user_id):
                             use_trial_image(user_id)
                         else:
                             add_image_request(user_id)
+                        
+                        # Получаем обновлённую статистику
+                        new_used, new_limit, new_prem = get_image_stats(user_id)
+                        
+                        caption = f"🖼️ **Твоя картинка**\n"
+                        caption += f"📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n"
+                        caption += f"📊 Осталось картинок: {new_limit - new_used}\n"
+                        caption += f"💎 Статус: {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
+                        
+                        await message.answer_photo(
+                            photo=image_file,
+                            caption=caption
+                        )
                         
                         await status_msg.delete()
                         return
