@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.filters import Command
 from database.db import get_user, can_request, add_request, is_premium, can_generate_image, add_image_request
 from database.db import is_trial_active, get_trial_remaining, use_trial_image
 from ai import solve_problem
@@ -14,8 +15,6 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv('OPENAI_API_KEY')
 
 from handlers.settings_handler import user_modes
-from handlers.admin_handler import user_pages as admin_pages
-from handlers.contact_handler import user_pages as contact_pages
 
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
@@ -25,12 +24,12 @@ async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
     
-    # Проверяем, не админ ли это в режиме поиска/рассылки
+    from handlers.admin_handler import user_pages as admin_pages
     admin_state = admin_pages.get(message.from_user.id, {})
     if admin_state.get("state") in ["waiting_user_search", "waiting_admin_message", "waiting_broadcast", "confirm_broadcast"]:
         return
     
-    # Проверяем, не обращение ли это к админу
+    from handlers.contact_handler import user_pages as contact_pages
     contact_state = contact_pages.get(message.from_user.id, {})
     if contact_state.get("state") == "waiting_contact":
         return
@@ -101,7 +100,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерация промпта
         await status_msg.edit_text("🔍 Создаю детальное описание...")
         
         prompt_url = "https://openai.bothub.chat/v1/chat/completions"
@@ -133,7 +131,6 @@ async def generate_image(message: types.Message):
             enhanced_prompt = user_prompt
             logger.warning(f"⚠️ Не удалось создать промпт")
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -141,7 +138,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # Генерация картинки
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {API_KEY}",

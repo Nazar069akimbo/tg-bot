@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from database.db import is_admin, add_admin, cursor, conn, get_setting, set_setting, get_user
+from database.db import add_premium as db_add_premium
 import asyncio
 from datetime import datetime
 from backup_github import GitHubBackup
@@ -151,7 +152,6 @@ async def a_stats(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Проверяем, есть ли таблица
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
     has_table = cursor.fetchone() is not None
     
@@ -275,7 +275,6 @@ async def show_user_info(target, user_id):
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
     mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
     
-    # Проверяем таблицу messages_to_admin
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
     has_table = cursor.fetchone() is not None
     
@@ -365,8 +364,7 @@ async def premium_days_set(callback: types.CallbackQuery):
     user_id = int(parts[2])
     days = int(parts[3])
     
-    from database.db import add_premium
-    add_premium(user_id, days)
+    db_add_premium(user_id, days)
     user_pages.pop(callback.from_user.id, None)
     
     try:
@@ -568,7 +566,6 @@ async def reply_to_user(message: types.Message):
         user_id = int(parts[0].replace("/reply_", ""))
         reply_text = " ".join(parts[1:])
         
-        # Проверяем, есть ли таблица
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
         if cursor.fetchone():
             cursor.execute(
@@ -577,7 +574,6 @@ async def reply_to_user(message: types.Message):
             )
             conn.commit()
         
-        # Отправляем сообщение пользователю
         try:
             await message.bot.send_message(
                 user_id,
@@ -824,7 +820,6 @@ async def handle_admin_messages(message: types.Message):
     
     state = user_pages.get(message.from_user.id, {})
     
-    # ПОИСК ПОЛЬЗОВАТЕЛЯ
     if state.get("state") == "waiting_user_search":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)
@@ -861,7 +856,6 @@ async def handle_admin_messages(message: types.Message):
         
         return
     
-    # ОТПРАВКА СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЮ
     if state.get("state") == "waiting_admin_message":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)
@@ -888,7 +882,6 @@ async def handle_admin_messages(message: types.Message):
         
         return
     
-    # РАССЫЛКА
     if state.get("state") == "waiting_broadcast":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)

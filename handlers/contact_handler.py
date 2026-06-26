@@ -1,5 +1,6 @@
 from aiogram import Router, types, F
-from database.db import get_user, cursor, conn, is_admin
+from aiogram.filters import Command
+from database.db import get_user, cursor, conn
 from keyboards import main_menu
 import logging
 from datetime import datetime
@@ -39,7 +40,6 @@ async def handle_contact(message: types.Message):
         return
     
     try:
-        # Создаём таблицу, если её нет
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,3 +82,8 @@ async def handle_contact(message: types.Message):
     except Exception as e:
         logger.error(f"Error saving contact: {e}")
         await message.answer("❌ Ошибка при отправке. Попробуйте позже.")
+
+@router.message(Command("cancel"))
+async def cancel_cmd(message: types.Message):
+    user_pages.pop(message.from_user.id, None)
+    await message.answer("✅ Отменено", reply_markup=main_menu())
