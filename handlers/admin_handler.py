@@ -268,7 +268,6 @@ async def show_user_info(target, user_id):
     block_status = "🔴 Заблокирован" if u[5] == 1 else "🟢 Активен"
     mode = "💬 ChatGPT" if u[6] == "chat" else "📚 ГДЗ"
     
-    # Получаем последние обращения пользователя
     cursor.execute("SELECT text, date, status FROM messages_to_admin WHERE user_id = ? ORDER BY date DESC LIMIT 3", (user_id,))
     messages = cursor.fetchall()
     
@@ -496,7 +495,6 @@ async def a_messages(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     
-    # Проверяем существование таблицы
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages_to_admin'")
     if not cursor.fetchone():
         await callback.message.edit_text("📩 **Входящие обращения**\n\nНет обращений.", reply_markup=admin_kb())
@@ -518,7 +516,7 @@ async def a_messages(callback: types.CallbackQuery):
         text += f"{status} `{msg[1]}` — {name}\n"
         text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
         text += f"🕐 {msg[4][:16]}\n"
-        text += f"👉 /reply_{msg[1]}\n\n"
+        text += f"👉 /reply_{msg[1]} Текст ответа\n\n"
     
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
     await callback.answer()
@@ -559,15 +557,30 @@ async def reply_to_user(message: types.Message):
         user_id = int(parts[0].replace("/reply_", ""))
         reply_text = " ".join(parts[1:])
         
-        await message.bot.send_message(
-            user_id,
-            f"📩 **Ответ от администратора:**\n\n{reply_text}"
-        )
+        # ===== ОТПРАВЛЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ =====
+        try:
+            await message.bot.send_message(
+                user_id,
+                f"📩 **Ответ от администратора:**\n\n{reply_text}"
+            )
+            await message.answer(f"✅ Сообщение отправлено пользователю `{user_id}`")
+        except Exception as e:
+            await message.answer(f"❌ Не удалось отправить: {e}")
+            return
         
-        cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", (user_id,))
+        cursor.execute(
+            "UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", 
+            (user_id,)
+        )
         conn.commit()
         
-        await message.answer(f"✅ Ответ отправлен пользователю `{user_id}`")
+        await message.answer(
+            f"✅ **Сообщение доставлено!**\n\n"
+            f"👤 Пользователь: `{user_id}`\n"
+            f"📝 Текст:\n{reply_text}\n\n"
+            f"💬 Статус обращения обновлён на 'Обработано'"
+        )
+        
     except ValueError:
         await message.answer("❌ Неверный ID пользователя")
     except Exception as e:
@@ -716,7 +729,7 @@ async def a_backup_delete(callback: types.CallbackQuery):
     )
     
     await callback.message.edit_text(
-        f"⚠️ **ПОДВЕРДИТЕ УДАЛЕНИЕ**\n\n"
+        f"⚠️ **ПОДТВЕРДИТЕ УДАЛЕНИЕ**\n\n"
         f"Вы собираетесь удалить все бэкапы старше {days} дней.\n\n"
         f"Это действие НЕЛЬЗЯ будет отменить!",
         reply_markup=kb
