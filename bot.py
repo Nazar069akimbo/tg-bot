@@ -64,12 +64,12 @@ async def set_commands():
 async def main():
     logger.info("🚀 Запуск бота...")
     
-    # ЗАПУСКАЕМ ИНИЦИАЛИЗАЦИЮ БД ПЕРВОЙ
+    # ====== ИНИЦИАЛИЗАЦИЯ БД ПЕРВЫМ ДЕЛОМ ======
     init_db()
     init_settings()
     logger.info("✅ База данных инициализирована")
     
-    # Запускаем Flask для health checks
+    # Запускаем Flask
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
