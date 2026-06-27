@@ -12,12 +12,13 @@ import logging
 import asyncio
 import requests
 import os
-from datetime import datetime
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv('OPENAI_API_KEY')
+if not API_KEY:
+    logger.error("❌ OPENAI_API_KEY не найден!")
 
 from handlers.settings_handler import user_modes
 
@@ -45,6 +46,7 @@ async def handle_message(message: types.Message):
         return
     
     mode = user_modes.get(message.from_user.id, "text")
+    logger.info(f"Режим пользователя {message.from_user.id}: {mode}")
     
     if mode == "image":
         await generate_image(message)
@@ -64,8 +66,13 @@ async def generate_text(message: types.Message):
     premium = is_premium(message.from_user.id)
     status_msg = await message.answer("🤔 Думаю...")
     
-    answer = solve_problem(message.text, "chat", premium)
-    add_request(message.from_user.id)
+    try:
+        answer = solve_problem(message.text, "chat", premium)
+        add_request(message.from_user.id)
+    except Exception as e:
+        logger.error(f"Ошибка при генерации текста: {e}")
+        await status_msg.edit_text("❌ Ошибка при обработке запроса. Попробуйте позже.")
+        return
     
     remaining_after = remaining - 1 if not premium else "∞"
     result_text = f"🧠 {answer}\n\n"
@@ -86,10 +93,7 @@ async def generate_image(message: types.Message):
     can_gen, remaining = can_generate_image(user_id)
     used, limit, is_prem = get_image_stats(user_id)
     
-    # Проверка пробного периода
     trial_remaining = get_trial_remaining(user_id)
-    
-    # Логика: если есть пробный период и он активен - используем его
     if trial_remaining > 0 and not is_prem:
         can_gen = True
         remaining = trial_remaining
@@ -97,18 +101,14 @@ async def generate_image(message: types.Message):
         used = 5 - trial_remaining
         logger.info(f"🎁 Пробный период: осталось {trial_remaining} картинок")
     
-    # Если не можем генерировать
     if not can_gen:
         if is_prem:
-            # Для премиум - если лимит исчерпан (но такого быть не должно)
             await message.answer(
                 f"❌ **Лимит картинок исчерпан!**\n\n"
                 f"📊 Использовано: {used}/{limit}\n"
-                f"⏳ Подождите до завтра\n"
-                f"💎 У вас Premium, лимит должен обновиться"
+                f"⏳ Подождите до завтра"
             )
         else:
-            # Для обычных пользователей
             await message.answer(
                 f"❌ **Лимит картинок исчерпан!**\n\n"
                 f"📊 Использовано: {used}/{limit}\n"
@@ -117,7 +117,6 @@ async def generate_image(message: types.Message):
             )
         return
     
-    # Проверка пробного периода - если закончился
     if is_trial_active(user_id) and trial_remaining == 0 and not is_prem:
         await message.answer(
             f"🎁 **Пробный период закончился!**\n\n"
@@ -140,7 +139,7 @@ async def generate_image(message: types.Message):
         }
         
         prompt_data = {
-            "model": "gpt-4.1-nano",
+            "model": PROMPT_MODEL,
             "messages": [
                 {"role": "system", "content": "You are a professional prompt engineer. Convert the user's request into a detailed English prompt for Flux/Stable Diffusion. Rules: 1. ALWAYS respond ONLY in English 2. Prompt should be 30-60 words 3. Add details: style, lighting, mood, colors 4. Use quality keywords: photorealistic, 8k, highly detailed. Only the prompt, no explanations!"},
                 {"role": "user", "content": f"Create a prompt for: {user_prompt}"}
@@ -157,17 +156,11 @@ async def generate_image(message: types.Message):
             if enhanced_prompt.startswith('"') and enhanced_prompt.endswith('"'):
                 enhanced_prompt = enhanced_prompt[1:-1]
             logger.info(f"📝 Промпт: {enhanced_prompt[:100]}...")
-            await status_msg.edit_text(f"🎨 Генерирую картинку...")
         else:
             enhanced_prompt = user_prompt
-            logger.warning(f"⚠️ Не удалось создать промпт")
+            logger.warning(f"⚠️ Не удалось создать промпт, используем исходный")
         
-        for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.2)
-            try:
-                await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
-            except:
-                pass
+        await status_msg.edit_text("🎨 Генерирую картинку...")
         
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
@@ -202,36 +195,25 @@ async def generate_image(message: types.Message):
                     image_data = img_response.content
                     
                     if len(image_data) > 1000:
-                        await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                        await status_msg.edit_text("🎨 Готово! ✅")
                         await asyncio.sleep(0.2)
                         
                         from aiogram.types import BufferedInputFile
                         image_file = BufferedInputFile(image_data, filename="image.webp")
                         
-                        # Увеличиваем счётчик
                         if trial_remaining > 0 and not is_premium(user_id):
                             use_trial_image(user_id)
                         else:
                             add_image_request(user_id)
                         
-                        # Получаем обновлённую статистику
                         new_used, new_limit, new_prem = get_image_stats(user_id)
+                        caption = f"🖼️ **Твоя картинка**\n\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n📊 Осталось картинок: {new_limit - new_used}\n💎 Статус: {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
                         
-                        caption = f"🖼️ **Твоя картинка**\n"
-                        caption += f"📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n"
-                        caption += f"📊 Осталось картинок: {new_limit - new_used}\n"
-                        caption += f"💎 Статус: {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
-                        
-                        await message.answer_photo(
-                            photo=image_file,
-                            caption=caption
-                        )
-                        
+                        await message.answer_photo(photo=image_file, caption=caption)
                         await status_msg.delete()
                         return
         
         await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
-            
     except Exception as e:
         logger.error(f"❌ Image error: {e}")
         await status_msg.edit_text("❌ Ошибка. Попробуй позже.")

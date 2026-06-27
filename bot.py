@@ -19,7 +19,8 @@ def health():
     return "OK", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -63,21 +64,30 @@ async def set_commands():
 async def main():
     logger.info("🚀 Запуск бота...")
     
+    # ЗАПУСКАЕМ ИНИЦИАЛИЗАЦИЮ БД ПЕРВОЙ
+    init_db()
+    init_settings()
+    logger.info("✅ База данных инициализирована")
+    
+    # Запускаем Flask для health checks
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
     logger.info("✅ Flask сервер запущен")
     
-    init_db()
-    init_settings()
+    # Восстановление бэкапа (если есть)
+    try:
+        backup = GitHubBackup()
+        backup.restore_latest_backup()
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось восстановить бэкап: {e}")
     
-    backup = GitHubBackup()
-    backup.restore_latest_backup()
-    
+    # Планировщик бэкапов
     def backup_loop():
         while True:
             time.sleep(3600)
             try:
+                backup = GitHubBackup()
                 backup.backup_db(reason='каждый час')
             except Exception as e:
                 logger.error(f"❌ Ошибка бэкапа: {e}")
@@ -86,13 +96,18 @@ async def main():
     backup_thread.start()
     logger.info("✅ Запущен планировщик бэкапов (каждый час)")
     
+    # Добавляем админа
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
+        logger.info(f"✅ Админ {ADMIN_ID} добавлен")
     
     await set_commands()
+    
+    # Подключаем middleware
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     
+    # Подключаем роутеры
     dp.include_router(start_handler.router)
     dp.include_router(stats_handler.router)
     dp.include_router(profile_handler.router)

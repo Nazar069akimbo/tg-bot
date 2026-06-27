@@ -15,7 +15,6 @@ async def stats_cmd(message: types.Message):
     
     ok, remaining = can_request(message.from_user.id)
     premium = is_premium(message.from_user.id)
-    
     used, limit, is_prem = get_image_stats(message.from_user.id)
     trial_remaining = get_trial_remaining(message.from_user.id)
     
@@ -36,7 +35,6 @@ async def stats_cmd(message: types.Message):
 async def stats_callback(callback: types.CallbackQuery):
     try:
         logger.info(f"Stats callback from {callback.from_user.id}")
-        
         user = get_user(callback.from_user.id)
         if not user:
             await callback.message.edit_text("❌ Вы не зарегистрированы!\n\nНажмите /start")
@@ -45,7 +43,6 @@ async def stats_callback(callback: types.CallbackQuery):
         
         ok, remaining = can_request(callback.from_user.id)
         premium = is_premium(callback.from_user.id)
-        
         used, limit, is_prem = get_image_stats(callback.from_user.id)
         trial_remaining = get_trial_remaining(callback.from_user.id)
         

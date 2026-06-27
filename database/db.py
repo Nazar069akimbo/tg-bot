@@ -82,26 +82,25 @@ def init_db():
     )
     ''')
     
-    # Добавляем колонки если их нет
-    columns_to_add = [
-        ('image_requests', 'INTEGER DEFAULT 0'),
-        ('image_limit', 'INTEGER DEFAULT 3'),
-        ('plan', 'TEXT DEFAULT "basic"'),
-        ('user_mode', 'TEXT DEFAULT "text"'),
-        ('trial_start', 'TEXT'),
-        ('trial_used', 'INTEGER DEFAULT 0'),
-        ('trial_active', 'INTEGER DEFAULT 0'),
-        ('last_image_reset', 'TEXT')
-    ]
-    
-    for col, type_def in columns_to_add:
+    # Добавляем недостающие колонки в users (если их нет)
+    columns_to_add = {
+        'image_requests': 'INTEGER DEFAULT 0',
+        'image_limit': 'INTEGER DEFAULT 3',
+        'plan': 'TEXT DEFAULT "basic"',
+        'user_mode': 'TEXT DEFAULT "text"',
+        'trial_start': 'TEXT',
+        'trial_used': 'INTEGER DEFAULT 0',
+        'trial_active': 'INTEGER DEFAULT 0',
+        'last_image_reset': 'TEXT'
+    }
+    for col, col_type in columns_to_add.items():
         try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {type_def}")
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
-            pass
+            pass  # колонка уже существует
     
-    # Добавляем настройки
-    settings = [
+    # Добавляем настройки по умолчанию
+    default_settings = [
         ('free_input_chars', '500'),
         ('free_output_words', '50'),
         ('premium_input_chars', '3000'),
@@ -109,15 +108,14 @@ def init_db():
         ('image_limit_free', '3'),
         ('image_limit_premium', '50')
     ]
-    
-    for key, value in settings:
+    for key, value in default_settings:
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     
     conn.commit()
-    print("✅ База данных готова")
+    print("✅ База данных инициализирована (таблицы и колонки созданы)")
 
 def init_settings():
-    # Уже сделано в init_db
+    # Всё уже сделано в init_db
     pass
 
 def get_user(user_id):
@@ -188,18 +186,15 @@ def reset_image_count_if_needed(user_id):
     user = get_user(user_id)
     if not user:
         return
-    
     last_reset = user[13] if len(user) > 13 else None
     if not last_reset:
         cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", 
                       (datetime.now().isoformat(), user_id))
         conn.commit()
         return
-    
     try:
         last_date = datetime.fromisoformat(last_reset)
         today = datetime.now()
-        
         if last_date.date() < today.date():
             cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
                           (today.isoformat(), user_id))
@@ -212,27 +207,19 @@ def get_image_limit(user_id):
     user = get_user(user_id)
     if not user:
         return 3
-    
     if user[3] and datetime.now().isoformat() < user[3]:
         return int(get_setting('image_limit_premium') or 50)
-    
     return int(get_setting('image_limit_free') or 3)
 
 def can_generate_image(user_id):
     user = get_user(user_id)
     if not user:
         return True, 3
-    
     reset_image_count_if_needed(user_id)
-    
     limit = get_image_limit(user_id)
     used = user[8] if len(user) > 8 else 0
-    
     if user[3] and datetime.now().isoformat() < user[3]:
         limit = int(get_setting('image_limit_premium') or 50)
-        remaining = limit - used
-        return used < limit, remaining
-    
     remaining = limit - used
     return used < limit, remaining
 
@@ -244,13 +231,10 @@ def get_image_stats(user_id):
     user = get_user(user_id)
     if not user:
         return 0, 3, False
-    
     reset_image_count_if_needed(user_id)
-    
     used = user[8] if len(user) > 8 else 0
     limit = get_image_limit(user_id)
     is_prem = user[3] and datetime.now().isoformat() < user[3]
-    
     return used, limit, is_prem
 
 def set_mode(user_id, mode):

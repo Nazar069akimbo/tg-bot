@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from database.db import get_user, cursor, conn, is_admin
+from database.db import get_user, cursor, conn
 from keyboards import main_menu
 import logging
 from datetime import datetime
@@ -14,13 +14,12 @@ user_pages = {}
 async def contact_admin_start(callback: types.CallbackQuery):
     try:
         logger.info(f"Contact admin from {callback.from_user.id}")
-        
         user = get_user(callback.from_user.id)
         if not user:
             await callback.answer("👋 Напишите /start для регистрации", show_alert=True)
             return
         
-        # Создаём таблицу если её нет
+        # Убедимся, что таблица существует
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +33,6 @@ async def contact_admin_start(callback: types.CallbackQuery):
         conn.commit()
         
         user_pages[callback.from_user.id] = {"state": "waiting_contact"}
-        
         await callback.message.edit_text(
             "📩 **Обращение к администратору**\n\n"
             "Напишите ваше пожелание, вопрос или обращение.\n\n"
@@ -52,18 +50,14 @@ async def handle_contact(message: types.Message):
     try:
         user_id = message.from_user.id
         state = user_pages.get(user_id, {})
-        
-        # Проверяем, находится ли пользователь в режиме ожидания обращения
         if state.get("state") != "waiting_contact":
             return
         
-        # Отмена
         if message.text == "/cancel":
             user_pages.pop(user_id, None)
             await message.answer("✅ Отменено", reply_markup=main_menu())
             return
         
-        # Сохраняем обращение
         user = get_user(user_id)
         username = user[1] if user else message.from_user.username or "без имени"
         
@@ -72,10 +66,9 @@ async def handle_contact(message: types.Message):
             (user_id, username, message.text, datetime.now().isoformat(), "new")
         )
         conn.commit()
-        
         user_pages.pop(user_id, None)
         
-        # Отправляем уведомление админу
+        # Уведомление админу
         admin_id = int(os.getenv('ADMIN_ID', 6957852385))
         try:
             await message.bot.send_message(
@@ -86,16 +79,14 @@ async def handle_contact(message: types.Message):
                 f"📝 Текст:\n{message.text}\n\n"
                 f"Ответь через команду: /reply_{user_id} Текст ответа"
             )
-            logger.info(f"✅ Уведомление отправлено админу {admin_id}")
         except Exception as e:
-            logger.error(f"❌ Не удалось отправить уведомление админу: {e}")
+            logger.error(f"Не удалось отправить уведомление админу: {e}")
         
         await message.answer(
             "✅ **Ваше обращение отправлено администратору!**\n\n"
-            "Ожидайте ответа. Администратор свяжется с вами в ближайшее время.",
+            "Ожидайте ответа.",
             reply_markup=main_menu()
         )
-        
     except Exception as e:
         logger.error(f"Contact handler error: {e}")
         await message.answer("❌ Ошибка при отправке. Попробуйте позже.", reply_markup=main_menu())
