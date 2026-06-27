@@ -9,7 +9,7 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # 1. Создаём все таблицы, если их нет
+    # Создаём таблицы, если их нет
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -69,10 +69,11 @@ def init_db():
     )
     ''')
     
-    # 2. Добавляем недостающие колонки в таблицу users
+    # Проверяем существующие колонки
     cursor.execute("PRAGMA table_info(users)")
     existing = [row[1] for row in cursor.fetchall()]
     
+    # Колонки, которые нужно добавить
     columns = {
         'image_requests': 'INTEGER DEFAULT 0',
         'image_limit': 'INTEGER DEFAULT 3',
@@ -90,9 +91,9 @@ def init_db():
                 cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
                 print(f"✅ Добавлена колонка {col}")
             except Exception as e:
-                print(f"⚠️ Ошибка добавления колонки {col}: {e}")
+                print(f"⚠️ Не удалось добавить колонку {col}: {e}")
     
-    # 3. Добавляем настройки по умолчанию
+    # Настройки по умолчанию
     default_settings = [
         ('free_input_chars', '500'),
         ('free_output_words', '50'),
@@ -105,12 +106,13 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     
     conn.commit()
-    print("✅ База данных полностью инициализирована (таблицы и колонки созданы)")
+    print("✅ База данных полностью инициализирована")
+    print(f"📊 Таблица users имеет колонки: {', '.join(existing + list(columns.keys()))}")
 
 def init_settings():
-    # Всё уже сделано в init_db
     pass
 
+# Остальные функции...
 def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()

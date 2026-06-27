@@ -24,7 +24,9 @@ def run_flask():
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# ====== ИМПОРТИРУЕМ init_db ПЕРВЫМ ======
 from database.db import init_db, init_settings, is_admin, add_admin
+
 from handlers import (
     start_handler, stats_handler, profile_handler, 
     settings_handler, subscribe_handler, referral_handler, 
@@ -64,25 +66,28 @@ async def set_commands():
 async def main():
     logger.info("🚀 Запуск бота...")
     
-    # ====== ИНИЦИАЛИЗАЦИЯ БД ПЕРВЫМ ДЕЛОМ ======
+    # ============================================================
+    # 1. ИНИЦИАЛИЗАЦИЯ БД ПЕРВЫМ ДЕЛОМ
+    # ============================================================
+    logger.info("🔄 Инициализация базы данных...")
     init_db()
     init_settings()
     logger.info("✅ База данных инициализирована")
     
-    # Запускаем Flask
+    # 2. Запускаем Flask
     thread = Thread(target=run_flask)
     thread.daemon = True
     thread.start()
     logger.info("✅ Flask сервер запущен")
     
-    # Восстановление бэкапа (если есть)
+    # 3. Восстановление бэкапа (если есть)
     try:
         backup = GitHubBackup()
         backup.restore_latest_backup()
     except Exception as e:
         logger.warning(f"⚠️ Не удалось восстановить бэкап: {e}")
     
-    # Планировщик бэкапов
+    # 4. Планировщик бэкапов
     def backup_loop():
         while True:
             time.sleep(3600)
@@ -96,18 +101,19 @@ async def main():
     backup_thread.start()
     logger.info("✅ Запущен планировщик бэкапов (каждый час)")
     
-    # Добавляем админа
+    # 5. Добавляем админа
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
         logger.info(f"✅ Админ {ADMIN_ID} добавлен")
     
+    # 6. Команды
     await set_commands()
     
-    # Подключаем middleware
+    # 7. Middleware
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     
-    # Подключаем роутеры
+    # 8. Роутеры
     dp.include_router(start_handler.router)
     dp.include_router(stats_handler.router)
     dp.include_router(profile_handler.router)
