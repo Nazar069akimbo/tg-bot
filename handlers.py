@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, BufferedInputFile
 from database.db import *
 from ai.client import solve_problem
 from backup import GitHubBackup
@@ -44,20 +44,44 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user = get_user(message.from_user.id)
-    if not user: return await message.answer("❌ /start")
+    if not user: 
+        return await message.answer("❌ Сначала нажми /start")
+    
     ok, rem = can_request(message.from_user.id)
     used, limit, prem = get_image_stats(message.from_user.id)
-    text = f"📊 **Статистика**\n\n📝 Запросов: {rem if not prem else '∞'}\n🖼️ Картинок: {used}/{limit}\n💎 {'Premium' if prem else 'Бесплатный'}\n🎁 Пробный: {get_trial_remaining(message.from_user.id)}"
-    await message.answer(text)
+    trial = get_trial_remaining(message.from_user.id)
+    
+    text = f"📊 **Статистика**\n\n"
+    text += f"📝 Текстовых запросов: {rem if not prem else '∞'}\n"
+    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
+    if trial > 0 and not prem:
+        text += f"🎁 Пробный период: {trial} картинок осталось\n"
+    text += f"💎 Статус: {'💎 Premium' if prem else '🔴 Бесплатный'}\n"
+    text += f"🎯 Режим: {'🧠 Текст' if user_modes.get(message.from_user.id, 'text') == 'text' else '🖼️ Картинка'}"
+    
+    await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user = get_user(message.from_user.id)
-    if not user: return await message.answer("❌ /start")
+    if not user: 
+        return await message.answer("❌ Сначала нажми /start")
+    
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
     refs = cursor.fetchone()[0] or 0
     used, limit, prem = get_image_stats(message.from_user.id)
-    await message.answer(f"👤 **Профиль**\n\n🆔 {user[0]}\n📆 {user[2][:10] if user[2] else 'Нет'}\n📊 Запросов: {user[5] or 0}\n👥 Приглашено: {refs}\n💎 {'✅ Premium' if prem else '❌ Нет'}\n🖼️ Картинки: {used}/{limit}")
+    plan = get_user_plan(message.from_user.id)
+    
+    text = f"👤 **Профиль**\n\n"
+    text += f"🆔 ID: {user[0]}\n"
+    text += f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
+    text += f"📊 Запросов: {user[5] or 0}\n"
+    text += f"👥 Приглашено: {refs}\n"
+    text += f"💎 Premium: {'✅ Активен' if prem else '❌ Нет'}\n"
+    text += f"📊 План: {plan.upper()}\n"
+    text += f"🖼️ Картинки сегодня: {used}/{limit}"
+    
+    await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
@@ -82,7 +106,8 @@ async def referral_cmd(message: types.Message):
 @router.message(F.text)
 async def handle_message(message: types.Message):
     if message.text.startswith("/"): return
-    if not get_user(message.from_user.id): return await message.answer("👋 /start")
+    if not get_user(message.from_user.id): 
+        return await message.answer("👋 Нажми /start", reply_markup=main_menu())
     
     mode = user_modes.get(message.from_user.id, "text")
     if mode == "image":
@@ -92,66 +117,131 @@ async def handle_message(message: types.Message):
 
 async def generate_text(message: types.Message):
     ok, rem = can_request(message.from_user.id)
-    if not ok: return await message.answer("🔒 Лимит исчерпан! /subscribe")
+    if not ok: 
+        return await message.answer("🔒 Лимит исчерпан! Купи Premium: /subscribe")
     
     prem = is_premium(message.from_user.id)
     status = await message.answer("🤔 Думаю...")
     try:
         answer = solve_problem(message.text, "chat", prem)
         add_request(message.from_user.id)
-        await status.edit_text(f"🧠 {answer}\n\n{'∞' if prem else rem-1} запросов осталось")
+        remaining = rem - 1 if not prem else "∞"
+        await status.edit_text(f"🧠 {answer}\n\n📊 Осталось запросов: {remaining}")
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {e}")
+        logger.error(f"Text error: {e}")
+        await status.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
-    can_gen, remaining = can_generate_image(user_id)
     used, limit, prem = get_image_stats(user_id)
-    
     trial_rem = get_trial_remaining(user_id)
-    if trial_rem > 0 and not prem:
+    
+    # Проверка лимита
+    if prem:
+        can_gen = used < limit
+    elif trial_rem > 0:
         can_gen = True
-        remaining = trial_rem
         limit = 5
+    else:
+        can_gen, remaining = can_generate_image(user_id)
     
     if not can_gen:
-        return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /subscribe")
+        return await message.answer(
+            f"❌ **Лимит картинок исчерпан!**\n\n"
+            f"📊 Использовано: {used}/{limit}\n"
+            f"⏳ Лимит обновится завтра\n\n"
+            f"💎 Купи Premium: /subscribe"
+        )
     
-    status = await message.answer("🎨 Генерирую...")
+    status = await message.answer("🎨 Генерирую картинку...")
+    
     try:
-        prompt_resp = requests.post("https://openai.bothub.chat/v1/chat/completions",
+        # 1. Улучшаем промпт через AI
+        prompt_resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}", "Content-Type": "application/json"},
-            json={"model": "gpt-4.1-nano", "messages": [{"role": "system", "content": "Create detailed English prompt for Flux/Stable Diffusion. 30-60 words. Only prompt!"}, {"role": "user", "content": f"Prompt for: {message.text}"}], "max_tokens": 200}
+            json={
+                "model": "gpt-4.1-nano",
+                "messages": [
+                    {"role": "system", "content": "Create a detailed English prompt for image generation. Only the prompt, no explanations!"},
+                    {"role": "user", "content": f"Create a detailed prompt for: {message.text}"}
+                ],
+                "max_tokens": 200,
+                "temperature": 0.7
+            },
+            timeout=30
         )
-        enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', message.text).strip('"')
         
-        img_resp = requests.post("https://bothub.chat/api/v2/replicate/v1/images/generations",
+        enhanced = message.text
+        if prompt_resp.status_code == 200:
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', message.text).strip('"')
+            logger.info(f"📝 Enhanced prompt: {enhanced[:100]}...")
+        
+        await status.edit_text("🎨 Создаю картинку...")
+        
+        # 2. Генерируем картинку
+        img_resp = requests.post(
+            "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}", "Content-Type": "application/json"},
-            json={"model": "flux-schnell", "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}},
-            timeout=60
+            json={
+                "model": "flux-schnell",
+                "input": {
+                    "prompt": enhanced,
+                    "aspect_ratio": "1:1",
+                    "output_format": "webp"
+                }
+            },
+            timeout=120
         )
-        img_url = img_resp.json().get('url')
-        if isinstance(img_url, list): img_url = img_url[0]
         
-        if img_url:
-            img_data = requests.get(img_url).content
-            if trial_rem > 0 and not prem:
-                use_trial_image(user_id)
-            else:
-                add_image_request(user_id)
+        if img_resp.status_code == 200:
+            result = img_resp.json()
+            img_url = result.get('url')
+            if isinstance(img_url, list):
+                img_url = img_url[0]
             
-            from aiogram.types import BufferedInputFile
-            await message.answer_photo(BufferedInputFile(img_data, "image.webp"), 
-                caption=f"🖼️ {message.text[:50]}...\n📊 Осталось: {limit - used - 1}")
-            await status.delete()
+            if img_url:
+                # Скачиваем картинку
+                img_data = requests.get(img_url, timeout=30)
+                if img_data.status_code == 200:
+                    # Сохраняем в БД
+                    if trial_rem > 0 and not prem:
+                        use_trial_image(user_id)
+                    else:
+                        add_image_request(user_id)
+                    
+                    # Получаем обновленную статистику
+                    new_used, new_limit, new_prem = get_image_stats(user_id)
+                    remaining = new_limit - new_used
+                    
+                    caption = f"🖼️ **Твоя картинка**\n\n"
+                    caption += f"📝 {message.text[:100]}{'...' if len(message.text) > 100 else ''}\n\n"
+                    caption += f"📊 Осталось картинок: {remaining}\n"
+                    caption += f"💎 Статус: {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
+                    
+                    await message.answer_photo(
+                        BufferedInputFile(img_data.content, "image.webp"),
+                        caption=caption
+                    )
+                    await status.delete()
+                    return
+        
+        await status.edit_text("❌ Не удалось сгенерировать картинку. Попробуй другой запрос.")
+        
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {e}")
+        logger.error(f"Image error: {e}")
+        await status.edit_text(f"❌ Ошибка генерации: {str(e)[:100]}")
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     mode = callback.data.replace("mode_", "")
     user_modes[callback.from_user.id] = mode
     await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
+    await callback.message.edit_text(
+        f"{'🧠 **Режим Текст**' if mode == 'text' else '🖼️ **Режим Картинка**'}\n\n"
+        f"Теперь я {'отвечаю текстом' if mode == 'text' else 'генерирую картинки'} по твоим запросам!",
+        reply_markup=main_menu()
+    )
 
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
@@ -182,8 +272,13 @@ async def help_cb(callback: types.CallbackQuery):
 async def leaderboard_cb(callback: types.CallbackQuery):
     cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
     users = cursor.fetchall()
-    if not users: return await callback.answer("Нет данных")
-    text = "🏆 **Рейтинг**\n\n" + "\n".join([f"{'🥇🥈🥉'[i] if i<3 else f'{i+1}.'} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач" for i, u in enumerate(users)])
+    if not users: 
+        return await callback.answer("Нет данных")
+    text = "🏆 **Рейтинг**\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, u in enumerate(users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        text += f"{medal} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач\n"
     await callback.message.edit_text(text, reply_markup=main_menu())
     await callback.answer()
 
@@ -250,7 +345,7 @@ async def admin_panel_cb(callback: types.CallbackQuery):
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id): return await callback.answer("⛔ Нет доступа")
     total, prem, req = get_stats()
-    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 {total}\n💎 {prem}\n📝 {req}", reply_markup=admin_kb())
+    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 Всего: {total}\n💎 Premium: {prem}\n📝 Запросов: {req}", reply_markup=admin_kb())
     await callback.answer()
 
 @router.callback_query(F.data == "a_users")
@@ -258,7 +353,10 @@ async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id): return await callback.answer("⛔ Нет доступа")
     cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY user_id LIMIT 20")
     users = cursor.fetchall()
-    text = "👥 **Пользователи**\n\n" + "\n".join([f"🆔 `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users])
+    if not users:
+        text = "👥 Пользователей не найдено"
+    else:
+        text = "👥 **Пользователи**\n\n" + "\n".join([f"🆔 `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users])
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 

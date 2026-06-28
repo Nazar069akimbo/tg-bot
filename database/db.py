@@ -81,19 +81,37 @@ def set_setting(key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
 
-def get_image_stats(user_id):
+def reset_image_count_if_needed(user_id):
     user = get_user(user_id)
-    if not user: return 0, 3, False
+    if not user: return
     if user[13]:
         try:
             if datetime.fromisoformat(user[13]).date() < datetime.now().date():
                 cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
                 conn.commit()
-                user = get_user(user_id)
         except: pass
+
+def get_image_limit(user_id):
+    if is_premium(user_id):
+        return int(get_setting('image_limit_premium') or 50)
+    return int(get_setting('image_limit_free') or 3)
+
+def can_generate_image(user_id):
+    reset_image_count_if_needed(user_id)
+    user = get_user(user_id)
+    if not user: return True, 3
     used = user[8] or 0
-    limit = int(get_setting('image_limit_premium' if is_premium(user_id) else 'image_limit_free') or 50 if is_premium(user_id) else 3)
-    return used, limit, is_premium(user_id)
+    limit = get_image_limit(user_id)
+    return used < limit, limit - used
+
+def get_image_stats(user_id):
+    reset_image_count_if_needed(user_id)
+    user = get_user(user_id)
+    if not user: return 0, 3, False
+    used = user[8] or 0
+    limit = get_image_limit(user_id)
+    prem = is_premium(user_id)
+    return used, limit, prem
 
 def add_image_request(user_id):
     cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
@@ -128,3 +146,7 @@ def get_trial_remaining(user_id):
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
+
+def get_mode(user_id):
+    user = get_user(user_id)
+    return user[7] if user and user[7] else "chat"
