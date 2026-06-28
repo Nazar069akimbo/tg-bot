@@ -50,13 +50,16 @@ async def main():
         add_admin(int(os.getenv("ADMIN_ID", 6957852385)))
     
     dp.include_router(router)
+    
+    # ИСПРАВЛЕНО: правильный синтаксис BotCommand
     await bot.set_my_commands([
-        types.BotCommand(cmd, desc) for cmd, desc in [
-            ("start", "🚀 Старт"), ("stats", "📊 Статистика"), 
-            ("profile", "👤 Профиль"), ("subscribe", "💎 Premium"),
-            ("referral", "👥 Рефералы")
-        ]
+        types.BotCommand(command="start", description="🚀 Старт"),
+        types.BotCommand(command="stats", description="📊 Статистика"),
+        types.BotCommand(command="profile", description="👤 Профиль"),
+        types.BotCommand(command="subscribe", description="💎 Premium"),
+        types.BotCommand(command="referral", description="👥 Рефералы")
     ])
+    
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)
 
