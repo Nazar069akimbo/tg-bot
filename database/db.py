@@ -7,7 +7,7 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Создаём таблицу users с ВСЕМИ колонками сразу
+    # Создаём таблицу users с правильными колонками
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -74,30 +74,6 @@ def init_db():
     )
     ''')
     
-    # ПРИНУДИТЕЛЬНО добавляем все нужные колонки
-    columns_to_add = {
-        'image_requests': 'INTEGER DEFAULT 0',
-        'plan': 'TEXT DEFAULT "basic"',
-        'trial_start': 'TEXT',
-        'trial_used': 'INTEGER DEFAULT 0',
-        'trial_active': 'INTEGER DEFAULT 0',
-        'last_image_reset': 'TEXT'
-    }
-    
-    for col, dtype in columns_to_add.items():
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-            print(f"✅ Добавлена колонка {col}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e):
-                print(f"ℹ️ Колонка {col} уже существует")
-            else:
-                print(f"⚠️ Ошибка добавления {col}: {e}")
-    
-    # Настройки по умолчанию
-    for k, v in [('free_input_chars','500'), ('free_output_words','50'), ('premium_input_chars','3000'), ('premium_output_words','300'), ('image_limit_free','3'), ('image_limit_premium','50')]:
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
-    
     conn.commit()
     print("✅ База данных инициализирована")
 
@@ -146,6 +122,11 @@ def can_request(user_id):
     if not user: return True, 10
     if is_premium(user_id): return True, 999999
     used = user[4] if len(user) > 4 and user[4] else 0
+    # Убеждаемся что used - число
+    try:
+        used = int(used)
+    except:
+        used = 0
     return used < 10, 10 - used
 
 def add_request(user_id):
@@ -167,15 +148,8 @@ def reset_image_count_if_needed(user_id):
         if not user:
             return
         
-        # Проверяем есть ли колонка last_image_reset
-        if len(user) < 14:
-            # Если нет, обновляем структуру
-            try:
-                cursor.execute("ALTER TABLE users ADD COLUMN last_image_reset TEXT")
-                conn.commit()
-            except:
-                pass
-            # Устанавливаем значение
+        # Проверяем наличие last_image_reset (индекс 13)
+        if len(user) < 14 or not user[13]:
             cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
             conn.commit()
             return
@@ -203,7 +177,12 @@ def can_generate_image(user_id):
     reset_image_count_if_needed(user_id)
     user = get_user(user_id)
     if not user: return True, 3
+    # image_requests - индекс 8
     used = user[8] if len(user) > 8 and user[8] else 0
+    try:
+        used = int(used)
+    except:
+        used = 0
     limit = get_image_limit(user_id)
     return used < limit, limit - used
 
@@ -211,7 +190,14 @@ def get_image_stats(user_id):
     reset_image_count_if_needed(user_id)
     user = get_user(user_id)
     if not user: return 0, 3, False
+    
+    # image_requests - индекс 8
     used = user[8] if len(user) > 8 and user[8] else 0
+    try:
+        used = int(used)
+    except:
+        used = 0
+    
     limit = get_image_limit(user_id)
     prem = is_premium(user_id)
     return used, limit, prem
@@ -253,6 +239,10 @@ def get_trial_remaining(user_id):
     if not user:
         return 0
     trial_used = user[10] if len(user) > 10 and user[10] else 0
+    try:
+        trial_used = int(trial_used)
+    except:
+        trial_used = 0
     return max(0, 5 - trial_used)
 
 def use_trial_image(user_id):
