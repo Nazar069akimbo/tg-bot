@@ -18,6 +18,16 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ===
+def ensure_user(user_id, username=None):
+    """Проверяет и создаёт пользователя если нужно"""
+    user = get_user(user_id)
+    if not user:
+        logger.info(f"👤 Авто-регистрация пользователя {user_id}")
+        create_user(user_id, username or "")
+        return get_user(user_id)
+    return user
+
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -66,17 +76,14 @@ async def start_cmd(message: types.Message):
     user_id = message.from_user.id
     logger.info(f"📱 Start command from {user_id}")
     
-    user = get_user(user_id)
-    if not user:
-        logger.info(f"👤 Создаём пользователя {user_id}")
-        create_user(user_id, message.from_user.username or "")
-        
-        args = message.text.split()
-        if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
-            add_referral(int(args[1]), user_id)
-            await message.answer("👤 Вы приглашены! Реферер +5 запросов.")
-    else:
-        logger.info(f"👤 Пользователь {user_id} уже существует")
+    # Регистрируем пользователя
+    user = ensure_user(user_id, message.from_user.username)
+    
+    # Обработка реферала
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
+        add_referral(int(args[1]), user_id)
+        await message.answer("👤 Вы приглашены! Реферер +5 запросов.")
     
     await message.answer(
         "🤖 **Vertex AI**\n\n🧠 ИИ в Telegram!\n✅ 10 запросов/день\n💎 Premium: безлимит\n👥 Приведи друга → +5 запросов\n\nПросто напиши вопрос!",
@@ -88,12 +95,10 @@ async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
     logger.info(f"📊 Stats from {user_id}")
     
-    user = get_user(user_id)
+    # Авто-регистрация
+    user = ensure_user(user_id, message.from_user.username)
     if not user:
-        create_user(user_id, message.from_user.username or "")
-        user = get_user(user_id)
-        if not user:
-            return await message.answer("❌ Ошибка регистрации! Нажми /start", reply_markup=main_menu())
+        return await message.answer("❌ Ошибка! Нажми /start", reply_markup=main_menu())
     
     ok, rem = can_request(user_id)
     used, limit, prem = get_image_stats(user_id)
@@ -114,12 +119,10 @@ async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
     logger.info(f"👤 Profile from {user_id}")
     
-    user = get_user(user_id)
+    # Авто-регистрация
+    user = ensure_user(user_id, message.from_user.username)
     if not user:
-        create_user(user_id, message.from_user.username or "")
-        user = get_user(user_id)
-        if not user:
-            return await message.answer("❌ Ошибка регистрации! Нажми /start", reply_markup=main_menu())
+        return await message.answer("❌ Ошибка! Нажми /start", reply_markup=main_menu())
     
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     refs = cursor.fetchone()[0] or 0
@@ -140,7 +143,9 @@ async def profile_cmd(message: types.Message):
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
-    logger.info(f"💎 Subscribe from {message.from_user.id}")
+    # Авто-регистрация
+    ensure_user(message.from_user.id, message.from_user.username)
+    
     await message.answer("💎 **Premium**\n\n1 мес — 49⭐\n3 мес — 129⭐\n6 мес — 249⭐\n12 мес — 449⭐", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⭐ 1 мес 49⭐", callback_data="pay_1"),
@@ -160,12 +165,10 @@ async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
     logger.info(f"👥 Referral from {user_id}")
     
-    user = get_user(user_id)
+    # Авто-регистрация
+    user = ensure_user(user_id, message.from_user.username)
     if not user:
-        create_user(user_id, message.from_user.username or "")
-        user = get_user(user_id)
-        if not user:
-            return await message.answer("❌ Ошибка регистрации! Нажми /start", reply_markup=main_menu())
+        return await message.answer("❌ Ошибка! Нажми /start", reply_markup=main_menu())
     
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     count = cursor.fetchone()[0] or 0
@@ -181,6 +184,9 @@ async def referral_cmd(message: types.Message):
 
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
+    # Авто-регистрация
+    ensure_user(message.from_user.id, message.from_user.username)
+    
     text = "❓ **Vertex AI — Помощь**\n\n"
     text += "🤖 **Что я умею:**\n"
     text += "• Отвечаю на любые вопросы\n"
@@ -207,14 +213,11 @@ async def handle_message(message: types.Message):
     
     user_id = message.from_user.id
     
-    # Проверяем регистрацию
-    user = get_user(user_id)
+    # АВТО-РЕГИСТРАЦИЯ при любом сообщении
+    user = ensure_user(user_id, message.from_user.username)
     if not user:
-        create_user(user_id, message.from_user.username or "")
-        user = get_user(user_id)
-        if not user:
-            await message.answer("👋 Нажми /start", reply_markup=main_menu())
-            return
+        await message.answer("👋 Нажми /start", reply_markup=main_menu())
+        return
     
     # Проверяем состояния админа
     admin_state = user_pages.get(user_id, {})
@@ -396,8 +399,12 @@ async def generate_image(message: types.Message):
         await status_msg.delete()
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
+# === ВСЕ CALLBACK'и ===
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
+    # Авто-регистрация
+    ensure_user(callback.from_user.id, callback.from_user.username)
+    
     mode = callback.data.replace("mode_", "")
     user_modes[callback.from_user.id] = mode
     await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
@@ -434,6 +441,9 @@ async def help_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
+    # Авто-регистрация
+    ensure_user(callback.from_user.id, callback.from_user.username)
+    
     cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
     users = cursor.fetchall()
     if not users:
@@ -448,17 +458,26 @@ async def leaderboard_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "contact_admin")
 async def contact_cb(callback: types.CallbackQuery):
+    # Авто-регистрация
+    ensure_user(callback.from_user.id, callback.from_user.username)
+    
     user_pages[callback.from_user.id] = {"state": "waiting_contact"}
     await callback.message.edit_text("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
+    # Авто-регистрация
+    ensure_user(callback.from_user.id, callback.from_user.username)
+    
     await callback.message.edit_text("🤖 **Vertex AI**\n\nПросто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
+    # Авто-регистрация
+    ensure_user(callback.from_user.id, callback.from_user.username)
+    
     try:
         plan = callback.data.replace("pay_", "")
         days = {"1": 30, "3": 90, "6": 180, "12": 365}[plan]
