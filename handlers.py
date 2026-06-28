@@ -149,38 +149,32 @@ async def referral_cmd(message: types.Message):
         ]
     ]))
 
-# ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ - ПРОСТЕЙШАЯ ВЕРСИЯ ДЛЯ ТЕСТА
 @router.message(F.text)
 async def handle_message(message: types.Message):
-    # Логируем ВСЕ сообщения
-    logger.info(f"📨 ПОЛУЧЕНО СООБЩЕНИЕ от {message.from_user.id}: {message.text[:50]}")
-    
-    # Пропускаем команды
     if message.text.startswith("/"):
-        logger.info("⏭️ Это команда, пропускаем")
         return
     
-    # Проверяем регистрацию
     if not get_user(message.from_user.id):
-        logger.info("❌ Пользователь не зарегистрирован")
         await message.answer("👋 Нажми /start", reply_markup=main_menu())
         return
     
-    # Получаем режим
+    admin_state = user_pages.get(message.from_user.id, {})
+    if admin_state.get("state") in ["waiting_user_search", "waiting_admin_message", "waiting_broadcast", "confirm_broadcast", "waiting_premium_user"]:
+        return
+    
+    contact_state = user_pages.get(message.from_user.id, {})
+    if contact_state.get("state") == "waiting_contact":
+        return
+    
     mode = user_modes.get(message.from_user.id, "text")
-    logger.info(f"🎯 Режим пользователя: {mode}")
+    logger.info(f"🎯 Режим пользователя {message.from_user.id}: {mode}")
     
-    # Отправляем тестовое сообщение
-    await message.answer(f"✅ Я получил твое сообщение!\nРежим: {mode}\nТекст: {message.text[:50]}...")
-    
-    # Если режим "картинка" - пробуем сгенерировать
     if mode == "image":
         await generate_image(message)
     else:
         await generate_text(message)
 
 async def generate_text(message: types.Message):
-    logger.info("📝 Начинаем генерацию текста")
     ok, remaining = can_request(message.from_user.id)
     if not ok:
         await message.answer("🔒 Лимит исчерпан! Купи Premium: /subscribe")
@@ -201,22 +195,18 @@ async def generate_text(message: types.Message):
             result_text += "💎 Premium — безлимит"
         
         await status_msg.edit_text(result_text)
-        logger.info("✅ Текст сгенерирован")
     except Exception as e:
-        logger.error(f"❌ Ошибка текста: {e}")
+        logger.error(f"Text error: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 async def generate_image(message: types.Message):
-    logger.info("🎨 НАЧАЛО ГЕНЕРАЦИИ КАРТИНКИ")
     user_id = message.from_user.id
+    logger.info("🎨 НАЧАЛО ГЕНЕРАЦИИ КАРТИНКИ")
     
-    # Проверяем API ключ
     if not API_KEY:
-        logger.error("❌ OPENAI_API_KEY не найден!")
         await message.answer("❌ API ключ не настроен. Обратитесь к администратору.")
         return
     
-    # Получаем информацию о пользователе
     trial_remaining = get_trial_remaining(user_id)
     used, limit, prem = get_image_stats(user_id)
     
@@ -276,15 +266,16 @@ async def generate_image(message: types.Message):
             enhanced_prompt = user_prompt
             logger.warning("⚠️ Не удалось создать промпт")
         
-        await status_msg.edit_text(f"🎨 Генерирую картинку...")
-        
-        # Прогресс
-        for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.2)
-            try:
-                await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
-            except:
-                pass
+        # Отправляем новое сообщение о прогрессе вместо редактирования
+        await message.answer("🎨 Генерирую картинку... (0%)")
+        await asyncio.sleep(0.5)
+        await message.answer("🎨 Генерирую картинку... (25%)")
+        await asyncio.sleep(0.5)
+        await message.answer("🎨 Генерирую картинку... (50%)")
+        await asyncio.sleep(0.5)
+        await message.answer("🎨 Генерирую картинку... (75%)")
+        await asyncio.sleep(0.5)
+        await message.answer("🎨 Генерирую картинку... (90%)")
         
         # Генерация картинки
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
@@ -310,6 +301,8 @@ async def generate_image(message: types.Message):
         response = requests.post(url, headers=headers, json=data, timeout=120)
         logger.info(f"📡 Ответ генерации: {response.status_code}")
         
+        await status_msg.delete()
+        
         if response.status_code == 200:
             result = response.json()
             image_url = result.get('url')
@@ -322,32 +315,28 @@ async def generate_image(message: types.Message):
                     image_data = img_response.content
                     
                     if len(image_data) > 1000:
-                        await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
-                        await asyncio.sleep(0.2)
-                        
-                        image_file = BufferedInputFile(file=image_data, filename="image.webp")
-                        
+                        # Сохраняем в БД
                         if trial_remaining > 0:
                             use_trial_image(user_id)
                         else:
                             add_image_request(user_id)
                         
+                        image_file = BufferedInputFile(file=image_data, filename="image.webp")
+                        
                         await message.answer_photo(
                             photo=image_file,
                             caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}"
                         )
-                        
-                        await status_msg.delete()
                         logger.info("✅ Картинка отправлена!")
                         return
         
-        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
+        await message.answer("❌ Не удалось получить картинку. Попробуй другой запрос.")
             
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        await status_msg.delete()
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
-# ВСЕ CALLBACK'и
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     mode = callback.data.replace("mode_", "")
