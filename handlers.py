@@ -54,8 +54,8 @@ async def stats_cmd(message: types.Message):
 async def profile_cmd(message: types.Message):
     user = get_user(message.from_user.id)
     if not user: return await message.answer("❌ /start")
-    cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
-    refs = cur.fetchone()[0] or 0
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (message.from_user.id,))
+    refs = cursor.fetchone()[0] or 0
     used, limit, prem = get_image_stats(message.from_user.id)
     await message.answer(f"👤 **Профиль**\n\n🆔 {user[0]}\n📆 {user[2][:10] if user[2] else 'Нет'}\n📊 Запросов: {user[5] or 0}\n👥 Приглашено: {refs}\n💎 {'✅ Premium' if prem else '❌ Нет'}\n🖼️ Картинки: {used}/{limit}")
 
@@ -71,8 +71,8 @@ async def subscribe_cmd(message: types.Message):
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
     if not get_user(user_id): return await message.answer("❌ /start")
-    cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-    count = cur.fetchone()[0] or 0
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+    count = cursor.fetchone()[0] or 0
     link = f"https://t.me/Vertex1bot?start={user_id}"
     await message.answer(f"👥 **Рефералы**\n\nПриглашено: {count}\nБонус: +5 запросов\n\n🔗 {link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
@@ -180,8 +180,8 @@ async def help_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
-    cur.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
-    users = cur.fetchall()
+    cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
+    users = cursor.fetchall()
     if not users: return await callback.answer("Нет данных")
     text = "🏆 **Рейтинг**\n\n" + "\n".join([f"{'🥇🥈🥉'[i] if i<3 else f'{i+1}.'} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач" for i, u in enumerate(users)])
     await callback.message.edit_text(text, reply_markup=main_menu())
@@ -204,7 +204,7 @@ async def pay_cb(callback: types.CallbackQuery):
     days = {"1": 30, "3": 90, "6": 180, "12": 365}[plan]
     stars = {"1": 49, "3": 129, "6": 249, "12": 449}[plan]
     payload = secrets.token_hex(16)
-    cur.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp) VALUES (?, ?, ?, ?, ?)",
+    cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp) VALUES (?, ?, ?, ?, ?)",
                 (callback.from_user.id, stars, payload, "pending", datetime.now().isoformat()))
     conn.commit()
     await callback.bot.send_invoice(callback.from_user.id, f"Premium {plan} мес", f"{days} дней", payload, "", "XTR", [LabeledPrice("Premium", stars)], start_parameter="premium_sub")
@@ -217,11 +217,11 @@ async def pre_checkout(query: types.PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def payment_success(message: types.Message):
     payload = message.successful_payment.invoice_payload
-    cur.execute("SELECT stars_amount FROM payments WHERE telegram_payload = ?", (payload,))
-    row = cur.fetchone()
+    cursor.execute("SELECT stars_amount FROM payments WHERE telegram_payload = ?", (payload,))
+    row = cursor.fetchone()
     days = {49: 30, 129: 90, 249: 180, 449: 365}.get(row[0] if row else 49, 30)
     if row:
-        cur.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
+        cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
         conn.commit()
     add_premium(message.from_user.id, days)
     GitHubBackup().backup_db()
@@ -256,8 +256,8 @@ async def a_stats_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id): return await callback.answer("⛔ Нет доступа")
-    cur.execute("SELECT user_id, username, total_requests FROM users ORDER BY user_id LIMIT 20")
-    users = cur.fetchall()
+    cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY user_id LIMIT 20")
+    users = cursor.fetchall()
     text = "👥 **Пользователи**\n\n" + "\n".join([f"🆔 `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users])
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
@@ -312,8 +312,8 @@ async def handle_admin_input(message: types.Message):
             return await message.answer("✅ Отменено", reply_markup=admin_kb())
         
         await message.answer("📢 Начинаю рассылку...")
-        cur.execute("SELECT user_id FROM users")
-        users = cur.fetchall()
+        cursor.execute("SELECT user_id FROM users")
+        users = cursor.fetchall()
         sent = 0
         for u in users:
             try:
@@ -326,7 +326,7 @@ async def handle_admin_input(message: types.Message):
     
     elif state.get("state") == "waiting_contact":
         user_id = message.from_user.id
-        cur.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
+        cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
                     (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
         conn.commit()
         await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")

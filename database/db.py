@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cur = conn.cursor()
+cursor = conn.cursor()
 
 def init_db():
     tables = {
@@ -16,40 +16,40 @@ def init_db():
         'settings': 'key TEXT PRIMARY KEY, value TEXT'
     }
     for name, schema in tables.items():
-        cur.execute(f"CREATE TABLE IF NOT EXISTS {name} ({schema})")
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {name} ({schema})")
     
     for col, dtype in [('image_requests', 'INTEGER DEFAULT 0'), ('plan', 'TEXT DEFAULT "basic"'), ('trial_start', 'TEXT'), ('trial_used', 'INTEGER DEFAULT 0'), ('trial_active', 'INTEGER DEFAULT 0'), ('last_image_reset', 'TEXT')]:
         try:
-            cur.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
         except: pass
     
     for k, v in [('free_input_chars','500'), ('free_output_words','50'), ('premium_input_chars','3000'), ('premium_output_words','300'), ('image_limit_free','3'), ('image_limit_premium','50')]:
-        cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     conn.commit()
 
 def get_user(user_id):
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    return cur.fetchone()
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    return cursor.fetchone()
 
 def create_user(user_id, username):
     now = datetime.now().isoformat()
-    cur.execute("INSERT OR IGNORE INTO users (user_id, username, joined, trial_start, trial_active, last_image_reset) VALUES (?, ?, ?, ?, ?, ?)",
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, trial_start, trial_active, last_image_reset) VALUES (?, ?, ?, ?, ?, ?)",
                 (user_id, username, now, now, 1, now))
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
-    cur.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
+    cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
                 (referrer_id, referred_id, datetime.now().isoformat()))
     conn.commit()
-    cur.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
+    cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
     conn.commit()
 
 def is_admin(user_id):
-    cur.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
-    return cur.fetchone() is not None
+    cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
+    return cursor.fetchone() is not None
 
 def add_admin(user_id):
-    cur.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
+    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
     conn.commit()
 
 def is_premium(user_id):
@@ -57,7 +57,7 @@ def is_premium(user_id):
     return user and user[3] and datetime.now().isoformat() < user[3]
 
 def add_premium(user_id, days):
-    cur.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
+    cursor.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
                 ((datetime.now() + timedelta(days=days)).isoformat(), user_id))
     conn.commit()
 
@@ -69,16 +69,16 @@ def can_request(user_id):
     return used < 10, 10 - used
 
 def add_request(user_id):
-    cur.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+    cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def get_setting(key):
-    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    r = cur.fetchone()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    r = cursor.fetchone()
     return r[0] if r else '0'
 
 def set_setting(key, value):
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
 
 def get_image_stats(user_id):
@@ -87,7 +87,7 @@ def get_image_stats(user_id):
     if user[13]:
         try:
             if datetime.fromisoformat(user[13]).date() < datetime.now().date():
-                cur.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+                cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
                 conn.commit()
                 user = get_user(user_id)
         except: pass
@@ -96,13 +96,13 @@ def get_image_stats(user_id):
     return used, limit, is_premium(user_id)
 
 def add_image_request(user_id):
-    cur.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
+    cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
 def get_stats():
-    cur.execute("SELECT COUNT(*) FROM users"); total = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM users WHERE premium_until > datetime('now')"); prem = cur.fetchone()[0]
-    cur.execute("SELECT SUM(total_requests) FROM users"); req = cur.fetchone()[0] or 0
+    cursor.execute("SELECT COUNT(*) FROM users"); total = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE premium_until > datetime('now')"); prem = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(total_requests) FROM users"); req = cursor.fetchone()[0] or 0
     return total, prem, req
 
 def get_user_plan(user_id):
@@ -110,7 +110,7 @@ def get_user_plan(user_id):
     return user[9] if user and len(user) > 9 else 'basic'
 
 def set_user_plan(user_id, plan):
-    cur.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
+    cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
     conn.commit()
 
 def is_trial_active(user_id):
@@ -126,5 +126,5 @@ def get_trial_remaining(user_id):
     return max(0, 5 - (user[10] if user and len(user) > 10 else 0))
 
 def use_trial_image(user_id):
-    cur.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
+    cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
