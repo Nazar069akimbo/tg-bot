@@ -18,14 +18,34 @@ def init_db():
     for name, schema in tables.items():
         cursor.execute(f"CREATE TABLE IF NOT EXISTS {name} ({schema})")
     
-    for col, dtype in [('image_requests', 'INTEGER DEFAULT 0'), ('plan', 'TEXT DEFAULT "basic"'), ('trial_start', 'TEXT'), ('trial_used', 'INTEGER DEFAULT 0'), ('trial_active', 'INTEGER DEFAULT 0'), ('last_image_reset', 'TEXT')]:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-        except: pass
+    # Проверяем существующие колонки
+    cursor.execute("PRAGMA table_info(users)")
+    existing_cols = [row[1] for row in cursor.fetchall()]
     
+    # Добавляем недостающие колонки
+    columns_to_add = {
+        'image_requests': 'INTEGER DEFAULT 0',
+        'plan': 'TEXT DEFAULT "basic"',
+        'trial_start': 'TEXT',
+        'trial_used': 'INTEGER DEFAULT 0',
+        'trial_active': 'INTEGER DEFAULT 0',
+        'last_image_reset': 'TEXT'
+    }
+    
+    for col, dtype in columns_to_add.items():
+        if col not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+                print(f"✅ Добавлена колонка {col}")
+            except Exception as e:
+                print(f"⚠️ Не удалось добавить {col}: {e}")
+    
+    # Настройки по умолчанию
     for k, v in [('free_input_chars','500'), ('free_output_words','50'), ('premium_input_chars','3000'), ('premium_output_words','300'), ('image_limit_free','3'), ('image_limit_premium','50')]:
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
+    
     conn.commit()
+    print("✅ База данных инициализирована")
 
 def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -54,7 +74,10 @@ def add_admin(user_id):
 
 def is_premium(user_id):
     user = get_user(user_id)
-    return user and user[3] and datetime.now().isoformat() < user[3]
+    if not user:
+        return False
+    premium_until = user[3] if len(user) > 3 else None
+    return premium_until and datetime.now().isoformat() < premium_until
 
 def add_premium(user_id, days):
     cursor.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
@@ -65,7 +88,7 @@ def can_request(user_id):
     user = get_user(user_id)
     if not user: return True, 10
     if is_premium(user_id): return True, 999999
-    used = user[4] or 0
+    used = user[4] if len(user) > 4 and user[4] else 0
     return used < 10, 10 - used
 
 def add_request(user_id):
@@ -83,13 +106,28 @@ def set_setting(key, value):
 
 def reset_image_count_if_needed(user_id):
     user = get_user(user_id)
-    if not user: return
-    if user[13]:
-        try:
-            if datetime.fromisoformat(user[13]).date() < datetime.now().date():
-                cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+    if not user:
+        return
+    
+    # Проверяем наличие колонки last_image_reset (индекс 13)
+    if len(user) < 14 or not user[13]:
+        # Если нет, создаем
+        cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+        conn.commit()
+        return
+    
+    try:
+        last_reset = user[13]
+        if last_reset:
+            last_date = datetime.fromisoformat(last_reset)
+            today = datetime.now()
+            if last_date.date() < today.date():
+                cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
+                              (today.isoformat(), user_id))
                 conn.commit()
-        except: pass
+                print(f"🔄 Сброшен счётчик картинок для {user_id}")
+    except Exception as e:
+        print(f"⚠️ Ошибка сброса счётчика: {e}")
 
 def get_image_limit(user_id):
     if is_premium(user_id):
@@ -100,7 +138,7 @@ def can_generate_image(user_id):
     reset_image_count_if_needed(user_id)
     user = get_user(user_id)
     if not user: return True, 3
-    used = user[8] or 0
+    used = user[8] if len(user) > 8 and user[8] else 0
     limit = get_image_limit(user_id)
     return used < limit, limit - used
 
@@ -108,7 +146,7 @@ def get_image_stats(user_id):
     reset_image_count_if_needed(user_id)
     user = get_user(user_id)
     if not user: return 0, 3, False
-    used = user[8] or 0
+    used = user[8] if len(user) > 8 and user[8] else 0
     limit = get_image_limit(user_id)
     prem = is_premium(user_id)
     return used, limit, prem
@@ -125,7 +163,7 @@ def get_stats():
 
 def get_user_plan(user_id):
     user = get_user(user_id)
-    return user[9] if user and len(user) > 9 else 'basic'
+    return user[9] if user and len(user) > 9 and user[9] else 'basic'
 
 def set_user_plan(user_id, plan):
     cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
@@ -133,15 +171,24 @@ def set_user_plan(user_id, plan):
 
 def is_trial_active(user_id):
     user = get_user(user_id)
-    if not user or len(user) < 12 or not user[11]: return False
+    if not user or len(user) < 12 or not user[11]:
+        return False
     try:
-        return (datetime.now() - datetime.fromisoformat(user[9])).days < 2
-    except: return False
+        trial_start = user[9] if len(user) > 9 else None
+        if not trial_start:
+            return False
+        return (datetime.now() - datetime.fromisoformat(trial_start)).days < 2
+    except:
+        return False
 
 def get_trial_remaining(user_id):
-    if not is_trial_active(user_id): return 0
+    if not is_trial_active(user_id):
+        return 0
     user = get_user(user_id)
-    return max(0, 5 - (user[10] if user and len(user) > 10 else 0))
+    if not user:
+        return 0
+    trial_used = user[10] if len(user) > 10 and user[10] else 0
+    return max(0, 5 - trial_used)
 
 def use_trial_image(user_id):
     cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
@@ -149,4 +196,4 @@ def use_trial_image(user_id):
 
 def get_mode(user_id):
     user = get_user(user_id)
-    return user[7] if user and user[7] else "chat"
+    return user[7] if user and len(user) > 7 and user[7] else "chat"
