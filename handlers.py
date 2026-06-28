@@ -16,6 +16,9 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
+# Включаем логирование для отладки
+logging.basicConfig(level=logging.DEBUG)
+
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -159,6 +162,8 @@ async def handle_message(message: types.Message):
         return
     
     mode = user_modes.get(message.from_user.id, "text")
+    logger.info(f"📱 Режим пользователя {message.from_user.id}: {mode}")
+    
     if mode == "image":
         await generate_image(message)
     else:
@@ -191,28 +196,38 @@ async def generate_text(message: types.Message):
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
+    logger.info(f"🎨 Начинаем генерацию картинки для {user_id}")
     
+    # Проверяем API ключ
+    if not API_KEY:
+        logger.error("❌ OPENAI_API_KEY не найден!")
+        await message.answer("❌ API ключ не настроен. Обратитесь к администратору.")
+        return
+    
+    # Получаем информацию о пользователе
     trial_remaining = get_trial_remaining(user_id)
-    can_gen, remaining = can_generate_image(user_id)
+    logger.info(f"🎁 Пробный период: {trial_remaining} картинок осталось")
     
-    if trial_remaining > 0:
+    used, limit, prem = get_image_stats(user_id)
+    logger.info(f"📊 Статистика: used={used}, limit={limit}, prem={prem}")
+    
+    # Проверяем лимиты
+    if prem:
+        can_gen = used < limit
+        logger.info(f"💎 Premium пользователь: can_gen={can_gen}")
+    elif trial_remaining > 0:
         can_gen = True
-        remaining = trial_remaining
-        logger.info(f"🎁 Пробный период: осталось {trial_remaining} картинок")
+        limit = 5
+        logger.info(f"🎁 Пробный период активен: can_gen={can_gen}")
     else:
-        if is_trial_active(user_id) and trial_remaining == 0:
-            await message.answer(
-                f"🎁 **Пробный период активен, но лимит исчерпан!**\n\n"
-                f"📊 Сегодня использовано: 5/5 картинок\n"
-                f"⏳ Завтра лимит обновится\n\n"
-                f"💎 Купи Premium для безлимита: /subscribe"
-            )
-            return
+        can_gen, remaining = can_generate_image(user_id)
+        logger.info(f"🔴 Бесплатный пользователь: can_gen={can_gen}, remaining={remaining}")
     
-    if not can_gen and not is_trial_active(user_id):
+    if not can_gen:
         await message.answer(
-            f"❌ Лимит картинок исчерпан!\n\n"
-            f"📊 Осталось: {remaining}\n"
+            f"❌ **Лимит картинок исчерпан!**\n\n"
+            f"📊 Использовано: {used}/{limit}\n"
+            f"⏳ Лимит обновится завтра\n\n"
             f"💎 Купи Premium: /subscribe"
         )
         return
@@ -221,7 +236,9 @@ async def generate_image(message: types.Message):
     
     try:
         user_prompt = message.text
+        logger.info(f"📝 Запрос пользователя: {user_prompt[:50]}...")
         
+        # Шаг 1: Генерация промпта
         await status_msg.edit_text("🔍 Создаю детальное описание...")
         
         prompt_url = "https://openai.bothub.chat/v1/chat/completions"
@@ -240,19 +257,23 @@ async def generate_image(message: types.Message):
             "temperature": 0.7
         }
         
+        logger.info("🔄 Отправляем запрос на создание промпта...")
         prompt_response = requests.post(prompt_url, headers=prompt_headers, json=prompt_data, timeout=30)
+        logger.info(f"📡 Ответ от API промптов: {prompt_response.status_code}")
         
         if prompt_response.status_code == 200:
             prompt_result = prompt_response.json()
             enhanced_prompt = prompt_result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
             if enhanced_prompt.startswith('"') and enhanced_prompt.endswith('"'):
                 enhanced_prompt = enhanced_prompt[1:-1]
-            logger.info(f"📝 Промпт: {enhanced_prompt[:100]}...")
-            await status_msg.edit_text(f"🎨 Генерирую картинку...")
+            logger.info(f"📝 Улучшенный промпт: {enhanced_prompt[:100]}...")
         else:
             enhanced_prompt = user_prompt
-            logger.warning(f"⚠️ Не удалось создать промпт")
+            logger.warning(f"⚠️ Не удалось создать промпт, используем исходный")
         
+        await status_msg.edit_text(f"🎨 Генерирую картинку...")
+        
+        # Шаг 2: Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -260,6 +281,7 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
+        # Шаг 3: Генерация картинки
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {API_KEY}",
@@ -279,18 +301,28 @@ async def generate_image(message: types.Message):
             }
         }
         
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        logger.info("🔄 Отправляем запрос на генерацию картинки...")
+        response = requests.post(url, headers=headers, json=data, timeout=120)
+        logger.info(f"📡 Ответ от API картинок: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
+            logger.info(f"📦 Результат: {result.keys()}")
+            
             image_url = result.get('url')
             if isinstance(image_url, list):
                 image_url = image_url[0]
             
+            logger.info(f"🖼️ URL картинки: {image_url}")
+            
             if image_url:
+                logger.info("⬇️ Скачиваем картинку...")
                 img_response = requests.get(image_url, timeout=30)
+                logger.info(f"📡 Ответ от скачивания: {img_response.status_code}")
+                
                 if img_response.status_code == 200:
                     image_data = img_response.content
+                    logger.info(f"📦 Размер картинки: {len(image_data)} bytes")
                     
                     if len(image_data) > 1000:
                         await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
@@ -298,24 +330,38 @@ async def generate_image(message: types.Message):
                         
                         image_file = BufferedInputFile(file=image_data, filename="image.webp")
                         
-                        await message.answer_photo(
-                            photo=image_file,
-                            caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}\n\n🔍 {enhanced_prompt}"
-                        )
-                        
+                        # Сохраняем в БД
                         if trial_remaining > 0:
                             use_trial_image(user_id)
+                            logger.info("✅ Использована пробная картинка")
                         else:
                             add_image_request(user_id)
+                            logger.info("✅ Добавлен запрос на картинку")
+                        
+                        await message.answer_photo(
+                            photo=image_file,
+                            caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}"
+                        )
                         
                         await status_msg.delete()
                         return
+                    else:
+                        logger.warning(f"⚠️ Картинка слишком маленькая: {len(image_data)} bytes")
+                else:
+                    logger.error(f"❌ Ошибка скачивания: {img_response.status_code}")
+            else:
+                logger.error("❌ URL картинки не найден в ответе")
+        else:
+            logger.error(f"❌ Ошибка API: {response.status_code}, {response.text}")
         
         await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
             
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут запроса")
+        await status_msg.edit_text("❌ Превышено время ожидания. Попробуй позже.")
     except Exception as e:
-        logger.error(f"❌ Image error: {e}")
-        await status_msg.edit_text("❌ Ошибка. Попробуй позже.")
+        logger.error(f"❌ Ошибка генерации: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
