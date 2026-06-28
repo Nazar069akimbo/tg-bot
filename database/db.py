@@ -7,26 +7,54 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Создаём таблицу users
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        joined TEXT,
-        premium_until TEXT,
-        free_requests INTEGER DEFAULT 0,
-        total_requests INTEGER DEFAULT 0,
-        is_blocked INTEGER DEFAULT 0,
-        mode TEXT DEFAULT "chat",
-        image_requests INTEGER DEFAULT 0,
-        plan TEXT DEFAULT "basic",
-        trial_start TEXT,
-        trial_used INTEGER DEFAULT 0,
-        trial_active INTEGER DEFAULT 0,
-        last_image_reset TEXT
-    )
-    ''')
+    # Проверяем существование таблицы users
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    table_exists = cursor.fetchone()
     
+    if not table_exists:
+        # Создаём таблицу с нуля
+        cursor.execute('''
+        CREATE TABLE users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            joined TEXT,
+            premium_until TEXT,
+            free_requests INTEGER DEFAULT 0,
+            total_requests INTEGER DEFAULT 0,
+            is_blocked INTEGER DEFAULT 0,
+            mode TEXT DEFAULT "chat",
+            image_requests INTEGER DEFAULT 0,
+            plan TEXT DEFAULT "basic",
+            trial_start TEXT,
+            trial_used INTEGER DEFAULT 0,
+            trial_active INTEGER DEFAULT 0,
+            last_image_reset TEXT
+        )
+        ''')
+        print("✅ Создана таблица users")
+    else:
+        # Проверяем и добавляем недостающие колонки
+        cursor.execute("PRAGMA table_info(users)")
+        existing_cols = [row[1] for row in cursor.fetchall()]
+        
+        columns_to_add = {
+            'image_requests': 'INTEGER DEFAULT 0',
+            'plan': 'TEXT DEFAULT "basic"',
+            'trial_start': 'TEXT',
+            'trial_used': 'INTEGER DEFAULT 0',
+            'trial_active': 'INTEGER DEFAULT 0',
+            'last_image_reset': 'TEXT'
+        }
+        
+        for col, dtype in columns_to_add.items():
+            if col not in existing_cols:
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+                    print(f"✅ Добавлена колонка {col}")
+                except Exception as e:
+                    print(f"⚠️ Ошибка добавления {col}: {e}")
+    
+    # Остальные таблицы
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +101,7 @@ def init_db():
     )
     ''')
     
-    # Настройки по умолчанию - ВАЖНО!
+    # Настройки по умолчанию
     default_settings = [
         ('free_input_chars', '500'),
         ('free_output_words', '50'),
@@ -95,11 +123,22 @@ def get_user(user_id):
 
 def create_user(user_id, username):
     now = datetime.now().isoformat()
-    cursor.execute("""
-        INSERT OR IGNORE INTO users 
-        (user_id, username, joined, trial_start, trial_active, last_image_reset) 
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, username, now, now, 1, now))
+    # Проверяем существование колонок
+    cursor.execute("PRAGMA table_info(users)")
+    cols = [row[1] for row in cursor.fetchall()]
+    
+    if 'last_image_reset' in cols:
+        cursor.execute("""
+            INSERT OR IGNORE INTO users 
+            (user_id, username, joined, trial_start, trial_active, last_image_reset) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, username, now, now, 1, now))
+    else:
+        cursor.execute("""
+            INSERT OR IGNORE INTO users 
+            (user_id, username, joined) 
+            VALUES (?, ?, ?)
+        """, (user_id, username, now))
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
@@ -149,7 +188,6 @@ def get_setting(key):
     r = cursor.fetchone()
     if r:
         return r[0]
-    # Если нет - возвращаем значение по умолчанию
     defaults = {
         'free_input_chars': '500',
         'free_output_words': '50',
@@ -170,12 +208,19 @@ def reset_image_count_if_needed(user_id):
         if not user:
             return
         
-        if len(user) < 14 or not user[13]:
-            cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
-            conn.commit()
+        # Проверяем наличие колонок
+        if len(user) < 14:
             return
         
-        last_reset = user[13]
+        last_reset = user[13] if len(user) > 13 else None
+        if not last_reset:
+            try:
+                cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+                conn.commit()
+            except:
+                pass
+            return
+        
         if last_reset:
             try:
                 last_date = datetime.fromisoformat(last_reset)
@@ -197,37 +242,51 @@ def get_image_limit(user_id):
     return int(val) if val else 3
 
 def can_generate_image(user_id):
-    reset_image_count_if_needed(user_id)
-    user = get_user(user_id)
-    if not user: return True, 3
-    
-    used = user[8] if len(user) > 8 and user[8] else 0
     try:
-        used = int(used)
-    except:
+        reset_image_count_if_needed(user_id)
+        user = get_user(user_id)
+        if not user: return True, 3
+        
+        # Безопасное получение значения
         used = 0
-    
-    limit = get_image_limit(user_id)
-    return used < limit, limit - used
+        if len(user) > 8 and user[8]:
+            try:
+                used = int(user[8])
+            except:
+                used = 0
+        
+        limit = get_image_limit(user_id)
+        return used < limit, limit - used
+    except Exception as e:
+        print(f"⚠️ Ошибка can_generate_image: {e}")
+        return True, 3
 
 def get_image_stats(user_id):
-    reset_image_count_if_needed(user_id)
-    user = get_user(user_id)
-    if not user: return 0, 3, False
-    
-    used = user[8] if len(user) > 8 and user[8] else 0
     try:
-        used = int(used)
-    except:
+        reset_image_count_if_needed(user_id)
+        user = get_user(user_id)
+        if not user: return 0, 3, False
+        
         used = 0
-    
-    limit = get_image_limit(user_id)
-    prem = is_premium(user_id)
-    return used, limit, prem
+        if len(user) > 8 and user[8]:
+            try:
+                used = int(user[8])
+            except:
+                used = 0
+        
+        limit = get_image_limit(user_id)
+        prem = is_premium(user_id)
+        return used, limit, prem
+    except Exception as e:
+        print(f"⚠️ Ошибка get_image_stats: {e}")
+        return 0, 3, False
 
 def add_image_request(user_id):
-    cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
+    try:
+        cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Ошибка add_image_request: {e}")
 
 def get_stats():
     cursor.execute("SELECT COUNT(*) FROM users"); total = cursor.fetchone()[0]
