@@ -18,19 +18,45 @@ PROMPT_MODEL = "gpt-4.1-nano"
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🧠 Текст", "mode_text"), InlineKeyboardButton("🖼️ Картинка", "mode_image")],
-        [InlineKeyboardButton("👤 Профиль", "profile"), InlineKeyboardButton("📊 Статистика", "stats")],
-        [InlineKeyboardButton("👥 Рефералы", "referral"), InlineKeyboardButton("💎 Premium", "premium")],
-        [InlineKeyboardButton("📩 Админу", "contact_admin"), InlineKeyboardButton("❓ Помощь", "help")],
-        [InlineKeyboardButton("🏆 Рейтинг", "leaderboard"), InlineKeyboardButton("🛡️ Админ", "admin_panel")]
+        [
+            InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
+            InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+        ],
+        [
+            InlineKeyboardButton(text="👥 Рефералы", callback_data="referral"),
+            InlineKeyboardButton(text="💎 Premium", callback_data="premium")
+        ],
+        [
+            InlineKeyboardButton(text="📩 Админу", callback_data="contact_admin"),
+            InlineKeyboardButton(text="❓ Помощь", callback_data="help")
+        ],
+        [
+            InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"),
+            InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")
+        ]
     ])
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📊 Статистика", "a_stats"), InlineKeyboardButton("👥 Пользователи", "a_users")],
-        [InlineKeyboardButton("📢 Рассылка", "a_broadcast"), InlineKeyboardButton("💎 Выдать Premium", "a_give_premium")],
-        [InlineKeyboardButton("💾 Бэкап", "a_backup"), InlineKeyboardButton("⚙️ Лимиты", "a_limits")],
-        [InlineKeyboardButton("🔙 Назад", "back_to_main")]
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
+            InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")
+        ],
+        [
+            InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
+            InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")
+        ],
+        [
+            InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
+            InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+        ]
     ])
 
 @router.message(Command("start"))
@@ -89,9 +115,17 @@ async def profile_cmd(message: types.Message):
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
     await message.answer("💎 **Premium**\n\n1 мес — 49⭐\n3 мес — 129⭐\n6 мес — 249⭐\n12 мес — 449⭐", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("⭐ 1 мес 49⭐", "pay_1"), InlineKeyboardButton("⭐ 3 мес 129⭐", "pay_3")],
-        [InlineKeyboardButton("⭐ 6 мес 249⭐", "pay_6"), InlineKeyboardButton("⭐ 12 мес 449⭐", "pay_12")],
-        [InlineKeyboardButton("🔙 Назад", "back_to_main")]
+        [
+            InlineKeyboardButton(text="⭐ 1 мес 49⭐", callback_data="pay_1"),
+            InlineKeyboardButton(text="⭐ 3 мес 129⭐", callback_data="pay_3")
+        ],
+        [
+            InlineKeyboardButton(text="⭐ 6 мес 249⭐", callback_data="pay_6"),
+            InlineKeyboardButton(text="⭐ 12 мес 449⭐", callback_data="pay_12")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+        ]
     ]))
 
 @router.message(Command("referral"))
@@ -102,8 +136,12 @@ async def referral_cmd(message: types.Message):
     count = cursor.fetchone()[0] or 0
     link = f"https://t.me/Vertex1bot?start={user_id}"
     await message.answer(f"👥 **Рефералы**\n\nПриглашено: {count}\nБонус: +5 запросов\n\n🔗 {link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
-        [InlineKeyboardButton("🔙 Назад", "back_to_main")]
+        [
+            InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+        ]
     ]))
 
 @router.message(F.text)
@@ -112,12 +150,10 @@ async def handle_message(message: types.Message):
     if not get_user(message.from_user.id): 
         return await message.answer("👋 Нажми /start", reply_markup=main_menu())
     
-    # Проверяем, не админ ли это
     admin_state = user_pages.get(message.from_user.id, {})
     if admin_state.get("state") in ["waiting_user_search", "waiting_admin_message", "waiting_broadcast", "confirm_broadcast", "waiting_premium_user"]:
         return
     
-    # Проверяем, не обращение ли это к админу
     contact_state = user_pages.get(message.from_user.id, {})
     if contact_state.get("state") == "waiting_contact":
         return
@@ -186,7 +222,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерация промпта
         await status_msg.edit_text("🔍 Создаю детальное описание...")
         
         prompt_url = "https://openai.bothub.chat/v1/chat/completions"
@@ -218,7 +253,6 @@ async def generate_image(message: types.Message):
             enhanced_prompt = user_prompt
             logger.warning(f"⚠️ Не удалось создать промпт")
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -226,7 +260,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # Генерация картинки
         url = "https://bothub.chat/api/v2/replicate/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {API_KEY}",
@@ -263,7 +296,7 @@ async def generate_image(message: types.Message):
                         await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
                         await asyncio.sleep(0.2)
                         
-                        image_file = BufferedInputFile(image_data, filename="image.webp")
+                        image_file = BufferedInputFile(file=image_data, filename="image.webp")
                         
                         await message.answer_photo(
                             photo=image_file,
@@ -354,7 +387,7 @@ async def pay_cb(callback: types.CallbackQuery):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp) VALUES (?, ?, ?, ?, ?)",
                 (callback.from_user.id, stars, payload, "pending", datetime.now().isoformat()))
     conn.commit()
-    await callback.bot.send_invoice(callback.from_user.id, f"Premium {plan} мес", f"{days} дней", payload, "", "XTR", [LabeledPrice("Premium", stars)], start_parameter="premium_sub")
+    await callback.bot.send_invoice(callback.from_user.id, f"Premium {plan} мес", f"{days} дней", payload, "", "XTR", [LabeledPrice(label="Premium", amount=stars)], start_parameter="premium_sub")
     await callback.answer()
 
 @router.pre_checkout_query()
