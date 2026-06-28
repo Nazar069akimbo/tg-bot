@@ -7,52 +7,46 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Проверяем существование таблицы users
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-    table_exists = cursor.fetchone()
+    # Создаём таблицу users
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        joined TEXT,
+        premium_until TEXT,
+        free_requests INTEGER DEFAULT 0,
+        total_requests INTEGER DEFAULT 0,
+        is_blocked INTEGER DEFAULT 0,
+        mode TEXT DEFAULT "chat",
+        image_requests INTEGER DEFAULT 0,
+        plan TEXT DEFAULT "basic",
+        trial_start TEXT,
+        trial_used INTEGER DEFAULT 0,
+        trial_active INTEGER DEFAULT 0,
+        last_image_reset TEXT
+    )
+    ''')
     
-    if not table_exists:
-        # Создаём таблицу с нуля
-        cursor.execute('''
-        CREATE TABLE users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            joined TEXT,
-            premium_until TEXT,
-            free_requests INTEGER DEFAULT 0,
-            total_requests INTEGER DEFAULT 0,
-            is_blocked INTEGER DEFAULT 0,
-            mode TEXT DEFAULT "chat",
-            image_requests INTEGER DEFAULT 0,
-            plan TEXT DEFAULT "basic",
-            trial_start TEXT,
-            trial_used INTEGER DEFAULT 0,
-            trial_active INTEGER DEFAULT 0,
-            last_image_reset TEXT
-        )
-        ''')
-        print("✅ Создана таблица users")
-    else:
-        # Проверяем и добавляем недостающие колонки
-        cursor.execute("PRAGMA table_info(users)")
-        existing_cols = [row[1] for row in cursor.fetchall()]
-        
-        columns_to_add = {
-            'image_requests': 'INTEGER DEFAULT 0',
-            'plan': 'TEXT DEFAULT "basic"',
-            'trial_start': 'TEXT',
-            'trial_used': 'INTEGER DEFAULT 0',
-            'trial_active': 'INTEGER DEFAULT 0',
-            'last_image_reset': 'TEXT'
-        }
-        
-        for col, dtype in columns_to_add.items():
-            if col not in existing_cols:
-                try:
-                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-                    print(f"✅ Добавлена колонка {col}")
-                except Exception as e:
-                    print(f"⚠️ Ошибка добавления {col}: {e}")
+    # Проверяем и добавляем недостающие колонки
+    cursor.execute("PRAGMA table_info(users)")
+    existing_cols = [row[1] for row in cursor.fetchall()]
+    
+    columns_to_add = {
+        'image_requests': 'INTEGER DEFAULT 0',
+        'plan': 'TEXT DEFAULT "basic"',
+        'trial_start': 'TEXT',
+        'trial_used': 'INTEGER DEFAULT 0',
+        'trial_active': 'INTEGER DEFAULT 0',
+        'last_image_reset': 'TEXT'
+    }
+    
+    for col, dtype in columns_to_add.items():
+        if col not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+                print(f"✅ Добавлена колонка {col}")
+            except Exception as e:
+                print(f"⚠️ Ошибка добавления {col}: {e}")
     
     # Остальные таблицы
     cursor.execute('''
@@ -118,76 +112,113 @@ def init_db():
     print("✅ База данных инициализирована")
 
 def get_user(user_id):
-    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    return cursor.fetchone()
+    try:
+        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        return cursor.fetchone()
+    except Exception as e:
+        print(f"⚠️ Ошибка get_user: {e}")
+        return None
 
 def create_user(user_id, username):
-    now = datetime.now().isoformat()
-    # Проверяем существование колонок
-    cursor.execute("PRAGMA table_info(users)")
-    cols = [row[1] for row in cursor.fetchall()]
-    
-    if 'last_image_reset' in cols:
+    try:
+        now = datetime.now().isoformat()
+        # Проверяем существует ли пользователь
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+        if cursor.fetchone():
+            print(f"ℹ️ Пользователь {user_id} уже существует")
+            return True
+        
+        # Создаём пользователя
         cursor.execute("""
-            INSERT OR IGNORE INTO users 
-            (user_id, username, joined, trial_start, trial_active, last_image_reset) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, username, now, now, 1, now))
-    else:
-        cursor.execute("""
-            INSERT OR IGNORE INTO users 
-            (user_id, username, joined) 
-            VALUES (?, ?, ?)
-        """, (user_id, username, now))
-    conn.commit()
+            INSERT INTO users 
+            (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, username, now, now, 1, now, 0, 0, 0))
+        conn.commit()
+        print(f"✅ Создан пользователь {user_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка create_user: {e}")
+        return False
 
 def add_referral(referrer_id, referred_id):
-    cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
-                (referrer_id, referred_id, datetime.now().isoformat()))
-    conn.commit()
-    cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
-    conn.commit()
+    try:
+        cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
+                    (referrer_id, referred_id, datetime.now().isoformat()))
+        conn.commit()
+        cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"⚠️ Ошибка add_referral: {e}")
+        return False
 
 def is_admin(user_id):
-    cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
-    return cursor.fetchone() is not None
+    try:
+        cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
+        return cursor.fetchone() is not None
+    except:
+        return False
 
 def add_admin(user_id):
-    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
-    conn.commit()
+    try:
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def is_premium(user_id):
-    user = get_user(user_id)
-    if not user:
+    try:
+        user = get_user(user_id)
+        if not user:
+            return False
+        premium_until = user[3] if len(user) > 3 else None
+        return premium_until and datetime.now().isoformat() < premium_until
+    except:
         return False
-    premium_until = user[3] if len(user) > 3 else None
-    return premium_until and datetime.now().isoformat() < premium_until
 
 def add_premium(user_id, days):
-    cursor.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
-                ((datetime.now() + timedelta(days=days)).isoformat(), user_id))
-    conn.commit()
+    try:
+        cursor.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
+                    ((datetime.now() + timedelta(days=days)).isoformat(), user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"⚠️ Ошибка add_premium: {e}")
+        return False
 
 def can_request(user_id):
-    user = get_user(user_id)
-    if not user: return True, 10
-    if is_premium(user_id): return True, 999999
-    used = user[4] if len(user) > 4 and user[4] else 0
     try:
-        used = int(used)
+        user = get_user(user_id)
+        if not user: return True, 10
+        if is_premium(user_id): return True, 999999
+        used = user[4] if len(user) > 4 and user[4] else 0
+        try:
+            used = int(used)
+        except:
+            used = 0
+        return used < 10, 10 - used
     except:
-        used = 0
-    return used < 10, 10 - used
+        return True, 10
 
 def add_request(user_id):
-    cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
+    try:
+        cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def get_setting(key):
-    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    r = cursor.fetchone()
-    if r:
-        return r[0]
+    try:
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        r = cursor.fetchone()
+        if r:
+            return r[0]
+    except:
+        pass
+    
     defaults = {
         'free_input_chars': '500',
         'free_output_words': '50',
@@ -199,8 +230,12 @@ def get_setting(key):
     return defaults.get(key, '0')
 
 def set_setting(key, value):
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
+    try:
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def reset_image_count_if_needed(user_id):
     try:
@@ -208,7 +243,6 @@ def reset_image_count_if_needed(user_id):
         if not user:
             return
         
-        # Проверяем наличие колонок
         if len(user) < 14:
             return
         
@@ -247,7 +281,6 @@ def can_generate_image(user_id):
         user = get_user(user_id)
         if not user: return True, 3
         
-        # Безопасное получение значения
         used = 0
         if len(user) > 8 and user[8]:
             try:
@@ -285,28 +318,37 @@ def add_image_request(user_id):
     try:
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
+        return True
     except Exception as e:
         print(f"⚠️ Ошибка add_image_request: {e}")
+        return False
 
 def get_stats():
-    cursor.execute("SELECT COUNT(*) FROM users"); total = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM users WHERE premium_until > datetime('now')"); prem = cursor.fetchone()[0]
-    cursor.execute("SELECT SUM(total_requests) FROM users"); req = cursor.fetchone()[0] or 0
-    return total, prem, req
+    try:
+        cursor.execute("SELECT COUNT(*) FROM users"); total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users WHERE premium_until > datetime('now')"); prem = cursor.fetchone()[0]
+        cursor.execute("SELECT SUM(total_requests) FROM users"); req = cursor.fetchone()[0] or 0
+        return total, prem, req
+    except:
+        return 0, 0, 0
 
 def get_user_plan(user_id):
     user = get_user(user_id)
     return user[9] if user and len(user) > 9 and user[9] else 'basic'
 
 def set_user_plan(user_id, plan):
-    cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
-    conn.commit()
+    try:
+        cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def is_trial_active(user_id):
-    user = get_user(user_id)
-    if not user or len(user) < 12 or not user[11]:
-        return False
     try:
+        user = get_user(user_id)
+        if not user or len(user) < 12 or not user[11]:
+            return False
         trial_start = user[9] if len(user) > 9 else None
         if not trial_start:
             return False
@@ -328,8 +370,12 @@ def get_trial_remaining(user_id):
     return max(0, 5 - trial_used)
 
 def use_trial_image(user_id):
-    cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
+    try:
+        cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def get_mode(user_id):
     user = get_user(user_id)
