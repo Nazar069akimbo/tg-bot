@@ -1,16 +1,23 @@
-import os
-import sys
-import asyncio
-import logging
-import threading
-import time
+import os, sys, asyncio, logging, threading, time
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from threading import Thread
 from flask import Flask
+from database.db import init_db, is_admin, add_admin
+from handlers import router
+from backup import GitHubBackup
 
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    logger.error("❌ BOT_TOKEN не найден!")
+    sys.exit(1)
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 
 @app.route('/')
@@ -19,118 +26,39 @@ def health():
     return "OK", 200
 
 def run_flask():
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-# ====== ИМПОРТИРУЕМ init_db ПЕРВЫМ ======
-from database.db import init_db, init_settings, is_admin, add_admin
-
-from handlers import (
-    start_handler, stats_handler, profile_handler, 
-    settings_handler, subscribe_handler, referral_handler, 
-    solve_handler, admin_handler, leaderboard_handler, help_handler,
-    contact_handler
-)
-from middleware import AuthMiddleware
-from backup_github import GitHubBackup
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-load_dotenv()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN не найден!")
-    sys.exit(1)
-
-ADMIN_ID = int(os.getenv("ADMIN_ID", 6957852385))
-
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
-
-async def set_commands():
-    commands = [
-        BotCommand(command="start", description="🚀 Запустить бота"),
-        BotCommand(command="stats", description="📊 Статистика"),
-        BotCommand(command="profile", description="👤 Профиль"),
-        BotCommand(command="settings", description="⚙️ Настройки"),
-        BotCommand(command="subscribe", description="💎 Premium"),
-        BotCommand(command="referral", description="👥 Рефералы"),
-    ]
-    await bot.set_my_commands(commands)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
 
 async def main():
-    logger.info("🚀 Запуск бота...")
-    
-    # ============================================================
-    # 1. ИНИЦИАЛИЗАЦИЯ БД ПЕРВЫМ ДЕЛОМ
-    # ============================================================
-    logger.info("🔄 Инициализация базы данных...")
+    logger.info("🚀 Запуск...")
     init_db()
-    init_settings()
-    logger.info("✅ База данных инициализирована")
     
-    # 2. Запускаем Flask
-    thread = Thread(target=run_flask)
-    thread.daemon = True
-    thread.start()
-    logger.info("✅ Flask сервер запущен")
+    threading.Thread(target=run_flask, daemon=True).start()
     
-    # 3. Восстановление бэкапа (если есть)
-    try:
-        backup = GitHubBackup()
-        backup.restore_latest_backup()
-    except Exception as e:
-        logger.warning(f"⚠️ Не удалось восстановить бэкап: {e}")
+    backup = GitHubBackup()
+    backup.restore_latest_backup()
     
-    # 4. Планировщик бэкапов
     def backup_loop():
         while True:
             time.sleep(3600)
             try:
-                backup = GitHubBackup()
-                backup.backup_db(reason='каждый час')
+                GitHubBackup().backup_db()
             except Exception as e:
-                logger.error(f"❌ Ошибка бэкапа: {e}")
+                logger.error(f"❌ Бэкап: {e}")
+    threading.Thread(target=backup_loop, daemon=True).start()
     
-    backup_thread = threading.Thread(target=backup_loop, daemon=True)
-    backup_thread.start()
-    logger.info("✅ Запущен планировщик бэкапов (каждый час)")
+    if not is_admin(int(os.getenv("ADMIN_ID", 6957852385))):
+        add_admin(int(os.getenv("ADMIN_ID", 6957852385)))
     
-    # 5. Добавляем админа
-    if not is_admin(ADMIN_ID):
-        add_admin(ADMIN_ID)
-        logger.info(f"✅ Админ {ADMIN_ID} добавлен")
-    
-    # 6. Команды
-    await set_commands()
-    
-    # 7. Middleware
-    dp.message.middleware(AuthMiddleware())
-    dp.callback_query.middleware(AuthMiddleware())
-    
-    # 8. Роутеры
-    dp.include_router(start_handler.router)
-    dp.include_router(stats_handler.router)
-    dp.include_router(profile_handler.router)
-    dp.include_router(settings_handler.router)
-    dp.include_router(subscribe_handler.router)
-    dp.include_router(referral_handler.router)
-    dp.include_router(solve_handler.router)
-    dp.include_router(admin_handler.router)
-    dp.include_router(leaderboard_handler.router)
-    dp.include_router(help_handler.router)
-    dp.include_router(contact_handler.router)
-    
+    dp.include_router(router)
+    await bot.set_my_commands([
+        types.BotCommand(cmd, desc) for cmd, desc in [
+            ("start", "🚀 Старт"), ("stats", "📊 Статистика"), 
+            ("profile", "👤 Профиль"), ("subscribe", "💎 Premium"),
+            ("referral", "👥 Рефералы")
+        ]
+    ])
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен")
+    asyncio.run(main())

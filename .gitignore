@@ -7,8 +7,3 @@ data/
 *.sqlite3
 *.tar.gz
 *.json
-test_backup.txt
-get-docker.sh
-railway.py
-credentials.json
-token.pickle
