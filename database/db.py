@@ -7,7 +7,7 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # Создаём таблицу users с правильными колонками
+    # Создаём таблицу users
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -27,7 +27,6 @@ def init_db():
     )
     ''')
     
-    # Остальные таблицы
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +72,19 @@ def init_db():
         value TEXT
     )
     ''')
+    
+    # Настройки по умолчанию - ВАЖНО!
+    default_settings = [
+        ('free_input_chars', '500'),
+        ('free_output_words', '50'),
+        ('premium_input_chars', '3000'),
+        ('premium_output_words', '300'),
+        ('image_limit_free', '3'),
+        ('image_limit_premium', '50')
+    ]
+    
+    for key, value in default_settings:
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     
     conn.commit()
     print("✅ База данных инициализирована")
@@ -122,7 +134,6 @@ def can_request(user_id):
     if not user: return True, 10
     if is_premium(user_id): return True, 999999
     used = user[4] if len(user) > 4 and user[4] else 0
-    # Убеждаемся что used - число
     try:
         used = int(used)
     except:
@@ -136,7 +147,18 @@ def add_request(user_id):
 def get_setting(key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     r = cursor.fetchone()
-    return r[0] if r else '0'
+    if r:
+        return r[0]
+    # Если нет - возвращаем значение по умолчанию
+    defaults = {
+        'free_input_chars': '500',
+        'free_output_words': '50',
+        'premium_input_chars': '3000',
+        'premium_output_words': '300',
+        'image_limit_free': '3',
+        'image_limit_premium': '50'
+    }
+    return defaults.get(key, '0')
 
 def set_setting(key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -148,7 +170,6 @@ def reset_image_count_if_needed(user_id):
         if not user:
             return
         
-        # Проверяем наличие last_image_reset (индекс 13)
         if len(user) < 14 or not user[13]:
             cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
             conn.commit()
@@ -170,19 +191,22 @@ def reset_image_count_if_needed(user_id):
 
 def get_image_limit(user_id):
     if is_premium(user_id):
-        return int(get_setting('image_limit_premium') or 50)
-    return int(get_setting('image_limit_free') or 3)
+        val = get_setting('image_limit_premium')
+        return int(val) if val else 50
+    val = get_setting('image_limit_free')
+    return int(val) if val else 3
 
 def can_generate_image(user_id):
     reset_image_count_if_needed(user_id)
     user = get_user(user_id)
     if not user: return True, 3
-    # image_requests - индекс 8
+    
     used = user[8] if len(user) > 8 and user[8] else 0
     try:
         used = int(used)
     except:
         used = 0
+    
     limit = get_image_limit(user_id)
     return used < limit, limit - used
 
@@ -191,7 +215,6 @@ def get_image_stats(user_id):
     user = get_user(user_id)
     if not user: return 0, 3, False
     
-    # image_requests - индекс 8
     used = user[8] if len(user) > 8 and user[8] else 0
     try:
         used = int(used)
