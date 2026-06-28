@@ -7,22 +7,74 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    tables = {
-        'users': 'user_id INTEGER PRIMARY KEY, username TEXT, joined TEXT, premium_until TEXT, free_requests INTEGER DEFAULT 0, total_requests INTEGER DEFAULT 0, is_blocked INTEGER DEFAULT 0, mode TEXT DEFAULT "chat", image_requests INTEGER DEFAULT 0, plan TEXT DEFAULT "basic", trial_start TEXT, trial_used INTEGER DEFAULT 0, trial_active INTEGER DEFAULT 0, last_image_reset TEXT',
-        'referrals': 'id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER, referred_id INTEGER, joined TEXT, bonus_given INTEGER DEFAULT 0',
-        'admins': 'user_id INTEGER PRIMARY KEY, added_at TEXT',
-        'payments': 'id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, stars_amount INTEGER, telegram_payload TEXT, status TEXT, timestamp TEXT',
-        'messages_to_admin': 'id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, text TEXT, date TEXT, status TEXT DEFAULT "new"',
-        'settings': 'key TEXT PRIMARY KEY, value TEXT'
-    }
-    for name, schema in tables.items():
-        cursor.execute(f"CREATE TABLE IF NOT EXISTS {name} ({schema})")
+    # Создаём таблицу users с ВСЕМИ колонками сразу
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        joined TEXT,
+        premium_until TEXT,
+        free_requests INTEGER DEFAULT 0,
+        total_requests INTEGER DEFAULT 0,
+        is_blocked INTEGER DEFAULT 0,
+        mode TEXT DEFAULT "chat",
+        image_requests INTEGER DEFAULT 0,
+        plan TEXT DEFAULT "basic",
+        trial_start TEXT,
+        trial_used INTEGER DEFAULT 0,
+        trial_active INTEGER DEFAULT 0,
+        last_image_reset TEXT
+    )
+    ''')
     
-    # Проверяем существующие колонки
-    cursor.execute("PRAGMA table_info(users)")
-    existing_cols = [row[1] for row in cursor.fetchall()]
+    # Остальные таблицы
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER,
+        joined TEXT,
+        bonus_given INTEGER DEFAULT 0
+    )
+    ''')
     
-    # Добавляем недостающие колонки
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS admins (
+        user_id INTEGER PRIMARY KEY,
+        added_at TEXT
+    )
+    ''')
+    
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        stars_amount INTEGER,
+        telegram_payload TEXT,
+        status TEXT,
+        timestamp TEXT
+    )
+    ''')
+    
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        date TEXT,
+        status TEXT DEFAULT "new"
+    )
+    ''')
+    
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    ''')
+    
+    # ПРИНУДИТЕЛЬНО добавляем все нужные колонки
     columns_to_add = {
         'image_requests': 'INTEGER DEFAULT 0',
         'plan': 'TEXT DEFAULT "basic"',
@@ -33,12 +85,14 @@ def init_db():
     }
     
     for col, dtype in columns_to_add.items():
-        if col not in existing_cols:
-            try:
-                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-                print(f"✅ Добавлена колонка {col}")
-            except Exception as e:
-                print(f"⚠️ Не удалось добавить {col}: {e}")
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+            print(f"✅ Добавлена колонка {col}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                print(f"ℹ️ Колонка {col} уже существует")
+            else:
+                print(f"⚠️ Ошибка добавления {col}: {e}")
     
     # Настройки по умолчанию
     for k, v in [('free_input_chars','500'), ('free_output_words','50'), ('premium_input_chars','3000'), ('premium_output_words','300'), ('image_limit_free','3'), ('image_limit_premium','50')]:
@@ -53,8 +107,11 @@ def get_user(user_id):
 
 def create_user(user_id, username):
     now = datetime.now().isoformat()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined, trial_start, trial_active, last_image_reset) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, username, now, now, 1, now))
+    cursor.execute("""
+        INSERT OR IGNORE INTO users 
+        (user_id, username, joined, trial_start, trial_active, last_image_reset) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, username, now, now, 1, now))
     conn.commit()
 
 def add_referral(referrer_id, referred_id):
@@ -105,27 +162,35 @@ def set_setting(key, value):
     conn.commit()
 
 def reset_image_count_if_needed(user_id):
-    user = get_user(user_id)
-    if not user:
-        return
-    
-    # Проверяем наличие колонки last_image_reset (индекс 13)
-    if len(user) < 14 or not user[13]:
-        # Если нет, создаем
-        cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
-        conn.commit()
-        return
-    
     try:
+        user = get_user(user_id)
+        if not user:
+            return
+        
+        # Проверяем есть ли колонка last_image_reset
+        if len(user) < 14:
+            # Если нет, обновляем структуру
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN last_image_reset TEXT")
+                conn.commit()
+            except:
+                pass
+            # Устанавливаем значение
+            cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+            conn.commit()
+            return
+        
         last_reset = user[13]
         if last_reset:
-            last_date = datetime.fromisoformat(last_reset)
-            today = datetime.now()
-            if last_date.date() < today.date():
-                cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
-                              (today.isoformat(), user_id))
-                conn.commit()
-                print(f"🔄 Сброшен счётчик картинок для {user_id}")
+            try:
+                last_date = datetime.fromisoformat(last_reset)
+                today = datetime.now()
+                if last_date.date() < today.date():
+                    cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
+                                  (today.isoformat(), user_id))
+                    conn.commit()
+            except:
+                pass
     except Exception as e:
         print(f"⚠️ Ошибка сброса счётчика: {e}")
 
