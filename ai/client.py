@@ -2,7 +2,10 @@ import os
 from openai import OpenAI
 from database.db import get_setting
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url="https://openai.bothub.chat/v1")
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://openai.bothub.chat/v1"
+)
 
 def solve_problem(question, mode="chat", is_premium=False):
     if not os.getenv("OPENAI_API_KEY"):
@@ -17,10 +20,13 @@ def solve_problem(question, mode="chat", is_premium=False):
     try:
         resp = client.chat.completions.create(
             model="deepseek-v4-flash",
-            messages=[{"role": "system", "content": f"Ты ассистент. Отвечай кратко, до {max_output} слов."}, {"role": "user", "content": question}],
+            messages=[
+                {"role": "system", "content": f"Ты ассистент. Отвечай кратко, до {max_output} слов."},
+                {"role": "user", "content": question}
+            ],
             max_tokens=min(max_output * 2, 1000),
             temperature=0.5
         )
         return resp.choices[0].message.content
     except Exception as e:
-        return f"⚠️ Ошибка: {e}"
+        return f"⚠️ Ошибка: {str(e)[:100]}"
