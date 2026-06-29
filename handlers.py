@@ -36,8 +36,8 @@ def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="⚙️ Лимиты", callback_data="a_limits")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="⚙️ Управление тарифами", callback_data="a_plans")],
+        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 # === КОМАНДЫ ===
@@ -69,7 +69,6 @@ async def stats_cmd(message: types.Message):
     used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
     
-    # Название плана
     plan_names = {
         'basic': '🔴 Бесплатный',
         'premium': '💎 Premium',
@@ -122,7 +121,6 @@ async def subscribe_cmd(message: types.Message):
     username = message.from_user.username or ""
     ensure_user(user_id, username)
     
-    # Клавиатура с двумя уровнями Premium
     await message.answer(
         "💎 **Выберите тариф Premium**\n\n"
         "📋 **Premium** — 49⭐/мес\n"
@@ -140,9 +138,7 @@ async def subscribe_cmd(message: types.Message):
                 InlineKeyboardButton(text="💎 Premium 49⭐", callback_data="pay_premium"),
                 InlineKeyboardButton(text="👑 Deluxe 99⭐", callback_data="pay_deluxe")
             ],
-            [
-                InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
-            ]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ])
     )
 
@@ -307,7 +303,6 @@ async def generate_image(message: types.Message):
                     new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     remaining = new_limit - new_used
                     
-                    # Название плана
                     plan_emoji = "💎 Premium" if new_plan == 'premium' else "👑 Premium Deluxe" if new_plan == 'premium_deluxe' else "🔴 Бесплатный"
                     
                     await message.answer_photo(
@@ -435,7 +430,7 @@ async def back_main_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("🤖 **Vertex AI**\n\nПросто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
-# === ОБРАБОТКА ПЛАТЕЖЕЙ ===
+# === ПЛАТЕЖИ ===
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -493,7 +488,7 @@ async def payment_success(message: types.Message):
     
     if row:
         stars, plan = row
-        days = 30  # Все тарифы на месяц
+        days = 30
         add_premium(message.from_user.id, days, plan)
         cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
         conn.commit()
@@ -533,8 +528,6 @@ async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     total, prem, req = get_stats()
-    
-    # Считаем Premium Deluxe
     cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
     deluxe = cursor.fetchone()[0] or 0
     
@@ -552,7 +545,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    cursor.execute("SELECT user_id, username, total_requests, plan FROM users ORDER BY user_id LIMIT 20")
+    cursor.execute("SELECT user_id, username, total_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
     users = cursor.fetchall()
     
     plan_emoji = {
@@ -567,59 +560,70 @@ async def a_users_cb(callback: types.CallbackQuery):
         text = "👥 **Пользователи**\n\n"
         for u in users:
             emoji = plan_emoji.get(u[3], '🔴')
-            text += f"{emoji} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов\n"
+            blocked = "🚫" if u[4] == 1 else "✅"
+            text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов\n"
     
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
-@router.callback_query(F.data == "a_give_premium")
-async def a_give_premium_cb(callback: types.CallbackQuery):
+# === УПРАВЛЕНИЕ ТАРИФАМИ ===
+@router.callback_query(F.data == "a_plans")
+async def a_plans_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_premium_user"}
-    await callback.message.edit_text(
-        "💎 **Выдать Premium**\n\n"
-        "Формат: `ID план дни`\n\n"
-        "Примеры:\n"
-        "`123456 premium 30` — Premium на 30 дней\n"
-        "`123456 premium_deluxe 30` — Premium Deluxe на 30 дней\n\n"
-        "Доступные планы: premium, premium_deluxe",
-        reply_markup=admin_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "a_broadcast")
-async def a_broadcast_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
-    await callback.message.edit_text("📢 Введи текст рассылки", reply_markup=admin_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "a_backup")
-async def a_backup_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    await callback.message.edit_text("⏳ Создаю бэкап...")
-    result = GitHubBackup().backup_db()
-    await callback.message.edit_text("✅ Бэкап создан!" if result else "❌ Ошибка", reply_markup=admin_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "a_limits")
-async def a_limits_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+    
     text = (
-        f"⚙️ **Лимиты**\n\n"
-        f"🔹 Бесплатно: {get_setting('free_input_chars')} симв\n"
-        f"💎 Premium: {get_setting('premium_input_chars')} симв\n"
-        f"👑 Premium Deluxe: {get_setting('premium_deluxe_input_chars')} симв\n\n"
-        f"🖼️ Картинки:\n"
-        f"🔹 Бесплатно: {get_setting('image_limit_free')}\n"
-        f"💎 Premium: {get_setting('image_limit_premium')}\n"
-        f"👑 Premium Deluxe: {get_setting('image_limit_premium_deluxe')}"
+        "⚙️ **Управление тарифами**\n\n"
+        "Текущие лимиты:\n\n"
+        f"🔹 **Бесплатный**\n"
+        f"  Картинок: {get_setting('image_limit_free')}\n"
+        f"  Символов: {get_setting('free_input_chars')}\n\n"
+        f"💎 **Premium**\n"
+        f"  Картинок: {get_setting('image_limit_premium')}\n"
+        f"  Символов: {get_setting('premium_input_chars')}\n\n"
+        f"👑 **Premium Deluxe**\n"
+        f"  Картинок: {get_setting('image_limit_premium_deluxe')}\n"
+        f"  Символов: {get_setting('premium_deluxe_input_chars')}\n\n"
+        "Используйте команды:\n"
+        "/set_plan basic|premium|premium_deluxe - выбрать тариф для пользователя\n"
+        "/unblock <id> - разблокировать пользователя\n"
+        "/block <id> - заблокировать пользователя"
     )
-    await callback.message.edit_text(text, reply_markup=admin_kb())
+    
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔹 Изменить бесплатный", callback_data="edit_free")],
+        [InlineKeyboardButton(text="💎 Изменить Premium", callback_data="edit_premium")],
+        [InlineKeyboardButton(text="👑 Изменить Premium Deluxe", callback_data="edit_deluxe")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ]))
+    await callback.answer()
+
+# === ИЗМЕНЕНИЕ ЛИМИТОВ ДЛЯ ТАРИФОВ ===
+@router.callback_query(F.data.startswith("edit_"))
+async def edit_plan_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    plan = callback.data.replace("edit_", "")
+    
+    plan_names = {
+        'free': '🔹 Бесплатный',
+        'premium': '💎 Premium',
+        'deluxe': '👑 Premium Deluxe'
+    }
+    
+    await callback.message.edit_text(
+        f"⚙️ **Изменение {plan_names.get(plan, 'тарифа')}**\n\n"
+        f"Введите через пробел:\n"
+        f"`<кол-во_картинок> <кол-во_символов>`\n\n"
+        f"Пример: `10 1000`\n"
+        f"(10 картинок в день, 1000 символов за запрос)\n\n"
+        f"⏹ Отмена: /cancel",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_plans")]
+        ])
+    )
+    user_pages[callback.from_user.id] = {"state": "waiting_plan_edit", "plan": plan}
     await callback.answer()
 
 @router.message(F.text)
@@ -628,32 +632,83 @@ async def handle_admin_input(message: types.Message):
         return
     state = user_pages.get(message.from_user.id, {})
     
-    if state.get("state") == "waiting_premium_user":
-        try:
-            parts = message.text.split()
-            if len(parts) != 3:
-                await message.answer("❌ Формат: ID план дни", reply_markup=admin_kb())
-                return
-            
-            user_id, plan, days = int(parts[0]), parts[1], int(parts[2])
-            
-            if plan not in ['premium', 'premium_deluxe']:
-                await message.answer("❌ План должен быть: premium или premium_deluxe", reply_markup=admin_kb())
-                return
-            
-            add_premium(user_id, days, plan)
-            await message.answer(f"✅ {plan} на {days} дней выдан пользователю {user_id}", reply_markup=admin_kb())
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}\nФормат: ID план дни", reply_markup=admin_kb())
-        user_pages.pop(message.from_user.id, None)
-    
-    elif state.get("state") == "waiting_broadcast":
+    # === РЕДАКТИРОВАНИЕ ТАРИФОВ ===
+    if state.get("state") == "waiting_plan_edit":
         if message.text == "/cancel":
             user_pages.pop(message.from_user.id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
+            await message.answer("✅ Отменено", reply_markup=admin_kb())
+            return
+        
+        try:
+            parts = message.text.split()
+            if len(parts) != 2:
+                await message.answer("❌ Формат: кол-во_картинок кол-во_символов\nПример: `10 1000`", reply_markup=admin_kb())
+                return
+            
+            images, chars = int(parts[0]), int(parts[1])
+            plan = state.get("plan")
+            
+            if plan == 'free':
+                set_setting('image_limit_free', str(images))
+                set_setting('free_input_chars', str(chars))
+                await message.answer(f"✅ Бесплатный тариф обновлён:\nКартинок: {images}\nСимволов: {chars}", reply_markup=admin_kb())
+            elif plan == 'premium':
+                set_setting('image_limit_premium', str(images))
+                set_setting('premium_input_chars', str(chars))
+                await message.answer(f"✅ Premium обновлён:\nКартинок: {images}\nСимволов: {chars}", reply_markup=admin_kb())
+            elif plan == 'deluxe':
+                set_setting('image_limit_premium_deluxe', str(images))
+                set_setting('premium_deluxe_input_chars', str(chars))
+                await message.answer(f"✅ Premium Deluxe обновлён:\nКартинок: {images}\nСимволов: {chars}", reply_markup=admin_kb())
+            else:
+                await message.answer("❌ Неизвестный тариф", reply_markup=admin_kb())
+            
+            user_pages.pop(message.from_user.id, None)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}\nФормат: кол-во_картинок кол-во_символов", reply_markup=admin_kb())
+        return
+    
+    # === ВЫДАЧА PREMIUM ПОЛЬЗОВАТЕЛЮ ===
+    if state.get("state") == "waiting_premium_user":
+        if message.text == "/cancel":
+            user_pages.pop(message.from_user.id, None)
+            await message.answer("✅ Отменено", reply_markup=admin_kb())
+            return
+        
+        try:
+            parts = message.text.split()
+            if len(parts) == 2:
+                # Формат: ID план (premium или premium_deluxe)
+                user_id, plan = int(parts[0]), parts[1]
+                if plan not in ['premium', 'premium_deluxe']:
+                    await message.answer("❌ План должен быть: premium или premium_deluxe", reply_markup=admin_kb())
+                    return
+                add_premium(user_id, 30, plan)
+                await message.answer(f"✅ {plan} на 30 дней выдан пользователю {user_id}", reply_markup=admin_kb())
+            elif len(parts) == 3:
+                # Формат: ID план дни
+                user_id, plan, days = int(parts[0]), parts[1], int(parts[2])
+                if plan not in ['premium', 'premium_deluxe']:
+                    await message.answer("❌ План должен быть: premium или premium_deluxe", reply_markup=admin_kb())
+                    return
+                add_premium(user_id, days, plan)
+                await message.answer(f"✅ {plan} на {days} дней выдан пользователю {user_id}", reply_markup=admin_kb())
+            else:
+                await message.answer("❌ Формат: ID план [дни]\nПример: `123456 premium 30`", reply_markup=admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
+        user_pages.pop(message.from_user.id, None)
+        return
+    
+    # === РАССЫЛКА ===
+    if state.get("state") == "waiting_broadcast":
+        if message.text == "/cancel":
+            user_pages.pop(message.from_user.id, None)
+            await message.answer("✅ Отменено", reply_markup=admin_kb())
+            return
         
         await message.answer("📢 Рассылка...")
-        cursor.execute("SELECT user_id FROM users")
+        cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
         users = cursor.fetchall()
         sent = 0
         for u in users:
@@ -665,8 +720,10 @@ async def handle_admin_input(message: types.Message):
                 pass
         await message.answer(f"✅ Отправлено: {sent}", reply_markup=admin_kb())
         user_pages.pop(message.from_user.id, None)
+        return
     
-    elif state.get("state") == "waiting_contact":
+    # === ОБРАЩЕНИЕ В АДМИНКУ ===
+    if state.get("state") == "waiting_contact":
         user_id = message.from_user.id
         cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
                     (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
@@ -674,6 +731,81 @@ async def handle_admin_input(message: types.Message):
         await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")
         await message.answer("✅ Отправлено админу!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
+        return
+
+# === ДОПОЛНИТЕЛЬНЫЕ АДМИН-КОМАНДЫ ===
+@router.message(Command("block"))
+async def block_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    try:
+        parts = message.text.split()
+        user_id = int(parts[1])
+        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        await message.answer(f"🚫 Пользователь {user_id} заблокирован", reply_markup=admin_kb())
+    except:
+        await message.answer("❌ Использование: /block ID", reply_markup=admin_kb())
+
+@router.message(Command("unblock"))
+async def unblock_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    try:
+        parts = message.text.split()
+        user_id = int(parts[1])
+        cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        await message.answer(f"✅ Пользователь {user_id} разблокирован", reply_markup=admin_kb())
+    except:
+        await message.answer("❌ Использование: /unblock ID", reply_markup=admin_kb())
+
+@router.message(Command("set_plan"))
+async def set_plan_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    try:
+        parts = message.text.split()
+        user_id, plan = int(parts[1]), parts[2]
+        if plan not in ['basic', 'premium', 'premium_deluxe']:
+            await message.answer("❌ План должен быть: basic, premium или premium_deluxe", reply_markup=admin_kb())
+            return
+        
+        cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
+        conn.commit()
+        await message.answer(f"✅ План {plan} установлен для {user_id}", reply_markup=admin_kb())
+    except:
+        await message.answer("❌ Использование: /set_plan ID basic|premium|premium_deluxe", reply_markup=admin_kb())
+
+@router.message(Command("remove_premium"))
+async def remove_premium(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    try:
+        parts = message.text.split()
+        user_id = int(parts[1])
+        cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
+        conn.commit()
+        await message.answer(f"✅ Premium отключён для {user_id}", reply_markup=admin_kb())
+    except:
+        await message.answer("❌ Использование: /remove_premium ID", reply_markup=admin_kb())
+
+@router.callback_query(F.data == "a_backup")
+async def a_backup_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    await callback.message.edit_text("⏳ Создаю бэкап...")
+    result = GitHubBackup().backup_db()
+    await callback.message.edit_text("✅ Бэкап создан!" if result else "❌ Ошибка", reply_markup=admin_kb())
+    await callback.answer()
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: types.Message):
