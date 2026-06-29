@@ -71,6 +71,8 @@ def admin_kb():
         ]
     ])
 
+# ========== КОМАНДЫ ==========
+
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -93,7 +95,7 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    logger.info(f"📊 Stats from {user_id}")
+    logger.info(f"📊 Stats command from {user_id}")
     
     # Авто-регистрация
     user = ensure_user(user_id, message.from_user.username)
@@ -117,7 +119,7 @@ async def stats_cmd(message: types.Message):
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
-    logger.info(f"👤 Profile from {user_id}")
+    logger.info(f"👤 Profile command from {user_id}")
     
     # Авто-регистрация
     user = ensure_user(user_id, message.from_user.username)
@@ -143,8 +145,9 @@ async def profile_cmd(message: types.Message):
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
+    user_id = message.from_user.id
     # Авто-регистрация
-    ensure_user(message.from_user.id, message.from_user.username)
+    ensure_user(user_id, message.from_user.username)
     
     await message.answer("💎 **Premium**\n\n1 мес — 49⭐\n3 мес — 129⭐\n6 мес — 249⭐\n12 мес — 449⭐", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -163,7 +166,7 @@ async def subscribe_cmd(message: types.Message):
 @router.message(Command("referral"))
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
-    logger.info(f"👥 Referral from {user_id}")
+    logger.info(f"👥 Referral command from {user_id}")
     
     # Авто-регистрация
     user = ensure_user(user_id, message.from_user.username)
@@ -205,6 +208,8 @@ async def help_cmd(message: types.Message):
     text += "• 50 картинок в день\n"
     text += "• Приоритетная обработка"
     await message.answer(text, reply_markup=main_menu())
+
+# ========== ОБРАБОТКА ТЕКСТА ==========
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -399,14 +404,16 @@ async def generate_image(message: types.Message):
         await status_msg.delete()
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
-# === ВСЕ CALLBACK'и ===
+# ========== CALLBACK'и (КНОПКИ) ==========
+
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     # Авто-регистрация
-    ensure_user(callback.from_user.id, callback.from_user.username)
+    ensure_user(user_id, callback.from_user.username)
     
     mode = callback.data.replace("mode_", "")
-    user_modes[callback.from_user.id] = mode
+    user_modes[user_id] = mode
     await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
     await callback.message.edit_text(
         f"{'🧠 **Режим Текст**' if mode == 'text' else '🖼️ **Режим Картинка**'}\n\n"
@@ -416,33 +423,88 @@ async def set_mode(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
-    await stats_cmd(callback.message)
+    user_id = callback.from_user.id
+    # АВТО-РЕГИСТРАЦИЯ ДЛЯ КНОПКИ
+    user = ensure_user(user_id, callback.from_user.username)
+    if not user:
+        await callback.message.edit_text("❌ Ошибка! Нажми /start", reply_markup=main_menu())
+        await callback.answer()
+        return
+    
+    # Создаем фейковое сообщение для переиспользования
+    class FakeMessage:
+        def __init__(self, user_id, username):
+            self.from_user = type('obj', (object,), {'id': user_id, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = main_menu
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username)
+    await stats_cmd(fake_msg)
     await callback.answer()
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
-    await profile_cmd(callback.message)
+    user_id = callback.from_user.id
+    # АВТО-РЕГИСТРАЦИЯ ДЛЯ КНОПКИ
+    user = ensure_user(user_id, callback.from_user.username)
+    if not user:
+        await callback.message.edit_text("❌ Ошибка! Нажми /start", reply_markup=main_menu())
+        await callback.answer()
+        return
+    
+    class FakeMessage:
+        def __init__(self, user_id, username):
+            self.from_user = type('obj', (object,), {'id': user_id, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = main_menu
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username)
+    await profile_cmd(fake_msg)
     await callback.answer()
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
-    await referral_cmd(callback.message)
+    user_id = callback.from_user.id
+    # АВТО-РЕГИСТРАЦИЯ ДЛЯ КНОПКИ
+    user = ensure_user(user_id, callback.from_user.username)
+    if not user:
+        await callback.message.edit_text("❌ Ошибка! Нажми /start", reply_markup=main_menu())
+        await callback.answer()
+        return
+    
+    class FakeMessage:
+        def __init__(self, user_id, username):
+            self.from_user = type('obj', (object,), {'id': user_id, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = main_menu
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username)
+    await referral_cmd(fake_msg)
     await callback.answer()
 
 @router.callback_query(F.data == "premium")
 async def premium_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    # Авто-регистрация
+    ensure_user(user_id, callback.from_user.username)
+    
     await subscribe_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "help")
 async def help_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    # Авто-регистрация
+    ensure_user(user_id, callback.from_user.username)
+    
     await help_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     # Авто-регистрация
-    ensure_user(callback.from_user.id, callback.from_user.username)
+    ensure_user(user_id, callback.from_user.username)
     
     cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
     users = cursor.fetchall()
@@ -458,25 +520,28 @@ async def leaderboard_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "contact_admin")
 async def contact_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     # Авто-регистрация
-    ensure_user(callback.from_user.id, callback.from_user.username)
+    ensure_user(user_id, callback.from_user.username)
     
-    user_pages[callback.from_user.id] = {"state": "waiting_contact"}
+    user_pages[user_id] = {"state": "waiting_contact"}
     await callback.message.edit_text("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     # Авто-регистрация
-    ensure_user(callback.from_user.id, callback.from_user.username)
+    ensure_user(user_id, callback.from_user.username)
     
     await callback.message.edit_text("🤖 **Vertex AI**\n\nПросто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     # Авто-регистрация
-    ensure_user(callback.from_user.id, callback.from_user.username)
+    ensure_user(user_id, callback.from_user.username)
     
     try:
         plan = callback.data.replace("pay_", "")
@@ -485,11 +550,11 @@ async def pay_cb(callback: types.CallbackQuery):
         payload = secrets.token_hex(16)
         
         cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp) VALUES (?, ?, ?, ?, ?)",
-                    (callback.from_user.id, stars, payload, "pending", datetime.now().isoformat()))
+                    (user_id, stars, payload, "pending", datetime.now().isoformat()))
         conn.commit()
         
         await callback.bot.send_invoice(
-            chat_id=callback.from_user.id,
+            chat_id=user_id,
             title=f"Premium {plan} мес",
             description=f"{days} дней Premium",
             payload=payload,
@@ -519,6 +584,8 @@ async def payment_success(message: types.Message):
     add_premium(message.from_user.id, days)
     GitHubBackup().backup_db()
     await message.answer(f"✅ Premium на {days} дней активирован!")
+
+# ========== АДМИНКА ==========
 
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
