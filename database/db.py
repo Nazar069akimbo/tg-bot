@@ -7,11 +7,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БД ЕСЛИ НЕТ ТАБЛИЦ
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
-    if not cursor.fetchone():
-        print("⚠️ Таблица referrals не найдена, создаём заново...")
-    
     # СОЗДАЁМ ВСЕ ТАБЛИЦЫ
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
@@ -78,7 +73,7 @@ def init_db():
     )
     ''')
     
-    # Проверяем колонки в users
+    # Проверяем колонки
     cursor.execute("PRAGMA table_info(users)")
     existing_cols = [row[1] for row in cursor.fetchall()]
     
@@ -207,8 +202,10 @@ def add_request(user_id):
     try:
         cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
+        print(f"✅ Добавлен текстовый запрос для {user_id}")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка add_request: {e}")
         return False
 
 def get_setting(key):
@@ -250,6 +247,7 @@ def reset_image_count_if_needed(user_id):
             try:
                 cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
                 conn.commit()
+                print(f"🔄 Установлен last_image_reset для {user_id}")
             except:
                 pass
             return
@@ -261,6 +259,7 @@ def reset_image_count_if_needed(user_id):
                     cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
                                   (today.isoformat(), user_id))
                     conn.commit()
+                    print(f"🔄 Сброшен счётчик картинок для {user_id}")
             except:
                 pass
     except Exception as e:
@@ -285,6 +284,7 @@ def can_generate_image(user_id):
             except:
                 used = 0
         limit = get_image_limit(user_id)
+        print(f"📊 can_generate_image: user={user_id}, used={used}, limit={limit}")
         return used < limit, limit - used
     except Exception as e:
         print(f"⚠️ Ошибка can_generate_image: {e}")
@@ -303,6 +303,7 @@ def get_image_stats(user_id):
                 used = 0
         limit = get_image_limit(user_id)
         prem = is_premium(user_id)
+        print(f"📊 get_image_stats: user={user_id}, used={used}, limit={limit}, prem={prem}")
         return used, limit, prem
     except Exception as e:
         print(f"⚠️ Ошибка get_image_stats: {e}")
@@ -310,11 +311,29 @@ def get_image_stats(user_id):
 
 def add_image_request(user_id):
     try:
+        print(f"📸 add_image_request: НАЧАЛО для {user_id}")
+        
+        # Проверяем существование колонки
+        cursor.execute("PRAGMA table_info(users)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if 'image_requests' not in cols:
+            print(f"❌ Колонка image_requests не существует! Создаём...")
+            cursor.execute("ALTER TABLE users ADD COLUMN image_requests INTEGER DEFAULT 0")
+            conn.commit()
+        
+        # Увеличиваем счётчик
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
+        print(f"✅ add_image_request: Успешно обновлён image_requests для {user_id}")
+        
+        # Проверяем результат
+        cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            print(f"📊 add_image_request: Новое значение = {result[0]}")
         return True
     except Exception as e:
-        print(f"⚠️ Ошибка add_image_request: {e}")
+        print(f"❌ Ошибка add_image_request: {e}")
         return False
 
 def get_stats():
@@ -370,8 +389,10 @@ def use_trial_image(user_id):
     try:
         cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
+        print(f"✅ Использована пробная картинка для {user_id}")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка use_trial_image: {e}")
         return False
 
 def get_mode(user_id):
