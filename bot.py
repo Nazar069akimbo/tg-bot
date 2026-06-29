@@ -2,7 +2,7 @@ import os, sys, asyncio, logging, threading, time
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from flask import Flask
+from flask import Flask, jsonify
 from database.db import init_db, is_admin, add_admin
 from handlers import router
 from backup import GitHubBackup
@@ -23,7 +23,12 @@ app = Flask(__name__)
 @app.route('/')
 @app.route('/healthz')
 def health():
-    return "OK", 200
+    # Возвращаем МИНИМАЛЬНЫЙ ответ для cron-job.org
+    return "OK", 200, {'Content-Type': 'text/plain'}
+
+@app.route('/ping')
+def ping():
+    return "pong", 200, {'Content-Type': 'text/plain'}
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
@@ -50,8 +55,6 @@ async def main():
         add_admin(int(os.getenv("ADMIN_ID", 6957852385)))
     
     dp.include_router(router)
-    
-    # ИСПРАВЛЕНО: правильный синтаксис BotCommand
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
         types.BotCommand(command="stats", description="📊 Статистика"),
