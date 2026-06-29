@@ -7,7 +7,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # СОЗДАЁМ ВСЕ ТАБЛИЦЫ
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -73,7 +72,6 @@ def init_db():
     )
     ''')
     
-    # Проверяем колонки
     cursor.execute("PRAGMA table_info(users)")
     existing_cols = [row[1] for row in cursor.fetchall()]
     
@@ -94,14 +92,16 @@ def init_db():
             except Exception as e:
                 print(f"⚠️ Ошибка добавления {col}: {e}")
     
-    # Настройки по умолчанию
     default_settings = [
         ('free_input_chars', '500'),
         ('free_output_words', '50'),
         ('premium_input_chars', '3000'),
         ('premium_output_words', '300'),
+        ('premium_deluxe_input_chars', '5000'),
+        ('premium_deluxe_output_words', '500'),
         ('image_limit_free', '3'),
-        ('image_limit_premium', '50')
+        ('image_limit_premium', '50'),
+        ('image_limit_premium_deluxe', '200')
     ]
     
     for key, value in default_settings:
@@ -174,11 +174,29 @@ def is_premium(user_id):
     except:
         return False
 
-def add_premium(user_id, days):
+def get_user_plan(user_id):
+    user = get_user(user_id)
+    if user and len(user) > 9:
+        plan = user[9]
+        if plan in ['premium', 'premium_deluxe']:
+            return plan
+    return 'basic'
+
+def set_user_plan(user_id, plan):
     try:
-        cursor.execute("UPDATE users SET premium_until = ?, plan = 'premium' WHERE user_id = ?",
-                    ((datetime.now() + timedelta(days=days)).isoformat(), user_id))
+        cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
         conn.commit()
+        return True
+    except:
+        return False
+
+def add_premium(user_id, days, plan='premium'):
+    try:
+        new_date = (datetime.now() + timedelta(days=days)).isoformat()
+        cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
+                    (new_date, plan, user_id))
+        conn.commit()
+        print(f"✅ Выдан {plan} на {days} дней для {user_id}")
         return True
     except Exception as e:
         print(f"⚠️ Ошибка add_premium: {e}")
@@ -202,7 +220,6 @@ def add_request(user_id):
     try:
         cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
-        print(f"✅ Добавлен текстовый запрос для {user_id}")
         return True
     except Exception as e:
         print(f"❌ Ошибка add_request: {e}")
@@ -222,8 +239,11 @@ def get_setting(key):
         'free_output_words': '50',
         'premium_input_chars': '3000',
         'premium_output_words': '300',
+        'premium_deluxe_input_chars': '5000',
+        'premium_deluxe_output_words': '500',
         'image_limit_free': '3',
-        'image_limit_premium': '50'
+        'image_limit_premium': '50',
+        'image_limit_premium_deluxe': '200'
     }
     return defaults.get(key, '0')
 
@@ -247,7 +267,6 @@ def reset_image_count_if_needed(user_id):
             try:
                 cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
                 conn.commit()
-                print(f"🔄 Установлен last_image_reset для {user_id}")
             except:
                 pass
             return
@@ -259,18 +278,22 @@ def reset_image_count_if_needed(user_id):
                     cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
                                   (today.isoformat(), user_id))
                     conn.commit()
-                    print(f"🔄 Сброшен счётчик картинок для {user_id}")
             except:
                 pass
     except Exception as e:
         print(f"⚠️ Ошибка сброса счётчика: {e}")
 
 def get_image_limit(user_id):
-    if is_premium(user_id):
+    plan = get_user_plan(user_id)
+    if plan == 'premium_deluxe':
+        val = get_setting('image_limit_premium_deluxe')
+        return int(val) if val else 200
+    elif plan == 'premium':
         val = get_setting('image_limit_premium')
         return int(val) if val else 50
-    val = get_setting('image_limit_free')
-    return int(val) if val else 3
+    else:
+        val = get_setting('image_limit_free')
+        return int(val) if val else 3
 
 def can_generate_image(user_id):
     try:
@@ -284,7 +307,6 @@ def can_generate_image(user_id):
             except:
                 used = 0
         limit = get_image_limit(user_id)
-        print(f"📊 can_generate_image: user={user_id}, used={used}, limit={limit}")
         return used < limit, limit - used
     except Exception as e:
         print(f"⚠️ Ошибка can_generate_image: {e}")
@@ -303,34 +325,16 @@ def get_image_stats(user_id):
                 used = 0
         limit = get_image_limit(user_id)
         prem = is_premium(user_id)
-        print(f"📊 get_image_stats: user={user_id}, used={used}, limit={limit}, prem={prem}")
-        return used, limit, prem
+        plan = get_user_plan(user_id)
+        return used, limit, prem, plan
     except Exception as e:
         print(f"⚠️ Ошибка get_image_stats: {e}")
-        return 0, 3, False
+        return 0, 3, False, 'basic'
 
 def add_image_request(user_id):
     try:
-        print(f"📸 add_image_request: НАЧАЛО для {user_id}")
-        
-        # Проверяем существование колонки
-        cursor.execute("PRAGMA table_info(users)")
-        cols = [row[1] for row in cursor.fetchall()]
-        if 'image_requests' not in cols:
-            print(f"❌ Колонка image_requests не существует! Создаём...")
-            cursor.execute("ALTER TABLE users ADD COLUMN image_requests INTEGER DEFAULT 0")
-            conn.commit()
-        
-        # Увеличиваем счётчик
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
-        print(f"✅ add_image_request: Успешно обновлён image_requests для {user_id}")
-        
-        # Проверяем результат
-        cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            print(f"📊 add_image_request: Новое значение = {result[0]}")
         return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
@@ -347,18 +351,6 @@ def get_stats():
         return total, prem, req
     except:
         return 0, 0, 0
-
-def get_user_plan(user_id):
-    user = get_user(user_id)
-    return user[9] if user and len(user) > 9 and user[9] else 'basic'
-
-def set_user_plan(user_id, plan):
-    try:
-        cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
-        conn.commit()
-        return True
-    except:
-        return False
 
 def is_trial_active(user_id):
     try:
@@ -389,10 +381,8 @@ def use_trial_image(user_id):
     try:
         cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
-        print(f"✅ Использована пробная картинка для {user_id}")
         return True
-    except Exception as e:
-        print(f"❌ Ошибка use_trial_image: {e}")
+    except:
         return False
 
 def get_mode(user_id):

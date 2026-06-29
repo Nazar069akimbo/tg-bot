@@ -19,7 +19,6 @@ PROMPT_MODEL = "gpt-4.1-nano"
 def ensure_user(user_id, username=None):
     user = get_user(user_id)
     if not user:
-        logger.info(f"👤 Авто-регистрация пользователя {user_id}")
         create_user(user_id, username or "")
         return get_user(user_id)
     return user
@@ -67,15 +66,22 @@ async def stats_cmd(message: types.Message):
         return await message.answer("❌ Ошибка! Нажми /start", reply_markup=main_menu())
     
     ok, rem = can_request(user_id)
-    used, limit, prem = get_image_stats(user_id)
+    used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
+    
+    # Название плана
+    plan_names = {
+        'basic': '🔴 Бесплатный',
+        'premium': '💎 Premium',
+        'premium_deluxe': '👑 Premium Deluxe'
+    }
     
     text = f"📊 **Статистика**\n\n"
     text += f"📝 Запросов: {rem if not prem else '∞'}\n"
     text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
     if trial > 0 and not prem:
         text += f"🎁 Пробный период: {trial} картинок\n"
-    text += f"💎 Статус: {'💎 Premium' if prem else '🔴 Бесплатный'}"
+    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -93,19 +99,52 @@ async def profile_cmd(message: types.Message):
     except:
         refs = 0
     
-    used, limit, prem = get_image_stats(user_id)
-    plan = get_user_plan(user_id)
+    used, limit, prem, plan = get_image_stats(user_id)
+    plan_names = {
+        'basic': '🔴 Бесплатный',
+        'premium': '💎 Premium',
+        'premium_deluxe': '👑 Premium Deluxe'
+    }
     
     text = f"👤 **Профиль**\n\n"
     text += f"🆔 {user[0]}\n"
     text += f"📆 {user[2][:10] if user[2] else 'Нет'}\n"
     text += f"📊 Запросов: {user[5] or 0}\n"
     text += f"👥 Приглашено: {refs}\n"
-    text += f"💎 {'💎 Premium' if prem else '❌ Нет'}\n"
-    text += f"📊 План: {plan.upper()}\n"
+    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}\n"
     text += f"🖼️ Картинки сегодня: {used}/{limit}"
     
     await message.answer(text, reply_markup=main_menu())
+
+@router.message(Command("subscribe"))
+async def subscribe_cmd(message: types.Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    ensure_user(user_id, username)
+    
+    # Клавиатура с двумя уровнями Premium
+    await message.answer(
+        "💎 **Выберите тариф Premium**\n\n"
+        "📋 **Premium** — 49⭐/мес\n"
+        "• Безлимит текстовых запросов\n"
+        "• 50 картинок в день\n"
+        "• Приоритетная обработка\n\n"
+        "👑 **Premium Deluxe** — 99⭐/мес\n"
+        "• Безлимит текстовых запросов\n"
+        "• 200 картинок в день\n"
+        "• Приоритетная обработка\n"
+        "• Эксклюзивные промпты\n"
+        "• VIP-поддержка",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💎 Premium 49⭐", callback_data="pay_premium"),
+                InlineKeyboardButton(text="👑 Deluxe 99⭐", callback_data="pay_deluxe")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+            ]
+        ])
+    )
 
 @router.message(Command("referral"))
 async def referral_cmd(message: types.Message):
@@ -123,7 +162,7 @@ async def referral_cmd(message: types.Message):
     
     link = f"https://t.me/Vertex1bot?start={user_id}"
     await message.answer(f"👥 **Рефералы**\n\nПриглашено: {count}\nБонус: +5 запросов\n\n🔗 {link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
+        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся к Vertex AI!")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ]))
 
@@ -132,19 +171,8 @@ async def help_cmd(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     ensure_user(user_id, username)
-    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы\n\n💎 Premium: безлимит + 50 картинок/день"
+    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы\n\n💎 Premium: безлимит + 50 картинок/день\n👑 Premium Deluxe: безлимит + 200 картинок/день"
     await message.answer(text, reply_markup=main_menu())
-
-@router.message(Command("subscribe"))
-async def subscribe_cmd(message: types.Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    ensure_user(user_id, username)
-    await message.answer("💎 **Premium**\n\n1 мес — 49⭐\n3 мес — 129⭐\n6 мес — 249⭐\n12 мес — 449⭐", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ 1 мес 49⭐", callback_data="pay_1"), InlineKeyboardButton(text="⭐ 3 мес 129⭐", callback_data="pay_3")],
-        [InlineKeyboardButton(text="⭐ 6 мес 249⭐", callback_data="pay_6"), InlineKeyboardButton(text="⭐ 12 мес 449⭐", callback_data="pay_12")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ]))
 
 # === ОБРАБОТКА ТЕКСТА ===
 @router.message(F.text)
@@ -190,18 +218,14 @@ async def generate_text(message: types.Message):
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
-    logger.info("🎨 НАЧАЛО ГЕНЕРАЦИИ КАРТИНКИ")
     
     if not API_KEY:
         await message.answer("❌ API ключ не настроен")
         return
     
     trial_rem = get_trial_remaining(user_id)
-    used, limit, prem = get_image_stats(user_id)
+    used, limit, prem, plan = get_image_stats(user_id)
     
-    logger.info(f"📊 Статистика: used={used}, limit={limit}, prem={prem}, trial={trial_rem}")
-    
-    # Проверяем лимиты
     if prem:
         can_gen = used < limit
     elif trial_rem > 0:
@@ -219,8 +243,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # 1. Генерация промпта
-        logger.info("🔄 Создаю промпт...")
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -235,14 +257,11 @@ async def generate_image(message: types.Message):
             },
             timeout=30
         )
-        logger.info(f"📡 Ответ промпта: {prompt_resp.status_code}")
         
         enhanced = user_prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
-            logger.info(f"📝 Промпт: {enhanced[:100]}...")
         
-        # Прогресс
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
@@ -250,8 +269,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # 2. Генерация картинки
-        logger.info("🔄 Отправляю запрос на генерацию...")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -269,7 +286,6 @@ async def generate_image(message: types.Message):
             },
             timeout=120
         )
-        logger.info(f"📡 Ответ генерации: {img_resp.status_code}")
         
         if img_resp.status_code == 200:
             result = img_resp.json()
@@ -278,32 +294,28 @@ async def generate_image(message: types.Message):
                 img_url = img_url[0]
             
             if img_url:
-                logger.info(f"🖼️ Скачиваю картинку...")
                 img_data = requests.get(img_url, timeout=30)
-                
                 if img_data.status_code == 200 and len(img_data.content) > 1000:
                     await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    # СОХРАНЯЕМ В БД
                     if trial_rem > 0:
                         use_trial_image(user_id)
-                        logger.info(f"✅ Использована пробная картинка для {user_id}")
                     else:
                         add_image_request(user_id)
-                        logger.info(f"✅ Добавлен запрос на картинку для {user_id}")
                     
-                    # Получаем обновленную статистику
-                    new_used, new_limit, new_prem = get_image_stats(user_id)
+                    new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     remaining = new_limit - new_used
+                    
+                    # Название плана
+                    plan_emoji = "💎 Premium" if new_plan == 'premium' else "👑 Premium Deluxe" if new_plan == 'premium_deluxe' else "🔴 Бесплатный"
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n💎 {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n💎 План: {plan_emoji}"
                     )
                     
                     await status_msg.delete()
-                    logger.info("✅ Картинка отправлена!")
                     return
         
         await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
@@ -312,7 +324,7 @@ async def generate_image(message: types.Message):
         logger.error(f"❌ Ошибка генерации: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# === CALLBACK'и (КНОПКИ) ===
+# === CALLBACK'и ===
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -423,34 +435,51 @@ async def back_main_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("🤖 **Vertex AI**\n\nПросто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
+# === ОБРАБОТКА ПЛАТЕЖЕЙ ===
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or ""
     ensure_user(user_id, username)
     try:
-        plan = callback.data.replace("pay_", "")
-        days = {"1": 30, "3": 90, "6": 180, "12": 365}[plan]
-        stars = {"1": 49, "3": 129, "6": 249, "12": 449}[plan]
+        plan_type = callback.data.replace("pay_", "")
+        
+        if plan_type == "premium":
+            stars = 49
+            days = 30
+            plan = "premium"
+            title = "Premium 1 мес"
+            desc = "Безлимит + 50 картинок/день"
+        elif plan_type == "deluxe":
+            stars = 99
+            days = 30
+            plan = "premium_deluxe"
+            title = "Premium Deluxe 1 мес"
+            desc = "Безлимит + 200 картинок/день"
+        else:
+            await callback.answer("❌ Неверный тариф", show_alert=True)
+            return
+        
         payload = secrets.token_hex(16)
         
-        cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, stars, payload, "pending", datetime.now().isoformat()))
+        cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
+                    (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
         conn.commit()
         
         await callback.bot.send_invoice(
             chat_id=user_id,
-            title=f"Premium {plan} мес",
-            description=f"{days} дней Premium",
+            title=title,
+            description=desc,
             payload=payload,
             provider_token="",
             currency="XTR",
-            prices=[LabeledPrice(label="Premium", amount=stars)],
+            prices=[LabeledPrice(label=title, amount=stars)],
             start_parameter="premium_sub"
         )
         await callback.answer()
     except Exception as e:
-        await callback.answer("❌ Ошибка платежа", show_alert=True)
+        logger.error(f"❌ Ошибка платежа: {e}")
+        await callback.answer("❌ Ошибка создания платежа", show_alert=True)
 
 @router.pre_checkout_query()
 async def pre_checkout(query: types.PreCheckoutQuery):
@@ -459,15 +488,25 @@ async def pre_checkout(query: types.PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def payment_success(message: types.Message):
     payload = message.successful_payment.invoice_payload
-    cursor.execute("SELECT stars_amount FROM payments WHERE telegram_payload = ?", (payload,))
+    cursor.execute("SELECT stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
     row = cursor.fetchone()
-    days = {49: 30, 129: 90, 249: 180, 449: 365}.get(row[0] if row else 49, 30)
+    
     if row:
+        stars, plan = row
+        days = 30  # Все тарифы на месяц
+        add_premium(message.from_user.id, days, plan)
         cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
         conn.commit()
-    add_premium(message.from_user.id, days)
-    GitHubBackup().backup_db()
-    await message.answer(f"✅ Premium на {days} дней активирован!")
+        GitHubBackup().backup_db()
+        
+        plan_names = {
+            'premium': '💎 Premium',
+            'premium_deluxe': '👑 Premium Deluxe'
+        }
+        
+        await message.answer(f"✅ {plan_names.get(plan, 'Premium')} на 30 дней активирован!")
+    else:
+        await message.answer("❌ Ошибка активации. Обратитесь к админу.")
 
 # === АДМИНКА ===
 @router.message(Command("admin"))
@@ -494,16 +533,42 @@ async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     total, prem, req = get_stats()
-    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 Всего: {total}\n💎 Premium: {prem}\n📝 Запросов: {req}", reply_markup=admin_kb())
+    
+    # Считаем Premium Deluxe
+    cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
+    deluxe = cursor.fetchone()[0] or 0
+    
+    await callback.message.edit_text(
+        f"📊 **Статистика**\n\n"
+        f"👥 Всего: {total}\n"
+        f"💎 Premium: {prem - deluxe}\n"
+        f"👑 Premium Deluxe: {deluxe}\n"
+        f"📝 Запросов: {req}",
+        reply_markup=admin_kb()
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY user_id LIMIT 20")
+    cursor.execute("SELECT user_id, username, total_requests, plan FROM users ORDER BY user_id LIMIT 20")
     users = cursor.fetchall()
-    text = "👥 **Пользователи**\n\n" + "\n".join([f"🆔 `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users]) if users else "Нет пользователей"
+    
+    plan_emoji = {
+        'basic': '🔴',
+        'premium': '💎',
+        'premium_deluxe': '👑'
+    }
+    
+    if not users:
+        text = "👥 Пользователей не найдено"
+    else:
+        text = "👥 **Пользователи**\n\n"
+        for u in users:
+            emoji = plan_emoji.get(u[3], '🔴')
+            text += f"{emoji} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов\n"
+    
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
@@ -512,7 +577,15 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     user_pages[callback.from_user.id] = {"state": "waiting_premium_user"}
-    await callback.message.edit_text("💎 Введи ID и дни: 123456 30", reply_markup=admin_kb())
+    await callback.message.edit_text(
+        "💎 **Выдать Premium**\n\n"
+        "Формат: `ID план дни`\n\n"
+        "Примеры:\n"
+        "`123456 premium 30` — Premium на 30 дней\n"
+        "`123456 premium_deluxe 30` — Premium Deluxe на 30 дней\n\n"
+        "Доступные планы: premium, premium_deluxe",
+        reply_markup=admin_kb()
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "a_broadcast")
@@ -536,7 +609,16 @@ async def a_backup_cb(callback: types.CallbackQuery):
 async def a_limits_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    text = f"⚙️ **Лимиты**\n\n🔹 Бесплатно: {get_setting('free_input_chars')} симв\n🔸 Premium: {get_setting('premium_input_chars')} симв\n🖼️ Картинки: {get_setting('image_limit_free')} (бесплатно), {get_setting('image_limit_premium')} (Premium)"
+    text = (
+        f"⚙️ **Лимиты**\n\n"
+        f"🔹 Бесплатно: {get_setting('free_input_chars')} симв\n"
+        f"💎 Premium: {get_setting('premium_input_chars')} симв\n"
+        f"👑 Premium Deluxe: {get_setting('premium_deluxe_input_chars')} симв\n\n"
+        f"🖼️ Картинки:\n"
+        f"🔹 Бесплатно: {get_setting('image_limit_free')}\n"
+        f"💎 Premium: {get_setting('image_limit_premium')}\n"
+        f"👑 Premium Deluxe: {get_setting('image_limit_premium_deluxe')}"
+    )
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
@@ -549,11 +631,20 @@ async def handle_admin_input(message: types.Message):
     if state.get("state") == "waiting_premium_user":
         try:
             parts = message.text.split()
-            user_id, days = int(parts[0]), int(parts[1])
-            add_premium(user_id, days)
-            await message.answer(f"✅ Premium выдан {user_id} на {days} дней", reply_markup=admin_kb())
-        except:
-            await message.answer("❌ Формат: ID дни", reply_markup=admin_kb())
+            if len(parts) != 3:
+                await message.answer("❌ Формат: ID план дни", reply_markup=admin_kb())
+                return
+            
+            user_id, plan, days = int(parts[0]), parts[1], int(parts[2])
+            
+            if plan not in ['premium', 'premium_deluxe']:
+                await message.answer("❌ План должен быть: premium или premium_deluxe", reply_markup=admin_kb())
+                return
+            
+            add_premium(user_id, days, plan)
+            await message.answer(f"✅ {plan} на {days} дней выдан пользователю {user_id}", reply_markup=admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}\nФормат: ID план дни", reply_markup=admin_kb())
         user_pages.pop(message.from_user.id, None)
     
     elif state.get("state") == "waiting_broadcast":
