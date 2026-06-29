@@ -17,7 +17,6 @@ IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
 def ensure_user(user_id, username=None):
-    """Проверяет и создаёт пользователя если нужно"""
     user = get_user(user_id)
     if not user:
         logger.info(f"👤 Авто-регистрация пользователя {user_id}")
@@ -73,10 +72,10 @@ async def stats_cmd(message: types.Message):
     
     text = f"📊 **Статистика**\n\n"
     text += f"📝 Запросов: {rem if not prem else '∞'}\n"
-    text += f"🖼️ Картинок: {used}/{limit}\n"
+    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
     if trial > 0 and not prem:
-        text += f"🎁 Пробный: {trial} картинок\n"
-    text += f"💎 {'Premium' if prem else 'Бесплатный'}"
+        text += f"🎁 Пробный период: {trial} картинок\n"
+    text += f"💎 Статус: {'💎 Premium' if prem else '🔴 Бесплатный'}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -102,9 +101,9 @@ async def profile_cmd(message: types.Message):
     text += f"📆 {user[2][:10] if user[2] else 'Нет'}\n"
     text += f"📊 Запросов: {user[5] or 0}\n"
     text += f"👥 Приглашено: {refs}\n"
-    text += f"💎 {'Premium' if prem else 'Нет'}\n"
+    text += f"💎 {'💎 Premium' if prem else '❌ Нет'}\n"
     text += f"📊 План: {plan.upper()}\n"
-    text += f"🖼️ Картинки: {used}/{limit}"
+    text += f"🖼️ Картинки сегодня: {used}/{limit}"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -191,6 +190,8 @@ async def generate_text(message: types.Message):
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
+    logger.info("🎨 НАЧАЛО ГЕНЕРАЦИИ КАРТИНКИ")
+    
     if not API_KEY:
         await message.answer("❌ API ключ не настроен")
         return
@@ -198,6 +199,9 @@ async def generate_image(message: types.Message):
     trial_rem = get_trial_remaining(user_id)
     used, limit, prem = get_image_stats(user_id)
     
+    logger.info(f"📊 Статистика: used={used}, limit={limit}, prem={prem}, trial={trial_rem}")
+    
+    # Проверяем лимиты
     if prem:
         can_gen = used < limit
     elif trial_rem > 0:
@@ -207,39 +211,65 @@ async def generate_image(message: types.Message):
         can_gen, _ = can_generate_image(user_id)
     
     if not can_gen:
-        await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /subscribe")
+        await message.answer(f"❌ Лимит картинок исчерпан! {used}/{limit}\n💎 /subscribe")
         return
     
     status_msg = await message.answer("🎨 Генерирую картинку...")
+    
     try:
+        user_prompt = message.text
+        
+        # 1. Генерация промпта
+        logger.info("🔄 Создаю промпт...")
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": PROMPT_MODEL,
                 "messages": [
-                    {"role": "system", "content": "Create detailed English prompt for Flux/Stable Diffusion. Only the prompt!"},
-                    {"role": "user", "content": f"Prompt for: {message.text}"}
+                    {"role": "system", "content": "Create detailed English prompt for Flux/Stable Diffusion. Only the prompt, no explanations!"},
+                    {"role": "user", "content": f"Prompt for: {user_prompt}"}
                 ],
-                "max_tokens": 200
+                "max_tokens": 200,
+                "temperature": 0.7
             },
             timeout=30
         )
+        logger.info(f"📡 Ответ промпта: {prompt_resp.status_code}")
         
-        enhanced = message.text
+        enhanced = user_prompt
         if prompt_resp.status_code == 200:
-            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', message.text).strip('"')
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
+            logger.info(f"📝 Промпт: {enhanced[:100]}...")
         
+        # Прогресс
+        for p in [10, 25, 45, 60, 75, 90]:
+            await asyncio.sleep(0.2)
+            try:
+                await status_msg.edit_text(f"🎨 Генерирую картинку... {p}%")
+            except:
+                pass
+        
+        # 2. Генерация картинки
+        logger.info("🔄 Отправляю запрос на генерацию...")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": IMAGE_MODEL,
-                "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"},
-                "bothub": {"include_usage": True, "return_base64": False}
+                "input": {
+                    "prompt": enhanced,
+                    "aspect_ratio": "1:1",
+                    "output_format": "webp"
+                },
+                "bothub": {
+                    "include_usage": True,
+                    "return_base64": False
+                }
             },
             timeout=120
         )
+        logger.info(f"📡 Ответ генерации: {img_resp.status_code}")
         
         if img_resp.status_code == 200:
             result = img_resp.json()
@@ -248,22 +278,38 @@ async def generate_image(message: types.Message):
                 img_url = img_url[0]
             
             if img_url:
-                img_data = requests.get(img_url, timeout=30).content
-                if len(img_data) > 1000:
+                logger.info(f"🖼️ Скачиваю картинку...")
+                img_data = requests.get(img_url, timeout=30)
+                
+                if img_data.status_code == 200 and len(img_data.content) > 1000:
+                    await status_msg.edit_text("🎨 Генерирую картинку... 100% ✅")
+                    await asyncio.sleep(0.2)
+                    
+                    # СОХРАНЯЕМ В БД
                     if trial_rem > 0:
                         use_trial_image(user_id)
+                        logger.info(f"✅ Использована пробная картинка для {user_id}")
                     else:
                         add_image_request(user_id)
+                        logger.info(f"✅ Добавлен запрос на картинку для {user_id}")
+                    
+                    # Получаем обновленную статистику
+                    new_used, new_limit, new_prem = get_image_stats(user_id)
+                    remaining = new_limit - new_used
                     
                     await message.answer_photo(
-                        BufferedInputFile(file=img_data, filename="image.webp"),
-                        caption=f"🖼️ {message.text[:50]}..."
+                        BufferedInputFile(file=img_data.content, filename="image.webp"),
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n💎 {'💎 Premium' if new_prem else '🔴 Бесплатный'}"
                     )
+                    
                     await status_msg.delete()
+                    logger.info("✅ Картинка отправлена!")
                     return
         
-        await status_msg.edit_text("❌ Не удалось получить картинку")
+        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуй другой запрос.")
+        
     except Exception as e:
+        logger.error(f"❌ Ошибка генерации: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 # === CALLBACK'и (КНОПКИ) ===
@@ -274,9 +320,9 @@ async def set_mode(callback: types.CallbackQuery):
     ensure_user(user_id, username)
     mode = callback.data.replace("mode_", "")
     user_modes[user_id] = mode
-    await callback.answer(f"✅ Режим: {'Текст' if mode == 'text' else 'Картинка'}", show_alert=True)
+    await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
     await callback.message.edit_text(
-        f"{'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}\n\nГотов к работе!",
+        f"{'🧠 **Режим Текст**' if mode == 'text' else '🖼️ **Режим Картинка**'}\n\nГотов к работе!",
         reply_markup=main_menu()
     )
 
@@ -290,7 +336,6 @@ async def stats_cb(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Создаём фейковое сообщение
     class FakeMessage:
         def __init__(self, uid, uname):
             self.from_user = type('obj', (object,), {'id': uid, 'username': uname})()
@@ -449,7 +494,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     total, prem, req = get_stats()
-    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 {total}\n💎 {prem}\n📝 {req}", reply_markup=admin_kb())
+    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 Всего: {total}\n💎 Premium: {prem}\n📝 Запросов: {req}", reply_markup=admin_kb())
     await callback.answer()
 
 @router.callback_query(F.data == "a_users")
