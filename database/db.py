@@ -50,7 +50,8 @@ def init_db():
         stars_amount INTEGER,
         telegram_payload TEXT,
         status TEXT,
-        timestamp TEXT
+        timestamp TEXT,
+        plan TEXT
     )
     ''')
     
@@ -193,13 +194,43 @@ def set_user_plan(user_id, plan):
 def add_premium(user_id, days, plan='premium'):
     try:
         new_date = (datetime.now() + timedelta(days=days)).isoformat()
+        # Обновляем и premium_until, и plan
         cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
                     (new_date, plan, user_id))
         conn.commit()
         print(f"✅ Выдан {plan} на {days} дней для {user_id}")
+        
+        # Проверяем
+        cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        print(f"📊 Проверка: plan={result[0]}, until={result[1]}")
         return True
     except Exception as e:
         print(f"⚠️ Ошибка add_premium: {e}")
+        return False
+
+def remove_premium(user_id):
+    try:
+        cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def block_user(user_id):
+    try:
+        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def unblock_user(user_id):
+    try:
+        cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
         return False
 
 def can_request(user_id):
@@ -316,7 +347,7 @@ def get_image_stats(user_id):
     try:
         reset_image_count_if_needed(user_id)
         user = get_user(user_id)
-        if not user: return 0, 3, False
+        if not user: return 0, 3, False, 'basic'
         used = 0
         if len(user) > 8 and user[8]:
             try:
