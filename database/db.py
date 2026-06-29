@@ -7,7 +7,12 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # ПРИНУДИТЕЛЬНО СОЗДАЁМ ВСЕ ТАБЛИЦЫ
+    # ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БД ЕСЛИ НЕТ ТАБЛИЦ
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals'")
+    if not cursor.fetchone():
+        print("⚠️ Таблица referrals не найдена, создаём заново...")
+    
+    # СОЗДАЁМ ВСЕ ТАБЛИЦЫ
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -73,7 +78,7 @@ def init_db():
     )
     ''')
     
-    # Проверяем и добавляем недостающие колонки в users
+    # Проверяем колонки в users
     cursor.execute("PRAGMA table_info(users)")
     existing_cols = [row[1] for row in cursor.fetchall()]
     
