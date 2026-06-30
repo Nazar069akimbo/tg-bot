@@ -61,8 +61,7 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    user = ensure_user(user_id, message.from_user.username or "")
-    if not user: return await message.answer("❌ Нажми /start", reply_markup=main_menu())
+    ensure_user(user_id, message.from_user.username or "")
     ok, rem = can_request(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
@@ -74,7 +73,6 @@ async def stats_cmd(message: types.Message):
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
     user = ensure_user(user_id, message.from_user.username or "")
-    if not user: return await message.answer("❌ Нажми /start", reply_markup=main_menu())
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
@@ -99,7 +97,6 @@ async def subscribe_cmd(message: types.Message):
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
     user = ensure_user(user_id, message.from_user.username or "")
-    if not user: return await message.answer("❌ Нажми /start", reply_markup=main_menu())
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         count = cursor.fetchone()[0] or 0
@@ -208,7 +205,6 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# === CALLBACK'и ===
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -220,16 +216,22 @@ async def set_mode(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await stats_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await profile_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await referral_cmd(callback.message)
     await callback.answer()
 
@@ -243,7 +245,6 @@ async def help_cb(callback: types.CallbackQuery):
     await help_cmd(callback.message)
     await callback.answer()
 
-# 🔥 ИСПРАВЛЕННЫЙ leaderboard - правильная работа с эмодзи
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
     ensure_user(callback.from_user.id, callback.from_user.username or "")
@@ -269,7 +270,6 @@ async def back_main_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("🤖 **Vertex AI**\n\nПросто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
-# === ПЛАТЕЖИ ===
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -317,7 +317,6 @@ async def payment_success(message: types.Message):
     else:
         await message.answer("❌ Ошибка активации")
 
-# === АДМИНКА ===
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
     if is_admin(message.from_user.id):
@@ -331,7 +330,6 @@ async def admin_code_cmd(message: types.Message):
         add_admin(message.from_user.id)
         await message.answer("✅ Вы админ!", reply_markup=admin_kb())
 
-# 🔥 ИСПРАВЛЕННЫЙ admin_panel_cb - правильная проверка админа
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
     if is_admin(callback.from_user.id):

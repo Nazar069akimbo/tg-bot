@@ -163,7 +163,7 @@ def is_premium(user_id):
 def get_user_plan(user_id):
     user = get_user(user_id)
     if user and len(user) > 9:
-        plan = user[9]  # ✅ правильный индекс
+        plan = user[9]
         if plan in ['premium', 'premium_deluxe']:
             return plan
     return 'basic'
@@ -317,23 +317,21 @@ def get_stats():
         return total, prem, req
     except: return 0, 0, 0
 
-# 🔥 ИСПРАВЛЕННАЯ ФУНКЦИЯ - правильные индексы
 def is_trial_active(user_id):
     try:
         user = get_user(user_id)
         if not user or len(user) < 11: return False
-        trial_start = user[10] if len(user) > 10 else None  # ✅ trial_start
+        trial_start = user[10] if len(user) > 10 else None
         if not trial_start: return False
         start_date = datetime.fromisoformat(trial_start)
         return (datetime.now() - start_date).days < 2
     except: return False
 
-# 🔥 ИСПРАВЛЕННАЯ ФУНКЦИЯ - правильные индексы
 def get_trial_remaining(user_id):
     if not is_trial_active(user_id): return 0
     user = get_user(user_id)
     if not user or len(user) < 12: return 0
-    trial_used = user[11] if user[11] else 0  # ✅ trial_used
+    trial_used = user[11] if user[11] else 0
     trial_used = int(trial_used) if trial_used else 0
     return max(0, 5 - trial_used)
 
