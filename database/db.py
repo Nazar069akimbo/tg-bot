@@ -89,7 +89,9 @@ def init_db():
         if col not in existing_cols:
             try:
                 cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-            except: pass
+                print(f"✅ Добавлена колонка {col}")
+            except Exception as e:
+                print(f"⚠️ Ошибка добавления {col}: {e}")
     
     default_settings = [
         ('free_input_chars', '500'),
@@ -113,21 +115,29 @@ def get_user(user_id):
     try:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return cursor.fetchone()
-    except: return None
+    except Exception as e:
+        print(f"⚠️ Ошибка get_user({user_id}): {e}")
+        return None
 
 def create_user(user_id, username):
     try:
+        print(f"📝 create_user: user_id={user_id}, username={username}")
         now = datetime.now().isoformat()
         cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-        if cursor.fetchone(): return True
+        if cursor.fetchone():
+            print(f"ℹ️ Пользователь {user_id} уже существует")
+            return True
         cursor.execute("""
             INSERT INTO users 
             (user_id, username, joined, trial_start, trial_active, last_image_reset) 
             VALUES (?, ?, ?, ?, ?, ?)
         """, (user_id, username, now, now, 1, now))
         conn.commit()
+        print(f"✅ Создан пользователь {user_id}")
         return True
-    except: return False
+    except Exception as e:
+        print(f"❌ Ошибка create_user: {e}")
+        return False
 
 def add_referral(referrer_id, referred_id):
     try:
@@ -136,21 +146,26 @@ def add_referral(referrer_id, referred_id):
         conn.commit()
         cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
         conn.commit()
+        print(f"✅ Реферал: {referrer_id} <- {referred_id}")
         return True
-    except: return False
+    except Exception as e:
+        print(f"⚠️ Ошибка add_referral: {e}")
+        return False
 
 def is_admin(user_id):
     try:
         cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
         return cursor.fetchone() is not None
-    except: return False
+    except:
+        return False
 
 def add_admin(user_id):
     try:
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def is_premium(user_id):
     try:
@@ -158,7 +173,8 @@ def is_premium(user_id):
         if not user: return False
         premium_until = user[3] if len(user) > 3 else None
         return premium_until and datetime.now().isoformat() < premium_until
-    except: return False
+    except:
+        return False
 
 def get_user_plan(user_id):
     user = get_user(user_id)
@@ -173,7 +189,8 @@ def set_user_plan(user_id, plan):
         cursor.execute("UPDATE users SET plan = ? WHERE user_id = ?", (plan, user_id))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def add_premium(user_id, days, plan='premium'):
     try:
@@ -181,29 +198,35 @@ def add_premium(user_id, days, plan='premium'):
         cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
                     (new_date, plan, user_id))
         conn.commit()
+        print(f"✅ Выдан {plan} на {days} дней для {user_id}")
         return True
-    except: return False
+    except Exception as e:
+        print(f"⚠️ Ошибка add_premium: {e}")
+        return False
 
 def remove_premium(user_id):
     try:
         cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def block_user(user_id):
     try:
         cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def unblock_user(user_id):
     try:
         cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def can_request(user_id):
     try:
@@ -213,21 +236,24 @@ def can_request(user_id):
         used = user[4] if len(user) > 4 and user[4] else 0
         used = int(used) if used else 0
         return used < 10, 10 - used
-    except: return True, 10
+    except:
+        return True, 10
 
 def add_request(user_id):
     try:
         cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def get_setting(key):
     try:
         cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
         r = cursor.fetchone()
         if r: return r[0]
-    except: pass
+    except:
+        pass
     defaults = {
         'free_input_chars': '500',
         'free_output_words': '50',
@@ -246,7 +272,8 @@ def set_setting(key, value):
         cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def reset_image_count_if_needed(user_id):
     try:
@@ -264,7 +291,8 @@ def reset_image_count_if_needed(user_id):
                 cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
                               (today.isoformat(), user_id))
                 conn.commit()
-    except: pass
+    except:
+        pass
 
 def get_image_limit(user_id):
     plan = get_user_plan(user_id)
@@ -284,7 +312,8 @@ def can_generate_image(user_id):
         used = int(used) if used else 0
         limit = get_image_limit(user_id)
         return used < limit, limit - used
-    except: return True, 3
+    except:
+        return True, 3
 
 def get_image_stats(user_id):
     try:
@@ -297,14 +326,17 @@ def get_image_stats(user_id):
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
         return used, limit, prem, plan
-    except: return 0, 3, False, 'basic'
+    except Exception as e:
+        print(f"⚠️ Ошибка get_image_stats: {e}")
+        return 0, 3, False, 'basic'
 
 def add_image_request(user_id):
     try:
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def get_stats():
     try:
@@ -315,7 +347,8 @@ def get_stats():
         cursor.execute("SELECT SUM(total_requests) FROM users")
         req = cursor.fetchone()[0] or 0
         return total, prem, req
-    except: return 0, 0, 0
+    except:
+        return 0, 0, 0
 
 def is_trial_active(user_id):
     try:
@@ -325,7 +358,8 @@ def is_trial_active(user_id):
         if not trial_start: return False
         start_date = datetime.fromisoformat(trial_start)
         return (datetime.now() - start_date).days < 2
-    except: return False
+    except:
+        return False
 
 def get_trial_remaining(user_id):
     if not is_trial_active(user_id): return 0
@@ -340,7 +374,8 @@ def use_trial_image(user_id):
         cursor.execute("UPDATE users SET trial_used = trial_used + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
-    except: return False
+    except:
+        return False
 
 def get_mode(user_id):
     user = get_user(user_id)
