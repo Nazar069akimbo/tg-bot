@@ -116,12 +116,11 @@ def get_user(user_id):
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return cursor.fetchone()
     except Exception as e:
-        print(f"⚠️ Ошибка get_user({user_id}): {e}")
+        print(f"⚠️ Ошибка get_user: {e}")
         return None
 
 def create_user(user_id, username):
     try:
-        print(f"📝 create_user: user_id={user_id}, username={username}")
         now = datetime.now().isoformat()
         cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
         if cursor.fetchone():
@@ -326,8 +325,7 @@ def get_image_stats(user_id):
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
         return used, limit, prem, plan
-    except Exception as e:
-        print(f"⚠️ Ошибка get_image_stats: {e}")
+    except:
         return 0, 3, False, 'basic'
 
 def add_image_request(user_id):
