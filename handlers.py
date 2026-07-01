@@ -29,6 +29,7 @@ def do_backup():
     except:
         pass
 
+# ========== МЕНЮ ==========
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -46,7 +47,7 @@ def admin_kb():
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-# === КОМАНДЫ ===
+# ========== КОМАНДЫ ==========
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -118,10 +119,28 @@ async def referral_cmd(message: types.Message):
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
     ensure_user(message.from_user.id, message.from_user.username or "")
-    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы"
+    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы\n/help — это сообщение"
     await message.answer(text, reply_markup=main_menu())
 
-# === ОБРАБОТКА ТЕКСТА ===
+@router.message(Command("leaderboard"))
+async def leaderboard_cmd(message: types.Message):
+    ensure_user(message.from_user.id, message.from_user.username or "")
+    cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
+    users = cursor.fetchall()
+    if not users:
+        return await message.answer("🏆 Пока нет данных", reply_markup=main_menu())
+    medals = ['🥇', '🥈', '🥉']
+    text = "🏆 **Рейтинг**\n\n" + "\n".join([f"{medals[i] if i < 3 else f'{i+1}.'} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} задач" for i, u in enumerate(users)])
+    await message.answer(text, reply_markup=main_menu())
+
+@router.message(Command("contact_admin"))
+async def contact_admin_cmd(message: types.Message):
+    user_id = message.from_user.id
+    ensure_user(user_id, message.from_user.username or "")
+    user_pages[user_id] = {"state": "waiting_contact"}
+    await message.answer("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
+
+# ========== ОБРАБОТКА ТЕКСТА ==========
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -223,7 +242,7 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# === ВСЕ CALLBACK'и ===
+# ========== ВСЕ CALLBACK'и ==========
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
@@ -265,9 +284,12 @@ async def leaderboard_cb(callback: types.CallbackQuery):
     await leaderboard_cmd(callback.message)
 
 @router.callback_query(F.data == "contact_admin")
-async def contact_cb(callback: types.CallbackQuery):
+async def contact_admin_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
+    user_pages[user_id] = {"state": "waiting_contact"}
+    await callback.message.edit_text("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
     await callback.answer()
-    await contact_admin_cmd(callback.message)
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
@@ -321,7 +343,7 @@ async def payment_success(message: types.Message):
     else:
         await message.answer("❌ Ошибка активации")
 
-# === АДМИНКА ===
+# ========== АДМИНКА ==========
 
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
@@ -428,6 +450,8 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]))
     await callback.answer()
+
+# ========== ОБРАБОТКА АДМИН-ВВОДА ==========
 
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
