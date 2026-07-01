@@ -90,8 +90,8 @@ def init_db():
             try:
                 cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
                 print(f"✅ Добавлена колонка {col}")
-            except Exception as e:
-                print(f"⚠️ Ошибка добавления {col}: {e}")
+            except:
+                pass
     
     default_settings = [
         ('free_input_chars', '500'),
@@ -115,8 +115,7 @@ def get_user(user_id):
     try:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return cursor.fetchone()
-    except Exception as e:
-        print(f"⚠️ Ошибка get_user: {e}")
+    except:
         return None
 
 def create_user(user_id, username):
@@ -124,7 +123,6 @@ def create_user(user_id, username):
         now = datetime.now().isoformat()
         cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
         if cursor.fetchone():
-            print(f"ℹ️ Пользователь {user_id} уже существует")
             return True
         cursor.execute("""
             INSERT INTO users 
@@ -145,10 +143,8 @@ def add_referral(referrer_id, referred_id):
         conn.commit()
         cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
         conn.commit()
-        print(f"✅ Реферал: {referrer_id} <- {referred_id}")
         return True
-    except Exception as e:
-        print(f"⚠️ Ошибка add_referral: {e}")
+    except:
         return False
 
 def is_admin(user_id):
@@ -169,7 +165,8 @@ def add_admin(user_id):
 def is_premium(user_id):
     try:
         user = get_user(user_id)
-        if not user: return False
+        if not user:
+            return False
         premium_until = user[3] if len(user) > 3 else None
         return premium_until and datetime.now().isoformat() < premium_until
     except:
@@ -199,8 +196,7 @@ def add_premium(user_id, days, plan='premium'):
         conn.commit()
         print(f"✅ Выдан {plan} на {days} дней для {user_id}")
         return True
-    except Exception as e:
-        print(f"⚠️ Ошибка add_premium: {e}")
+    except:
         return False
 
 def remove_premium(user_id):
@@ -230,8 +226,10 @@ def unblock_user(user_id):
 def can_request(user_id):
     try:
         user = get_user(user_id)
-        if not user: return True, 10
-        if is_premium(user_id): return True, 999999
+        if not user:
+            return True, 10
+        if is_premium(user_id):
+            return True, 999999
         used = user[4] if len(user) > 4 and user[4] else 0
         used = int(used) if used else 0
         return used < 10, 10 - used
@@ -250,7 +248,8 @@ def get_setting(key):
     try:
         cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
         r = cursor.fetchone()
-        if r: return r[0]
+        if r:
+            return r[0]
     except:
         pass
     defaults = {
@@ -277,7 +276,8 @@ def set_setting(key, value):
 def reset_image_count_if_needed(user_id):
     try:
         user = get_user(user_id)
-        if not user or len(user) < 14: return
+        if not user or len(user) < 14:
+            return
         last_reset = user[13] if len(user) > 13 else None
         if not last_reset:
             cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
@@ -306,7 +306,8 @@ def can_generate_image(user_id):
     try:
         reset_image_count_if_needed(user_id)
         user = get_user(user_id)
-        if not user: return True, 3
+        if not user:
+            return True, 3
         used = user[8] if len(user) > 8 and user[8] else 0
         used = int(used) if used else 0
         limit = get_image_limit(user_id)
@@ -318,7 +319,8 @@ def get_image_stats(user_id):
     try:
         reset_image_count_if_needed(user_id)
         user = get_user(user_id)
-        if not user: return 0, 3, False, 'basic'
+        if not user:
+            return 0, 3, False, 'basic'
         used = user[8] if len(user) > 8 and user[8] else 0
         used = int(used) if used else 0
         limit = get_image_limit(user_id)
@@ -332,8 +334,10 @@ def add_image_request(user_id):
     try:
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
+        print(f"✅ image_requests увеличен для {user_id}")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка add_image_request: {e}")
         return False
 
 def get_stats():
@@ -351,18 +355,22 @@ def get_stats():
 def is_trial_active(user_id):
     try:
         user = get_user(user_id)
-        if not user or len(user) < 11: return False
+        if not user or len(user) < 11:
+            return False
         trial_start = user[10] if len(user) > 10 else None
-        if not trial_start: return False
+        if not trial_start:
+            return False
         start_date = datetime.fromisoformat(trial_start)
         return (datetime.now() - start_date).days < 2
     except:
         return False
 
 def get_trial_remaining(user_id):
-    if not is_trial_active(user_id): return 0
+    if not is_trial_active(user_id):
+        return 0
     user = get_user(user_id)
-    if not user or len(user) < 12: return 0
+    if not user or len(user) < 12:
+        return 0
     trial_used = user[11] if user[11] else 0
     trial_used = int(trial_used) if trial_used else 0
     return max(0, 5 - trial_used)

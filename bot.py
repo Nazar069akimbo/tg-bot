@@ -2,7 +2,7 @@ import os, sys, asyncio, logging, threading, time
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from flask import Flask, jsonify
+from flask import Flask
 from database.db import init_db, is_admin, add_admin
 from handlers import router
 from backup import GitHubBackup
@@ -23,12 +23,7 @@ app = Flask(__name__)
 @app.route('/')
 @app.route('/healthz')
 def health():
-    # Возвращаем МИНИМАЛЬНЫЙ ответ для cron-job.org
-    return "OK", 200, {'Content-Type': 'text/plain'}
-
-@app.route('/ping')
-def ping():
-    return "pong", 200, {'Content-Type': 'text/plain'}
+    return "OK", 200
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
@@ -36,7 +31,6 @@ def run_flask():
 async def main():
     logger.info("🚀 Запуск...")
     init_db()
-    
     threading.Thread(target=run_flask, daemon=True).start()
     
     backup = GitHubBackup()
@@ -47,8 +41,8 @@ async def main():
             time.sleep(3600)
             try:
                 GitHubBackup().backup_db()
-            except Exception as e:
-                logger.error(f"❌ Бэкап: {e}")
+            except:
+                pass
     threading.Thread(target=backup_loop, daemon=True).start()
     
     if not is_admin(int(os.getenv("ADMIN_ID", 6957852385))):
@@ -62,7 +56,6 @@ async def main():
         types.BotCommand(command="subscribe", description="💎 Premium"),
         types.BotCommand(command="referral", description="👥 Рефералы")
     ])
-    
     logger.info("✅ Бот готов!")
     await dp.start_polling(bot, skip_updates=True)
 
