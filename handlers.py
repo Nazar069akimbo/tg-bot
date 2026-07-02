@@ -29,7 +29,6 @@ def do_backup():
     except:
         pass
 
-# ========== МЕНЮ ==========
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -80,6 +79,9 @@ async def stats_cmd(message: types.Message):
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
     user = ensure_user(user_id, message.from_user.username or "")
+    if not user:
+        await message.answer("❌ Ошибка! Нажмите /start", reply_markup=main_menu())
+        return
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
@@ -119,12 +121,13 @@ async def referral_cmd(message: types.Message):
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
     ensure_user(message.from_user.id, message.from_user.username or "")
-    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы\n/help — это сообщение"
+    text = "❓ **Помощь**\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы"
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("leaderboard"))
 async def leaderboard_cmd(message: types.Message):
-    ensure_user(message.from_user.id, message.from_user.username or "")
+    user_id = message.from_user.id
+    ensure_user(user_id, message.from_user.username or "")
     cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
     users = cursor.fetchall()
     if not users:
@@ -284,7 +287,7 @@ async def leaderboard_cb(callback: types.CallbackQuery):
     await leaderboard_cmd(callback.message)
 
 @router.callback_query(F.data == "contact_admin")
-async def contact_admin_cb(callback: types.CallbackQuery):
+async def contact_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     ensure_user(user_id, callback.from_user.username or "")
     user_pages[user_id] = {"state": "waiting_contact"}
@@ -450,8 +453,6 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]))
     await callback.answer()
-
-# ========== ОБРАБОТКА АДМИН-ВВОДА ==========
 
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
