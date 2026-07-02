@@ -67,7 +67,13 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    ensure_user(user_id, message.from_user.username or "")
+    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ если его нет
+    user = ensure_user(user_id, message.from_user.username or "")
+    if not user:
+        # Если не удалось создать - создаём принудительно
+        create_user(user_id, str(user_id))
+        user = get_user(user_id)
+    
     ok, rem = can_request(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
@@ -78,10 +84,12 @@ async def stats_cmd(message: types.Message):
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
+    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ если его нет
     user = ensure_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("❌ Ошибка! Нажмите /start", reply_markup=main_menu())
-        return
+        create_user(user_id, str(user_id))
+        user = get_user(user_id)
+    
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
@@ -94,7 +102,8 @@ async def profile_cmd(message: types.Message):
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
-    ensure_user(message.from_user.id, message.from_user.username or "")
+    user_id = message.from_user.id
+    ensure_user(user_id, message.from_user.username or "")
     await message.answer(
         "💎 **Выберите тариф**\n\n💎 Premium — 49⭐/мес\n👑 Premium Deluxe — 99⭐/мес",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -154,10 +163,13 @@ async def handle_message(message: types.Message):
     if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact"]:
         await handle_admin_input(message)
         return
+    
+    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ
     user = ensure_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("👋 Нажми /start", reply_markup=main_menu())
-        return
+        create_user(user_id, str(user_id))
+        user = get_user(user_id)
+    
     mode = user_modes.get(user_id, "text")
     if mode == "image":
         await generate_image(message)
