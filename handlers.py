@@ -52,7 +52,7 @@ def admin_kb():
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
-    ensure_user(user_id, username)
+    user = ensure_user(user_id, username)
     
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
@@ -67,12 +67,7 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ если его нет
     user = ensure_user(user_id, message.from_user.username or "")
-    if not user:
-        # Если не удалось создать - создаём принудительно
-        create_user(user_id, str(user_id))
-        user = get_user(user_id)
     
     ok, rem = can_request(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
@@ -84,17 +79,14 @@ async def stats_cmd(message: types.Message):
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
-    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ если его нет
     user = ensure_user(user_id, message.from_user.username or "")
-    if not user:
-        create_user(user_id, str(user_id))
-        user = get_user(user_id)
     
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
     except:
         refs = 0
+    
     used, limit, prem, plan = get_image_stats(user_id)
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     text = f"👤 **Профиль**\n\n🆔 {user[0]}\n📆 {user[2][:10] if user[2] else 'Нет'}\n📊 Запросов: {user[5] or 0}\n👥 Приглашено: {refs}\n💎 План: {plan_names.get(plan, '🔴 Бесплатный')}\n🖼️ Картинки: {used}/{limit}"
@@ -164,13 +156,9 @@ async def handle_message(message: types.Message):
         await handle_admin_input(message)
         return
     
-    # ВСЕГДА СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ
     user = ensure_user(user_id, message.from_user.username or "")
-    if not user:
-        create_user(user_id, str(user_id))
-        user = get_user(user_id)
-    
     mode = user_modes.get(user_id, "text")
+    
     if mode == "image":
         await generate_image(message)
     else:
@@ -195,8 +183,10 @@ async def generate_image(message: types.Message):
     user_id = message.from_user.id
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
+    
     trial_rem = get_trial_remaining(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
+    
     if prem:
         can_gen = used < limit
     elif trial_rem > 0:
@@ -204,8 +194,10 @@ async def generate_image(message: types.Message):
         limit = 5
     else:
         can_gen, _ = can_generate_image(user_id)
+    
     if not can_gen:
         return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /subscribe")
+    
     status_msg = await message.answer("🎨 Генерирую...")
     try:
         user_prompt = message.text
@@ -218,18 +210,21 @@ async def generate_image(message: types.Message):
         enhanced = user_prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
+        
         for p in [10, 25, 45, 60, 75, 90]:
             await asyncio.sleep(0.2)
             try:
                 await status_msg.edit_text(f"🎨 {p}%")
             except:
                 pass
+        
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={"model": IMAGE_MODEL, "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
             timeout=120
         )
+        
         if img_resp.status_code == 200:
             result = img_resp.json()
             img_url = result.get('url')
@@ -240,21 +235,30 @@ async def generate_image(message: types.Message):
                 if img_data.status_code == 200 and len(img_data.content) > 1000:
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
+                    
+                    # === СЧЁТЧИК КАРТИНОК ===
                     if trial_rem > 0:
                         use_trial_image(user_id)
+                        logger.info(f"🎁 Пробная картинка для {user_id}")
                     else:
                         add_image_request(user_id)
+                        logger.info(f"📸 +1 картинка для {user_id}")
+                    
                     do_backup()
+                    
                     new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     plan_emoji = "💎 Premium" if new_plan == 'premium' else "👑 Premium Deluxe" if new_plan == 'premium_deluxe' else "🔴 Бесплатный"
+                    
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
                         caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {new_limit - new_used}\n💎 {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
+        
         await status_msg.edit_text("❌ Не удалось получить картинку")
     except Exception as e:
+        logger.error(f"❌ Ошибка генерации: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 # ========== ВСЕ CALLBACK'и ==========
@@ -270,33 +274,45 @@ async def set_mode(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await stats_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await profile_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await referral_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "premium")
 async def premium_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await subscribe_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "help")
 async def help_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await help_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await leaderboard_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data == "contact_admin")
 async def contact_cb(callback: types.CallbackQuery):
@@ -308,8 +324,10 @@ async def contact_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
-    await callback.answer()
+    user_id = callback.from_user.id
+    ensure_user(user_id, callback.from_user.username or "")
     await start_cmd(callback.message)
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
