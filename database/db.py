@@ -10,7 +10,7 @@ if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
         print("🗑️ Старая БД удалена")
     except:
-        print("⚠️ Не удалось удалить БД, перезаписываем...")
+        print("⚠️ Не удалось удалить БД")
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
@@ -18,7 +18,7 @@ cursor = conn.cursor()
 def init_db():
     # СОЗДАЁМ ТАБЛИЦЫ
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -37,7 +37,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -47,14 +47,14 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
+    CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -66,7 +66,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
+    CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -77,7 +77,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS settings (
+    CREATE TABLE settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )

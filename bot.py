@@ -33,8 +33,10 @@ async def main():
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
     
-    backup = GitHubBackup()
-    backup.restore_latest_backup()
+    # ВРЕМЕННО ОТКЛЮЧАЕМ ВОССТАНОВЛЕНИЕ БЕКАПА
+    # backup = GitHubBackup()
+    # backup.restore_latest_backup()
+    logger.info("⚠️ Восстановление бекапа ОТКЛЮЧЕНО для создания чистой БД")
     
     def backup_loop():
         while True:
