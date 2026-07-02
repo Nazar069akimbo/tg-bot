@@ -327,14 +327,21 @@ def get_image_stats(user_id):
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
         return used, limit, prem, plan
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка get_image_stats: {e}")
         return 0, 3, False, 'basic'
 
 def add_image_request(user_id):
     try:
+        # ПРЯМОЕ ОБНОВЛЕНИЕ СЧЁТЧИКА
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
-        print(f"✅ image_requests увеличен для {user_id}")
+        
+        # Проверяем что получилось
+        cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            print(f"✅ image_requests для {user_id} теперь = {result[0]}")
         return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
