@@ -3,12 +3,19 @@ from datetime import datetime, timedelta
 
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
+
+# ПЕРЕСОЗДАЁМ БАЗУ С НУЛЯ
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+    print("🗑️ Старая БД удалена")
+
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
+    # СОЗДАЁМ ТАБЛИЦУ users СО ВСЕМИ КОЛОНКАМИ
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -27,7 +34,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+    CREATE TABLE referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -37,14 +44,14 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
+    CREATE TABLE admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -56,7 +63,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS messages_to_admin (
+    CREATE TABLE messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -67,32 +74,13 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS settings (
+    CREATE TABLE settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
     ''')
     
-    cursor.execute("PRAGMA table_info(users)")
-    existing_cols = [row[1] for row in cursor.fetchall()]
-    
-    columns_to_add = {
-        'image_requests': 'INTEGER DEFAULT 0',
-        'plan': 'TEXT DEFAULT "basic"',
-        'trial_start': 'TEXT',
-        'trial_used': 'INTEGER DEFAULT 0',
-        'trial_active': 'INTEGER DEFAULT 0',
-        'last_image_reset': 'TEXT'
-    }
-    
-    for col, dtype in columns_to_add.items():
-        if col not in existing_cols:
-            try:
-                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
-                print(f"✅ Добавлена колонка {col}")
-            except:
-                pass
-    
+    # Настройки по умолчанию
     default_settings = [
         ('free_input_chars', '500'),
         ('free_output_words', '50'),
@@ -109,13 +97,14 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     
     conn.commit()
-    print("✅ База данных инициализирована")
+    print("✅ База данных создана с нуля")
 
 def get_user(user_id):
     try:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return cursor.fetchone()
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка get_user: {e}")
         return None
 
 def create_user(user_id, username):
@@ -333,11 +322,8 @@ def get_image_stats(user_id):
 
 def add_image_request(user_id):
     try:
-        # ПРЯМОЕ ОБНОВЛЕНИЕ СЧЁТЧИКА
         cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
         conn.commit()
-        
-        # Проверяем что получилось
         cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
         result = cursor.fetchone()
         if result:
