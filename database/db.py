@@ -4,18 +4,21 @@ from datetime import datetime, timedelta
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# ПЕРЕСОЗДАЁМ БАЗУ С НУЛЯ
+# УДАЛЯЕМ СТАРУЮ БД
 if os.path.exists(DB_PATH):
-    os.remove(DB_PATH)
-    print("🗑️ Старая БД удалена")
+    try:
+        os.remove(DB_PATH)
+        print("🗑️ Старая БД удалена")
+    except:
+        print("⚠️ Не удалось удалить БД, перезаписываем...")
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
-    # СОЗДАЁМ ТАБЛИЦУ users СО ВСЕМИ КОЛОНКАМИ
+    # СОЗДАЁМ ТАБЛИЦЫ
     cursor.execute('''
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         joined TEXT,
@@ -34,7 +37,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE referrals (
+    CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
@@ -44,14 +47,14 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE admins (
+    CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
         added_at TEXT
     )
     ''')
     
     cursor.execute('''
-    CREATE TABLE payments (
+    CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         stars_amount INTEGER,
@@ -63,7 +66,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE messages_to_admin (
+    CREATE TABLE IF NOT EXISTS messages_to_admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
@@ -74,7 +77,7 @@ def init_db():
     ''')
     
     cursor.execute('''
-    CREATE TABLE settings (
+    CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
@@ -96,6 +99,10 @@ def init_db():
     for key, value in default_settings:
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     
+    # Добавляем админа
+    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
+                   (6957852385, datetime.now().isoformat()))
+    
     conn.commit()
     print("✅ База данных создана с нуля")
 
@@ -104,7 +111,7 @@ def get_user(user_id):
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return cursor.fetchone()
     except Exception as e:
-        print(f"⚠️ Ошибка get_user: {e}")
+        print(f"⚠️ Ошибка get_user({user_id}): {e}")
         return None
 
 def create_user(user_id, username):
@@ -115,14 +122,14 @@ def create_user(user_id, username):
             return True
         cursor.execute("""
             INSERT INTO users 
-            (user_id, username, joined, trial_start, trial_active, last_image_reset) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, username, now, now, 1, now))
+            (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, username, now, now, 1, now, 0, 0, 0))
         conn.commit()
         print(f"✅ Создан пользователь {user_id}")
         return True
     except Exception as e:
-        print(f"❌ Ошибка create_user: {e}")
+        print(f"❌ Ошибка create_user({user_id}): {e}")
         return False
 
 def add_referral(referrer_id, referred_id):
@@ -133,7 +140,8 @@ def add_referral(referrer_id, referred_id):
         cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка add_referral: {e}")
         return False
 
 def is_admin(user_id):

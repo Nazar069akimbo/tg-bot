@@ -18,16 +18,22 @@ PROMPT_MODEL = "gpt-4.1-nano"
 
 def force_create_user(user_id, username=None):
     """ПРИНУДИТЕЛЬНО создаёт пользователя"""
-    user = get_user(user_id)
-    if not user:
-        logger.info(f"👤 Принудительно создаём {user_id}")
-        create_user(user_id, username or str(user_id))
+    try:
         user = get_user(user_id)
         if user:
-            logger.info(f"✅ Пользователь {user_id} создан")
-        else:
-            logger.error(f"❌ НЕ УДАЛОСЬ создать {user_id}")
-    return user
+            return user
+        logger.info(f"👤 Создаём пользователя {user_id}")
+        result = create_user(user_id, username or str(user_id))
+        if result:
+            user = get_user(user_id)
+            if user:
+                logger.info(f"✅ Пользователь {user_id} создан")
+                return user
+        logger.error(f"❌ НЕ УДАЛОСЬ создать {user_id}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка force_create_user: {e}")
+        return None
 
 def ensure_user(user_id, username=None):
     user = get_user(user_id)
@@ -65,7 +71,10 @@ def admin_kb():
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
-    force_create_user(user_id, username)
+    user = force_create_user(user_id, username)
+    if not user:
+        await message.answer("❌ Ошибка регистрации. Попробуйте позже.")
+        return
     
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
@@ -80,7 +89,10 @@ async def start_cmd(message: types.Message):
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    force_create_user(user_id, message.from_user.username or "")
+    user = force_create_user(user_id, message.from_user.username or "")
+    if not user:
+        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        return
     
     ok, rem = can_request(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
@@ -92,30 +104,21 @@ async def stats_cmd(message: types.Message):
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
-    logger.info(f"👤 PROFILE_CMD: user_id={user_id}")
-    
-    # ПРИНУДИТЕЛЬНО создаём пользователя
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
-        logger.error(f"❌ PROFILE_CMD: не удалось создать {user_id}")
         await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
         return
-    
-    logger.info(f"👤 PROFILE_CMD: user={user}")
     
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
-    except Exception as e:
-        logger.error(f"⚠️ Ошибка рефералов: {e}")
+    except:
         refs = 0
     
     used, limit, prem, plan = get_image_stats(user_id)
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-    
     text = f"👤 **Профиль**\n\n🆔 {user[0]}\n📆 {user[2][:10] if user[2] else 'Нет'}\n📊 Запросов: {user[5] or 0}\n👥 Приглашено: {refs}\n💎 План: {plan_names.get(plan, '🔴 Бесплатный')}\n🖼️ Картинки: {used}/{limit}"
     await message.answer(text, reply_markup=main_menu())
-    logger.info(f"✅ PROFILE_CMD: отправлен для {user_id}")
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
@@ -132,7 +135,11 @@ async def subscribe_cmd(message: types.Message):
 @router.message(Command("referral"))
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
-    force_create_user(user_id, message.from_user.username or "")
+    user = force_create_user(user_id, message.from_user.username or "")
+    if not user:
+        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        return
+    
     try:
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         count = cursor.fetchone()[0] or 0
@@ -181,9 +188,12 @@ async def handle_message(message: types.Message):
         await handle_admin_input(message)
         return
     
-    force_create_user(user_id, message.from_user.username or "")
-    mode = user_modes.get(user_id, "text")
+    user = force_create_user(user_id, message.from_user.username or "")
+    if not user:
+        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        return
     
+    mode = user_modes.get(user_id, "text")
     if mode == "image":
         await generate_image(message)
     else:
@@ -264,7 +274,6 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    # === УВЕЛИЧИВАЕМ СЧЁТЧИК ===
                     if trial_rem > 0:
                         use_trial_image(user_id)
                         logger.info(f"🎁 Пробная картинка для {user_id}")
@@ -291,12 +300,15 @@ async def generate_image(message: types.Message):
         logger.error(f"❌ Ошибка генерации: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ========== CALLBACK'и ==========
+# ========== ВСЕ CALLBACK'и ==========
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    force_create_user(user_id, callback.from_user.username or "")
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
     mode = callback.data.replace("mode_", "")
     user_modes[user_id] = mode
     await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
@@ -305,29 +317,30 @@ async def set_mode(callback: types.CallbackQuery):
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    force_create_user(user_id, callback.from_user.username or "")
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
     await stats_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    logger.info(f"👤 PROFILE_CB: user_id={user_id}")
-    
-    # ПРИНУДИТЕЛЬНО создаём пользователя
     user = force_create_user(user_id, callback.from_user.username or "")
     if not user:
-        logger.error(f"❌ PROFILE_CB: не удалось создать {user_id}")
-        await callback.answer("❌ Ошибка! Попробуйте позже.", show_alert=True)
+        await callback.answer("❌ Ошибка!", show_alert=True)
         return
-    
     await profile_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    force_create_user(user_id, callback.from_user.username or "")
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
     await referral_cmd(callback.message)
     await callback.answer()
 
