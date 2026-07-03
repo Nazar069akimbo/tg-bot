@@ -40,7 +40,8 @@ def init_db():
             last_image_reset TEXT,
             referral_bonus_images INTEGER DEFAULT 0,
             referral_bonus_requests INTEGER DEFAULT 0,
-            paid_premium INTEGER DEFAULT 0
+            paid_premium INTEGER DEFAULT 0,
+            caps_used INTEGER DEFAULT 0
         )
         ''')
         
@@ -104,7 +105,8 @@ def init_db():
             'last_image_reset': 'TEXT',
             'referral_bonus_images': 'INTEGER DEFAULT 0',
             'referral_bonus_requests': 'INTEGER DEFAULT 0',
-            'paid_premium': 'INTEGER DEFAULT 0'
+            'paid_premium': 'INTEGER DEFAULT 0',
+            'caps_used': 'INTEGER DEFAULT 0'
         }
         
         for col, dtype in columns_to_add.items():
@@ -161,9 +163,9 @@ def create_user(user_id, username):
                 return True
             cursor.execute("""
                 INSERT INTO users 
-                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests, paid_premium) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0, 0))
+                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests, paid_premium, caps_used) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0, 0, 0))
             print(f"✅ Создан пользователь {user_id}")
             return True
     except Exception as e:
@@ -348,6 +350,7 @@ def add_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+            cursor.execute("UPDATE users SET caps_used = caps_used + 100 WHERE user_id = ?", (user_id,))
             return True
     except:
         return False
@@ -451,6 +454,7 @@ def add_image_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
+            cursor.execute("UPDATE users SET caps_used = caps_used + 1700 WHERE user_id = ?", (user_id,))
             return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
@@ -470,9 +474,11 @@ def get_stats():
             images = cursor.fetchone()[0] or 0
             cursor.execute("SELECT COUNT(*) FROM users WHERE paid_premium = 1")
             paid = cursor.fetchone()[0] or 0
-            return total, prem, req, images, paid
+            cursor.execute("SELECT SUM(caps_used) FROM users")
+            caps = cursor.fetchone()[0] or 0
+            return total, prem, req, images, paid, caps
     except:
-        return 0, 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0
 
 def get_daily_stats(days=30):
     try:

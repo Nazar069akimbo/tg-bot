@@ -6,6 +6,8 @@ from ai.client import solve_problem
 from backup import GitHubBackup
 import logging, secrets, os, requests, asyncio
 from datetime import datetime
+from io import BytesIO
+import matplotlib.pyplot as plt
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -15,6 +17,10 @@ ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
+
+# Настройка matplotlib
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['font.size'] = 10
 
 def force_create_user(user_id, username=None):
     try:
@@ -50,18 +56,31 @@ def get_plan_emoji(plan):
     else:
         return "🔴 Бесплатный"
 
-# ========== ГЛАВНОЕ МЕНЮ (как у конкурента) ==========
+# ========== МЕНЮ ==========
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
-        [InlineKeyboardButton(text="🌐 Поиск", callback_data="search_mode"), InlineKeyboardButton(text="🎬 Видео", callback_data="video_mode")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="referral"), InlineKeyboardButton(text="💎 Premium", callback_data="premium")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
-        [InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin"), InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin"), InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+        [InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"), InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
     ])
 
-# ========== КОМАНДЫ (как у конкурента) ==========
+def admin_kb():
+    new_messages = get_messages_count()
+    badge = f" ({new_messages})" if new_messages > 0 else ""
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 Графики", callback_data="a_charts")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
+        [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
+        [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+
+# ========== КОМАНДЫ ==========
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -69,7 +88,7 @@ async def start_cmd(message: types.Message):
     username = message.from_user.username or ""
     user = force_create_user(user_id, username)
     if not user:
-        await message.answer("❌ Ошибка регистрации. Попробуйте позже.")
+        await message.answer("❌ Ошибка регистрации.")
         return
     
     args = message.text.split()
@@ -87,35 +106,35 @@ async def start_cmd(message: types.Message):
         "💎 **Premium:** безлимит + 50 картинок/день (49⭐)\n"
         "👑 **Premium Deluxe:** безлимит + 200 картинок/день (99⭐)\n\n"
         "👥 Приведи друга → +3 картинки и +10 запросов\n\n"
-        "📱 Просто напиши свой вопрос — ИИ ответит!\n\n"
-        "📋 **Команды:**\n"
-        "/profile — мой профиль\n"
-        "/premium — Premium\n"
-        "/referral — рефералы\n"
-        "/help — помощь"
+        "📱 Просто напиши свой вопрос!"
     )
     await message.answer(text, reply_markup=main_menu())
 
-@router.message(Command("help"))
-async def help_cmd(message: types.Message):
+@router.message(Command("stats"))
+async def stats_cmd(message: types.Message):
+    user_id = message.from_user.id
+    user = force_create_user(user_id, message.from_user.username or "")
+    if not user:
+        await message.answer("❌ Ошибка!", reply_markup=main_menu())
+        return
+    
+    ok, rem = can_request(user_id)
+    used, limit, prem, plan = get_image_stats(user_id)
+    trial = get_trial_remaining(user_id)
+    total_requests = user[5] if len(user) > 5 and user[5] else 0
+    total_images = user[8] if len(user) > 8 and user[8] else 0
+    caps_used = user[16] if len(user) > 16 and user[16] else 0
+    
+    plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+    
     text = (
-        "❓ **Помощь по боту Vertex AI**\n\n"
-        "📝 **Генерация текста**\n"
-        "Просто напиши вопрос в чат\n\n"
-        "🖼️ **Генерация картинок**\n"
-        "Нажми 'Картинка' или напиши запрос в режиме картинки\n\n"
-        "🌐 **Поиск в интернете**\n"
-        "Нажми 'Поиск' и задай вопрос\n\n"
-        "👥 **Реферальная система**\n"
-        "/referral — получить ссылку\n"
-        "Бонус: +3 картинки и +10 запросов за друга\n\n"
-        "💎 **Premium**\n"
-        "/premium — подключить\n"
-        "Безлимит текста, 50-200 картинок/день\n\n"
-        "📊 **Статистика**\n"
-        "/profile — посмотреть использование\n\n"
-        "📩 **Поддержка**\n"
-        "Нажми 'Поддержка' или напиши @i_abramov_gpt"
+        f"📊 **Статистика**\n\n"
+        f"📝 Запросов осталось: {rem if not prem else '♾️ Безлимит'}\n"
+        f"🖼️ Картинок сегодня: {used}/{limit}\n"
+        f"📊 Всего запросов: {total_requests}\n"
+        f"🖼️ Всего картинок: {total_images}\n"
+        f"💰 Потрачено CAPS: {caps_used}\n"
+        f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -124,7 +143,7 @@ async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
     used, limit, prem, plan = get_image_stats(user_id)
@@ -132,10 +151,11 @@ async def profile_cmd(message: types.Message):
     total_images = user[8] if len(user) > 8 and user[8] else 0
     refs = get_referral_count(user_id)
     bonus_images, bonus_requests = get_referral_bonuses(user_id)
+    caps_used = user[16] if len(user) > 16 and user[16] else 0
     plan_name = get_plan_emoji(plan)
     
     text = (
-        f"👤 **Мой профиль**\n\n"
+        f"👤 **Профиль**\n\n"
         f"🆔 ID: `{user[0]}`\n"
         f"💎 План: {plan_name}\n"
         f"📝 Запросов: {total_requests}\n"
@@ -143,13 +163,10 @@ async def profile_cmd(message: types.Message):
         f"🖼️ Сегодня: {used}/{limit}\n"
         f"👥 Приглашено: {refs}\n"
         f"🎁 Бонусы: {bonus_images} карт, {bonus_requests} запросов\n"
+        f"💰 Потрачено CAPS: {caps_used}\n"
         f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}"
     )
     await message.answer(text, reply_markup=main_menu())
-
-@router.message(Command("account"))
-async def account_cmd(message: types.Message):
-    await profile_cmd(message)
 
 @router.message(Command("premium"))
 async def premium_cmd(message: types.Message):
@@ -157,19 +174,18 @@ async def premium_cmd(message: types.Message):
     force_create_user(user_id, message.from_user.username or "")
     
     text = (
-        "💎 **Premium подписка**\n\n"
+        "💎 **Premium**\n\n"
         "🔴 **Бесплатный** — 0⭐\n"
         "• 10 текстовых запросов/день\n"
         "• 3 картинки/день\n\n"
         "💎 **Premium** — 49⭐/мес\n"
-        "• Безлимит текстовых запросов\n"
+        "• Безлимит текста\n"
         "• 50 картинок/день\n"
         "• Приоритетная обработка\n\n"
         "👑 **Premium Deluxe** — 99⭐/мес\n"
-        "• Безлимит текстовых запросов\n"
+        "• Безлимит текста\n"
         "• 200 картинок/день\n"
-        "• Эксклюзивные промпты\n"
-        "• VIP-поддержка 24/7"
+        "• VIP-поддержка"
     )
     await message.answer(
         text,
@@ -179,16 +195,12 @@ async def premium_cmd(message: types.Message):
         ])
     )
 
-@router.message(Command("subscribe"))
-async def subscribe_cmd(message: types.Message):
-    await premium_cmd(message)
-
 @router.message(Command("referral"))
 async def referral_cmd(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
     count = get_referral_count(user_id)
@@ -196,146 +208,65 @@ async def referral_cmd(message: types.Message):
     link = f"https://t.me/Vertex1bot?start={user_id}"
     
     text = (
-        f"👥 **Реферальная система**\n\n"
+        f"👥 **Рефералы**\n\n"
         f"👤 Приглашено: {count}\n"
-        f"🎁 Бонусы:\n"
-        f"   🖼️ +{bonus_images} картинок\n"
-        f"   📝 +{bonus_requests} запросов\n\n"
-        f"🔗 Твоя ссылка:\n`{link}`\n\n"
-        f"📤 Отправь ссылку друзьям!"
+        f"🎁 Бонусы: +{bonus_images} карт, +{bonus_requests} запросов\n\n"
+        f"🔗 Твоя ссылка:\n`{link}`"
     )
     await message.answer(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся к Vertex AI!")],
+            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ])
     )
 
-@router.message(Command("settings"))
-async def settings_cmd(message: types.Message):
-    user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
-        return
-    
-    mode = user_modes.get(user_id, "text")
-    mode_text = "🧠 Текст" if mode == "text" else "🖼️ Картинка"
-    
+@router.message(Command("help"))
+async def help_cmd(message: types.Message):
     text = (
-        f"⚙️ **Настройки**\n\n"
-        f"📊 Текущий режим: {mode_text}\n"
-        f"💎 План: {get_plan_emoji(get_user_plan(user_id))}\n\n"
-        f"📋 Доступные настройки:\n"
-        f"• Режим работы: Текст / Картинка\n"
-        f"• Язык: Русский\n"
-        f"• Контекст: Включён\n\n"
-        f"Изменить режим можно в главном меню."
+        "❓ **Помощь**\n\n"
+        "📝 **Текст** — просто напиши вопрос\n"
+        "🖼️ **Картинка** — нажми кнопку и опиши\n"
+        "👥 **Рефералы** — приглашай друзей\n"
+        "💎 **Premium** — безлимит\n\n"
+        "📋 Команды:\n"
+        "/start — меню\n"
+        "/profile — профиль\n"
+        "/stats — статистика\n"
+        "/premium — Premium\n"
+        "/referral — рефералы"
     )
     await message.answer(text, reply_markup=main_menu())
 
-@router.message(Command("deletecontext"))
-async def delete_context_cmd(message: types.Message):
+@router.message(Command("leaderboard"))
+async def leaderboard_cmd(message: types.Message):
     user_id = message.from_user.id
-    user_pages.pop(user_id, None)
-    await message.answer(
-        "🗑️ Контекст удалён.\n"
-        "Теперь бот не будет учитывать предыдущие сообщения.",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("s"))
-async def search_cmd(message: types.Message):
-    user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
-        return
+    force_create_user(user_id, message.from_user.username or "")
     
-    user_modes[user_id] = "search"
-    await message.answer(
-        "🌐 **Режим поиска**\n\n"
-        "Напиши свой вопрос, и я найду ответ в интернете.\n\n"
-        "⏹ Чтобы выйти из режима поиска, нажми /deletecontext",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("photo"))
-async def photo_cmd(message: types.Message):
-    user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
-        return
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
+        users = cursor.fetchall()
     
-    user_modes[user_id] = "image"
-    await message.answer(
-        "🖼️ **Режим генерации картинок**\n\n"
-        "Напиши описание того, что хочешь создать.\n\n"
-        "💡 Пример: 'Космический корабль на фоне галактики'\n\n"
-        "⏹ Чтобы выйти, нажми /deletecontext",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("video"))
-async def video_cmd(message: types.Message):
-    await message.answer(
-        "🎬 **Генерация видео**\n\n"
-        "🚧 Функция в разработке!\n\n"
-        "Скоро здесь появится возможность создавать видео.\n"
-        "Следите за обновлениями!",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("music"))
-async def music_cmd(message: types.Message):
-    await message.answer(
-        "🎸 **Генерация музыки**\n\n"
-        "🚧 Функция в разработке!\n\n"
-        "Скоро здесь появится возможность создавать песни.\n"
-        "Следите за обновлениями!",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("slides"))
-async def slides_cmd(message: types.Message):
-    await message.answer(
-        "📊 **Презентации**\n\n"
-        "🚧 Функция в разработке!\n\n"
-        "Скоро здесь появится возможность создавать презентации.\n"
-        "Следите за обновлениями!",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("model"))
-async def model_cmd(message: types.Message):
-    await message.answer(
-        "🧠 **Выбор модели**\n\n"
-        "Текущая модель: **GPT-4o mini**\n\n"
-        "Доступные модели:\n"
-        "• GPT-4o mini (бесплатно)\n"
-        "• DeepSeek V4 (бесплатно)\n"
-        "• Gemini 3.1 Flash (бесплатно)\n"
-        "• GPT-5.5 (Premium)\n"
-        "• Claude 4.8 Opus (Premium)\n"
-        "• Gemini 3.5 Flash (Premium)\n\n"
-        "💎 Чтобы получить доступ ко всем моделям, купи Premium — /premium",
-        reply_markup=main_menu()
-    )
-
-@router.message(Command("privacy"))
-async def privacy_cmd(message: types.Message):
-    text = (
-        "📋 **Пользовательское соглашение**\n\n"
-        "1. Бот предоставляет услуги генерации текста и изображений\n"
-        "2. Пользователь несёт ответственность за использование контента\n"
-        "3. Бот не хранит личные данные пользователей\n"
-        "4. Premium подписка не подлежит возврату\n"
-        "5. Запрещено использовать бота для генерации запрещённого контента\n\n"
-        "📩 По всем вопросам: @i_abramov_gpt"
-    )
+    if not users:
+        return await message.answer("🏆 Нет данных", reply_markup=main_menu())
+    
+    medals = ['🥇', '🥈', '🥉']
+    text = "🏆 **Рейтинг**\n\n"
+    for i, u in enumerate(users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        name = u[1] or str(u[0])
+        text += f"{medal} {name} — {u[2]} задач\n"
+    
     await message.answer(text, reply_markup=main_menu())
+
+@router.message(Command("contact_admin"))
+async def contact_admin_cmd(message: types.Message):
+    user_id = message.from_user.id
+    force_create_user(user_id, message.from_user.username or "")
+    user_pages[user_id] = {"state": "waiting_contact"}
+    await message.answer("📩 Напишите сообщение админу.\n\n⏹ /cancel", reply_markup=main_menu())
 
 # ========== ОБРАБОТКА ТЕКСТА ==========
 
@@ -352,15 +283,12 @@ async def handle_message(message: types.Message):
     
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
     mode = user_modes.get(user_id, "text")
-    
     if mode == "image":
         await generate_image(message)
-    elif mode == "search":
-        await generate_search(message)
     else:
         await generate_text(message)
 
@@ -368,34 +296,19 @@ async def generate_text(message: types.Message):
     user_id = message.from_user.id
     ok, rem = can_request(user_id)
     if not ok:
-        return await message.answer("🔒 Лимит исчерпан! Купи Premium: /premium")
+        return await message.answer("🔒 Лимит исчерпан! /premium")
     prem = is_premium(user_id)
     status_msg = await message.answer("🤔 Думаю...")
     try:
         answer = solve_problem(message.text, "chat", prem)
         add_request(user_id)
         do_backup()
-        await status_msg.edit_text(f"🧠 {answer}\n\n{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
-
-async def generate_search(message: types.Message):
-    user_id = message.from_user.id
-    ok, rem = can_request(user_id)
-    if not ok:
-        return await message.answer("🔒 Лимит исчерпан! Купи Premium: /premium")
-    
-    status_msg = await message.answer("🌐 Ищу в интернете...")
-    try:
-        # Здесь можно добавить реальный поиск через API
+        caps_used = 100
         await status_msg.edit_text(
-            f"🌐 **Результаты поиска:**\n\n"
-            f"🔍 Запрос: {message.text[:100]}\n\n"
-            f"📌 Функция поиска в разработке.\n"
-            f"Скоро здесь будут результаты из интернета!"
+            f"🧠 {answer}\n\n"
+            f"{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}\n"
+            f"💰 CAPS: -{caps_used}"
         )
-        add_request(user_id)
-        do_backup()
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
@@ -416,9 +329,9 @@ async def generate_image(message: types.Message):
         can_gen, _ = can_generate_image(user_id)
     
     if not can_gen:
-        return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 Купи Premium: /premium")
+        return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /premium")
     
-    status_msg = await message.answer("🎨 Генерирую картинку...")
+    status_msg = await message.answer("🎨 Генерирую...")
     try:
         user_prompt = message.text
         prompt_resp = requests.post(
@@ -466,10 +379,11 @@ async def generate_image(message: types.Message):
                     new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     plan_emoji = get_plan_emoji(new_plan)
                     remaining = new_limit - new_used
+                    caps_used = 1700
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 План: {plan_emoji}"
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 {plan_emoji}\n💰 CAPS: -{caps_used}"
                     )
                     await status_msg.delete()
                     return
@@ -480,41 +394,24 @@ async def generate_image(message: types.Message):
 
 # ========== CALLBACK'и ==========
 
-@router.callback_query(F.data == "mode_text")
-async def mode_text_cb(callback: types.CallbackQuery):
+@router.callback_query(F.data.in_(["mode_text", "mode_image"]))
+async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user_modes[user_id] = "text"
-    await callback.answer("✅ Режим: Текст", show_alert=True)
-    await callback.message.edit_text("🧠 **Режим Текст**\n\nТеперь я отвечаю текстом на твои вопросы.", reply_markup=main_menu())
+    force_create_user(user_id, callback.from_user.username or "")
+    mode = callback.data.replace("mode_", "")
+    user_modes[user_id] = mode
+    await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
+    await callback.message.edit_text(f"{'🧠 **Текст**' if mode == 'text' else '🖼️ **Картинка**'}\n\nГотов к работе!", reply_markup=main_menu())
 
-@router.callback_query(F.data == "mode_image")
-async def mode_image_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user_modes[user_id] = "image"
-    await callback.answer("✅ Режим: Картинка", show_alert=True)
-    await callback.message.edit_text("🖼️ **Режим Картинка**\n\nТеперь я генерирую картинки по твоим описаниям.", reply_markup=main_menu())
-
-@router.callback_query(F.data == "search_mode")
-async def search_mode_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user_modes[user_id] = "search"
-    await callback.answer("✅ Режим: Поиск", show_alert=True)
-    await callback.message.edit_text("🌐 **Режим Поиск**\n\nНапиши вопрос, и я найду ответ в интернете.", reply_markup=main_menu())
-
-@router.callback_query(F.data == "video_mode")
-async def video_mode_cb(callback: types.CallbackQuery):
-    await callback.answer("🚧 В разработке", show_alert=True)
-    await callback.message.edit_text("🎬 **Генерация видео**\n\n🚧 Функция в разработке!\nСкоро здесь появится создание видео.", reply_markup=main_menu())
+@router.callback_query(F.data == "stats")
+async def stats_cb(callback: types.CallbackQuery):
+    await callback.answer()
+    await stats_cmd(callback.message)
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
     await callback.answer()
     await profile_cmd(callback.message)
-
-@router.callback_query(F.data == "settings")
-async def settings_cb(callback: types.CallbackQuery):
-    await callback.answer()
-    await settings_cmd(callback.message)
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
@@ -526,6 +423,16 @@ async def premium_cb(callback: types.CallbackQuery):
     await callback.answer()
     await premium_cmd(callback.message)
 
+@router.callback_query(F.data == "help")
+async def help_cb(callback: types.CallbackQuery):
+    await callback.answer()
+    await help_cmd(callback.message)
+
+@router.callback_query(F.data == "leaderboard")
+async def leaderboard_cb(callback: types.CallbackQuery):
+    await callback.answer()
+    await leaderboard_cmd(callback.message)
+
 @router.callback_query(F.data == "contact_admin")
 async def contact_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -533,11 +440,6 @@ async def contact_cb(callback: types.CallbackQuery):
     user_pages[user_id] = {"state": "waiting_contact"}
     await callback.message.edit_text("📩 Напишите сообщение админу.\n\n⏹ /cancel", reply_markup=main_menu())
     await callback.answer()
-
-@router.callback_query(F.data == "help")
-async def help_cb(callback: types.CallbackQuery):
-    await callback.answer()
-    await help_cmd(callback.message)
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
@@ -617,27 +519,22 @@ async def admin_code_cmd(message: types.Message):
         add_admin(message.from_user.id)
         await message.answer("✅ Вы админ!", reply_markup=admin_kb())
 
-def admin_kb():
-    new_messages = get_messages_count()
-    badge = f" ({new_messages})" if new_messages > 0 else ""
-    
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
-        [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
-        [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ])
+@router.callback_query(F.data == "admin_panel")
+async def admin_panel_cb(callback: types.CallbackQuery):
+    if is_admin(callback.from_user.id):
+        await callback.message.edit_text("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
+        await callback.answer()
+    else:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
 
-# ========== АДМИНКА: ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ ==========
+# ========== СТАТИСТИКА ==========
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    total, prem, req, images, paid = get_stats()
+    total, prem, req, images, paid, caps = get_stats()
     
     from database.db import get_db
     with get_db() as conn:
@@ -646,45 +543,65 @@ async def a_stats_cb(callback: types.CallbackQuery):
         deluxe = cursor.fetchone()[0] or 0
     
     await callback.message.edit_text(
-        f"📊 **СТАТИСТИКА БОТА**\n\n"
-        f"👥 Всего пользователей: {total}\n"
+        f"📊 **СТАТИСТИКА**\n\n"
+        f"👥 Всего: {total}\n"
         f"💎 Premium: {prem - deluxe}\n"
         f"👑 Premium Deluxe: {deluxe}\n"
-        f"💰 Оплатили Premium: {paid}\n"
-        f"📝 Всего запросов: {req}\n"
-        f"🖼️ Всего картинок: {images}",
+        f"💰 Оплатили: {paid}\n"
+        f"📝 Запросов: {req}\n"
+        f"🖼️ Картинок: {images}\n"
+        f"💰 CAPS потрачено: {caps}",
         reply_markup=admin_kb()
     )
     await callback.answer()
 
-@router.callback_query(F.data == "a_chart")
-async def a_chart_cb(callback: types.CallbackQuery):
+# ========== ГРАФИКИ ==========
+
+@router.callback_query(F.data == "a_charts")
+async def a_charts_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    data = get_daily_stats(30)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Запросы и картинки", callback_data="chart_requests")],
+        [InlineKeyboardButton(text="💰 CAPS (потрачено)", callback_data="chart_caps")],
+        [InlineKeyboardButton(text="📈 Новые пользователи", callback_data="chart_users")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
     
-    if not data:
-        await callback.message.edit_text(
-            "📈 **График за месяц**\n\nНет данных для отображения.",
-            reply_markup=admin_kb()
-        )
-        await callback.answer()
-        return
+    await callback.message.edit_text(
+        "📈 **Выберите график:**\n\n"
+        "• Запросы и картинки — статистика использования\n"
+        "• CAPS — сколько потрачено CAPS\n"
+        "• Новые пользователи — рост аудитории",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "chart_requests")
+async def chart_requests_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
     
-    dates = [d['date'] for d in data]
-    new_users = [d['new_users'] for d in data]
-    payments = [d['payments'] for d in data]
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT date(joined) as date, COUNT(*) as users FROM users GROUP BY date(joined) ORDER BY date DESC LIMIT 30")
+        users_data = cursor.fetchall()
+        cursor.execute("SELECT date(timestamp) as date, COUNT(*) as payments FROM payments WHERE status = 'completed' GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30")
+        payments_data = cursor.fetchall()
     
-    import matplotlib.pyplot as plt
-    from io import BytesIO
+    dates = [d[0] for d in users_data[::-1]]
+    users = [d[1] for d in users_data[::-1]]
+    payments_dict = {d[0]: d[1] for d in payments_data}
+    payments = [payments_dict.get(d, 0) for d in dates]
     
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(dates, new_users, label='Новые пользователи', color='blue', marker='o', linewidth=2, markersize=4)
-    ax.plot(dates, payments, label='Оплаты Premium', color='green', marker='s', linewidth=2, markersize=4)
+    ax.bar(dates, users, label='Новые пользователи', color='blue', alpha=0.7)
+    ax.plot(dates, payments, label='Оплаты Premium', color='green', marker='o', linewidth=2)
     ax.set_xlabel('Дата')
     ax.set_ylabel('Количество')
-    ax.set_title('📊 Статистика за 30 дней')
+    ax.set_title('📊 Запросы и картинки')
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.tick_params(axis='x', rotation=45)
@@ -699,10 +616,89 @@ async def a_chart_cb(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer_photo(
         BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
-        caption="📈 **График за 30 дней**\n\nСиний — новые пользователи\nЗелёный — оплаты Premium",
+        caption="📊 **Запросы и картинки**\n\nСиние столбцы — новые пользователи\nЗелёная линия — оплаты Premium",
         reply_markup=admin_kb()
     )
     await callback.answer()
+
+@router.callback_query(F.data == "chart_caps")
+async def chart_caps_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, caps_used FROM users ORDER BY caps_used DESC LIMIT 20")
+        users = cursor.fetchall()
+    
+    if not users:
+        await callback.answer("Нет данных о CAPS", show_alert=True)
+        return
+    
+    user_ids = [str(u[0]) for u in users[:10]]
+    caps = [u[1] for u in users[:10]]
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.barh(user_ids, caps, color='purple', alpha=0.7)
+    ax.set_xlabel('CAPS потрачено')
+    ax.set_ylabel('Пользователь')
+    ax.set_title('💰 Топ пользователей по CAPS')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    buf.seek(0)
+    plt.close()
+    
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
+        caption="💰 **Топ пользователей по CAPS**\n\nСамые активные пользователи по тратам CAPS",
+        reply_markup=admin_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "chart_users")
+async def chart_users_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    data = get_daily_stats(30)
+    
+    if not data:
+        await callback.message.edit_text("📈 Нет данных.", reply_markup=admin_kb())
+        await callback.answer()
+        return
+    
+    dates = [d['date'] for d in data]
+    new_users = [d['new_users'] for d in data]
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(dates, new_users, color='blue', alpha=0.7)
+    ax.set_xlabel('Дата')
+    ax.set_ylabel('Новые пользователи')
+    ax.set_title('📈 Новые пользователи за 30 дней')
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=45)
+    ax.set_xticks([d for i, d in enumerate(dates) if i % 3 == 0])
+    plt.tight_layout()
+    
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    buf.seek(0)
+    plt.close()
+    
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
+        caption="📈 **Новые пользователи за 30 дней**",
+        reply_markup=admin_kb()
+    )
+    await callback.answer()
+
+# ========== ОСТАЛЬНЫЕ АДМИН-ФУНКЦИИ ==========
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
@@ -712,19 +708,19 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, image_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, image_requests, caps_used, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
     if not users:
-        text = "👥 Пользователей не найдено"
+        text = "👥 Нет пользователей"
     else:
         text = "👥 **Пользователи**\n\n"
         for u in users:
-            emoji = plan_emoji.get(u[4], '🔴')
-            blocked = "🚫" if u[5] == 1 else "✅"
+            emoji = plan_emoji.get(u[5], '🔴')
+            blocked = "🚫" if u[6] == 1 else "✅"
             text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
-            text += f"   📝{u[2]} запросов | 🖼️{u[3]} картинок\n"
+            text += f"   📝{u[2]} | 🖼️{u[3]} | 💰{u[4]} CAPS\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
@@ -745,7 +741,7 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
         users = cursor.fetchall()
     
     if not users:
-        await callback.message.edit_text("👥 Все пользователи уже имеют Premium!", reply_markup=admin_kb())
+        await callback.message.edit_text("👥 Все уже имеют Premium!", reply_markup=admin_kb())
         await callback.answer()
         return
     
@@ -759,7 +755,7 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     
     await callback.message.edit_text(
-        "💎 **Выдать Premium**\n\nВыберите пользователя для выдачи Premium (30 дней):",
+        "💎 **Выдать Premium**\n\nВыберите пользователя:",
         reply_markup=kb
     )
     await callback.answer()
@@ -772,8 +768,8 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     user_id = int(callback.data.replace("give_premium_", ""))
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💎 Premium (30 дней)", callback_data=f"confirm_premium_{user_id}_premium")],
-        [InlineKeyboardButton(text="👑 Premium Deluxe (30 дней)", callback_data=f"confirm_premium_{user_id}_premium_deluxe")],
+        [InlineKeyboardButton(text="💎 Premium", callback_data=f"confirm_premium_{user_id}_premium")],
+        [InlineKeyboardButton(text="👑 Premium Deluxe", callback_data=f"confirm_premium_{user_id}_premium_deluxe")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="a_give_premium")]
     ])
     
@@ -798,7 +794,7 @@ async def confirm_premium(callback: types.CallbackQuery):
     plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
     await callback.message.edit_text(
-        f"✅ {plan_names.get(plan, 'Premium')} на 30 дней выдан пользователю `{user_id}`!",
+        f"✅ {plan_names.get(plan)} на 30 дней выдан `{user_id}`!",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -815,10 +811,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
         messages = cursor.fetchall()
     
     if not messages:
-        await callback.message.edit_text(
-            "📩 **Обращения**\n\nНет обращений.",
-            reply_markup=admin_kb()
-        )
+        await callback.message.edit_text("📩 Нет обращений.", reply_markup=admin_kb())
         await callback.answer()
         return
     
@@ -831,7 +824,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
         text += f"🕐 {msg[4][:16]}\n\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Ответить на последнее", callback_data="reply_last")],
+        [InlineKeyboardButton(text="✏️ Ответить", callback_data="reply_last")],
         [InlineKeyboardButton(text="🗑️ Очистить все", callback_data="delete_all_messages")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
@@ -900,7 +893,7 @@ async def a_block_cb(callback: types.CallbackQuery):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     
     await callback.message.edit_text(
-        "🚫 **Блокировка пользователей**\n\nНажмите на пользователя для блокировки/разблокировки:",
+        "🚫 **Блокировка**\n\nНажмите на пользователя:",
         reply_markup=kb
     )
     await callback.answer()
@@ -921,10 +914,10 @@ async def block_user_action(callback: types.CallbackQuery):
     
     if is_blocked == 1:
         unblock_user(user_id)
-        await callback.answer("✅ Пользователь РАЗБЛОКИРОВАН", show_alert=True)
+        await callback.answer("✅ Разблокирован", show_alert=True)
     else:
         block_user(user_id)
-        await callback.answer("🚫 Пользователь ЗАБЛОКИРОВАН", show_alert=True)
+        await callback.answer("🚫 Заблокирован", show_alert=True)
     
     do_backup()
     await a_block_cb(callback)
@@ -933,7 +926,7 @@ async def block_user_action(callback: types.CallbackQuery):
 async def a_plans_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    text = f"⚙️ **Тарифы**\n\n🔹 Бесплатный: {get_setting('image_limit_free')} карт, {get_setting('free_input_chars')} симв\n💎 Premium: {get_setting('image_limit_premium')} карт, {get_setting('premium_input_chars')} симв\n👑 Premium Deluxe: {get_setting('image_limit_premium_deluxe')} карт, {get_setting('premium_deluxe_input_chars')} симв"
+    text = f"⚙️ **Тарифы**\n\n🔹 Бесплатный: {get_setting('image_limit_free')} карт\n💎 Premium: {get_setting('image_limit_premium')} карт\n👑 Premium Deluxe: {get_setting('image_limit_premium_deluxe')} карт"
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔹 Бесплатный", callback_data="edit_free"), InlineKeyboardButton(text="💎 Premium", callback_data="edit_premium")],
         [InlineKeyboardButton(text="👑 Premium Deluxe", callback_data="edit_deluxe")],
@@ -949,7 +942,7 @@ async def edit_plan_cb(callback: types.CallbackQuery):
     plan_names = {'free': '🔹 Бесплатный', 'premium': '💎 Premium', 'deluxe': '👑 Premium Deluxe'}
     user_pages[callback.from_user.id] = {"state": "waiting_plan_edit", "plan": plan}
     await callback.message.edit_text(
-        f"⚙️ **{plan_names.get(plan)}**\n\nВведите: `<картинки> <символы>`\nПример: `10 1000`\n\n⏹ /cancel",
+        f"⚙️ **{plan_names.get(plan)}**\n\nВведите: `<картинки>`\nПример: `10`\n\n⏹ /cancel",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="a_plans")]])
     )
     await callback.answer()
@@ -970,6 +963,16 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]))
     await callback.answer()
+
+@router.callback_query(F.data.startswith("delete_msg_"))
+async def delete_message_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    msg_id = int(callback.data.replace("delete_msg_", ""))
+    delete_message(msg_id)
+    await callback.answer("🗑️ Удалено", show_alert=True)
+    await a_messages_cb(callback)
 
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
@@ -994,20 +997,20 @@ async def handle_admin_input(message: types.Message):
                 try:
                     await message.bot.send_message(
                         user_id_target,
-                        f"📩 **Ответ от администратора:**\n\n{reply_text}"
+                        f"📩 **Ответ:**\n\n{reply_text}"
                     )
                     
                     kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🗑️ Удалить это сообщение", callback_data=f"delete_msg_{msg_id}")],
+                        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_msg_{msg_id}")],
                         [InlineKeyboardButton(text="🔙 Назад", callback_data="a_messages")]
                     ])
                     
                     await message.answer(
-                        f"✅ Ответ отправлен пользователю `{user_id_target}`",
+                        f"✅ Ответ отправлен `{user_id_target}`",
                         reply_markup=kb
                     )
                 except Exception as e:
-                    await message.answer(f"❌ Не удалось отправить: {e}", reply_markup=admin_kb())
+                    await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
             else:
                 await message.answer("❌ Сообщение не найдено", reply_markup=admin_kb())
         
@@ -1020,24 +1023,21 @@ async def handle_admin_input(message: types.Message):
             return await message.answer("✅ Отменено", reply_markup=admin_kb())
         try:
             parts = message.text.split()
-            if len(parts) != 2:
-                return await message.answer("❌ Формат: картинки символы", reply_markup=admin_kb())
-            images, chars = int(parts[0]), int(parts[1])
+            if len(parts) != 1:
+                return await message.answer("❌ Формат: число картинок", reply_markup=admin_kb())
+            images = int(parts[0])
             plan = state.get("plan")
             if plan == 'free':
                 set_setting('image_limit_free', str(images))
-                set_setting('free_input_chars', str(chars))
             elif plan == 'premium':
                 set_setting('image_limit_premium', str(images))
-                set_setting('premium_input_chars', str(chars))
             elif plan == 'deluxe':
                 set_setting('image_limit_premium_deluxe', str(images))
-                set_setting('premium_deluxe_input_chars', str(chars))
-            await message.answer(f"✅ Обновлено: карт={images}, симв={chars}", reply_markup=admin_kb())
+            await message.answer(f"✅ Обновлено: {images} картинок", reply_markup=admin_kb())
             do_backup()
             user_pages.pop(user_id, None)
         except:
-            await message.answer("❌ Ошибка! Формат: картинки символы", reply_markup=admin_kb())
+            await message.answer("❌ Ошибка! Введите число", reply_markup=admin_kb())
         return
     
     if state.get("state") == "waiting_broadcast":
@@ -1073,19 +1073,9 @@ async def handle_admin_input(message: types.Message):
                         (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
         
         await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")
-        await message.answer("✅ Отправлено админу!", reply_markup=main_menu())
+        await message.answer("✅ Отправлено!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
-
-@router.callback_query(F.data.startswith("delete_msg_"))
-async def delete_message_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    msg_id = int(callback.data.replace("delete_msg_", ""))
-    delete_message(msg_id)
-    await callback.answer("🗑️ Сообщение удалено", show_alert=True)
-    await a_messages_cb(callback)
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: types.Message):
