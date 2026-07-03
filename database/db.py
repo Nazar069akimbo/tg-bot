@@ -716,3 +716,29 @@ def change_user_plan(user_id, new_plan):
             return True, f"✅ План изменён на {new_plan.upper()}!"
     except Exception as e:
         return False, f"❌ Ошибка: {e}"
+
+
+def get_setting(key):
+    """Возвращает значение настройки по ключу"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            result = cursor.fetchone()
+            if result:
+                return result[0]
+    except:
+        pass
+    
+    defaults = {
+        'free_input_chars': '500',
+        'free_output_words': '50',
+        'premium_input_chars': '3000',
+        'premium_output_words': '300',
+        'premium_deluxe_input_chars': '5000',
+        'premium_deluxe_output_words': '500',
+        'image_limit_free': '3',
+        'image_limit_premium': '50',
+        'image_limit_premium_deluxe': '200'
+    }
+    return defaults.get(key, '0')
