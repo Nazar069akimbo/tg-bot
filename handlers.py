@@ -64,10 +64,14 @@ def main_menu():
     ])
 
 def admin_kb():
+    # Считаем новые обращения
+    new_messages = get_messages_count()
+    badge = f" ({new_messages})" if new_messages > 0 else ""
+    
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
-        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
+        [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
         [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
@@ -84,16 +88,22 @@ async def start_cmd(message: types.Message):
         return
     
     args = message.text.split()
-    if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
-        add_referral(int(args[1]), user_id)
-        await message.answer("👤 Вы приглашены! Реферер +5 запросов.")
+    if len(args) > 1 and args[1].isdigit():
+        referrer_id = int(args[1])
+        if referrer_id != user_id:
+            # Проверяем и добавляем реферала
+            success, msg = add_referral(referrer_id, user_id)
+            if success:
+                await message.answer(msg)
+            else:
+                logger.warning(f"Реферал не добавлен: {msg}")
     
     await message.answer(
         "🤖 **Vertex AI**\n\n"
         "🧠 Искусственный интеллект в Telegram!\n\n"
         "✅ 10 запросов/день бесплатно\n"
         "💎 Premium: безлимит\n"
-        "👥 Приведи друга → +5 запросов\n\n"
+        "👥 Приведи друга → +3 картинки и +10 запросов\n\n"
         "💬 Просто напиши свой вопрос!",
         reply_markup=main_menu()
     )
@@ -111,14 +121,12 @@ async def subscribe_cmd(message: types.Message):
         "💎 **Premium** — 49⭐/мес\n"
         "• Безлимит текстовых запросов\n"
         "• 50 картинок/день\n"
-        "• Приоритетная обработка\n"
-        "• ✨ +5 реферальных запросов\n\n"
+        "• Приоритетная обработка\n\n"
         "👑 **Premium Deluxe** — 99⭐/мес\n"
         "• Безлимит текстовых запросов\n"
         "• 200 картинок/день\n"
         "• Эксклюзивные промпты\n"
-        "• VIP-поддержка 24/7\n"
-        "• ✨✨ +20 реферальных запросов"
+        "• VIP-поддержка 24/7"
     )
     
     await message.answer(
@@ -137,26 +145,19 @@ async def referral_cmd(message: types.Message):
         await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
         return
     
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-        count = cursor.fetchone()[0] or 0
+    count = get_referral_count(user_id)
+    bonus_images, bonus_requests = get_referral_bonuses(user_id)
     
     link = f"https://t.me/Vertex1bot?start={user_id}"
     
-    plan = get_user_plan(user_id)
-    if plan == 'premium_deluxe':
-        bonus = "20"
-    else:
-        bonus = "5"
-    
     await message.answer(
-        f"👥 **Рефералы**\n\n"
+        f"👥 **Реферальная система**\n\n"
         f"👤 Приглашено: {count}\n"
-        f"💰 Бонус: +{bonus} запросов за каждого друга\n\n"
-        f"🔗 Твоя ссылка:\n`{link}`\n\n"
-        f"📤 Отправь ссылку друзьям!",
+        f"🎁 Бонусы за приглашения:\n"
+        f"   🖼️ +{bonus_images} картинок\n"
+        f"   📝 +{bonus_requests} запросов\n\n"
+        f"🔗 Твоя ссылка:\n{link}\n\n"
+        f"📤 Отправь ссылку друзьям и получай бонусы!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся к Vertex AI!")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
@@ -220,7 +221,7 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
     
-    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact"]:
+    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply"]:
         await handle_admin_input(message)
         return
     
@@ -565,43 +566,68 @@ async def a_messages_cb(callback: types.CallbackQuery):
         text += f"{status} `{msg[1]}` — {name}\n"
         text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
         text += f"🕐 {msg[4][:16]}\n"
-        text += f"👉 /reply_{msg[1]} текст ответа\n\n"
+        
+        # Кнопки для каждого сообщения
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply_msg_{msg[0]}")],
+            [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_msg_{msg[0]}")]
+        ])
+        text += "\n"
     
-    await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
+    # Добавляем кнопку очистки всех
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑️ Очистить все", callback_data="delete_all_messages")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+    
+    await callback.message.edit_text(text[:4000], reply_markup=kb)
     await callback.answer()
 
-# ========== АДМИНКА: ОТВЕТ НА ОБРАЩЕНИЕ ==========
+# ========== АДМИНКА: ОТВЕТ НА ОБРАЩЕНИЕ (ЧЕРЕЗ КНОПКУ) ==========
 
-@router.message(Command("reply"))
-async def reply_to_user(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Нет доступа")
-        return
+@router.callback_query(F.data.startswith("reply_msg_"))
+async def reply_message_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
     
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await message.answer("❌ Использование: /reply_123 Текст ответа")
-        return
+    msg_id = int(callback.data.replace("reply_msg_", ""))
+    user_pages[callback.from_user.id] = {"state": "waiting_reply", "msg_id": msg_id}
     
-    try:
-        user_id = int(parts[0].replace("/reply_", ""))
-        reply_text = parts[2]
-        
-        from database.db import get_db
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", (user_id,))
-        
-        try:
-            await message.bot.send_message(
-                user_id,
-                f"📩 **Ответ от администратора:**\n\n{reply_text}"
-            )
-            await message.answer(f"✅ Сообщение отправлено пользователю `{user_id}`")
-        except Exception as e:
-            await message.answer(f"❌ Не удалось отправить: {e}")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+    await callback.message.edit_text(
+        "✏️ Введите текст ответа.\n\n"
+        "⏹ Отмена: /cancel",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_messages")]
+        ])
+    )
+    await callback.answer()
+
+# ========== АДМИНКА: УДАЛИТЬ ОБРАЩЕНИЕ ==========
+
+@router.callback_query(F.data.startswith("delete_msg_"))
+async def delete_message_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    msg_id = int(callback.data.replace("delete_msg_", ""))
+    delete_message(msg_id)
+    await callback.answer("🗑️ Сообщение удалено", show_alert=True)
+    await a_messages_cb(callback)
+
+# ========== АДМИНКА: ОЧИСТИТЬ ВСЕ ОБРАЩЕНИЯ ==========
+
+@router.callback_query(F.data == "delete_all_messages")
+async def delete_all_messages_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM messages_to_admin")
+    
+    await callback.answer("🗑️ Все обращения удалены", show_alert=True)
+    await a_messages_cb(callback)
 
 # ========== АДМИНКА: ВЫДАТЬ PREMIUM ==========
 
@@ -781,6 +807,37 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
+    
+    if state.get("state") == "waiting_reply":
+        if message.text == "/cancel":
+            user_pages.pop(user_id, None)
+            return await message.answer("✅ Отменено", reply_markup=admin_kb())
+        
+        msg_id = state.get("msg_id")
+        reply_text = message.text
+        
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM messages_to_admin WHERE id = ?", (msg_id,))
+            row = cursor.fetchone()
+            if row:
+                user_id_target = row[0]
+                cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE id = ?", (msg_id,))
+                
+                try:
+                    await message.bot.send_message(
+                        user_id_target,
+                        f"📩 **Ответ от администратора:**\n\n{reply_text}"
+                    )
+                    await message.answer(f"✅ Ответ отправлен пользователю `{user_id_target}`", reply_markup=admin_kb())
+                except Exception as e:
+                    await message.answer(f"❌ Не удалось отправить: {e}", reply_markup=admin_kb())
+            else:
+                await message.answer("❌ Сообщение не найдено", reply_markup=admin_kb())
+        
+        user_pages.pop(user_id, None)
+        return
     
     if state.get("state") == "waiting_plan_edit":
         if message.text == "/cancel":

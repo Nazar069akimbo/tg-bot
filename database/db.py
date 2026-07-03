@@ -37,7 +37,9 @@ def init_db():
             trial_start TEXT,
             trial_used INTEGER DEFAULT 0,
             trial_active INTEGER DEFAULT 0,
-            last_image_reset TEXT
+            last_image_reset TEXT,
+            referral_bonus_images INTEGER DEFAULT 0,
+            referral_bonus_requests INTEGER DEFAULT 0
         )
         ''')
         
@@ -47,7 +49,8 @@ def init_db():
             referrer_id INTEGER,
             referred_id INTEGER,
             joined TEXT,
-            bonus_given INTEGER DEFAULT 0
+            bonus_given INTEGER DEFAULT 0,
+            UNIQUE(referrer_id, referred_id)
         )
         ''')
         
@@ -97,7 +100,9 @@ def init_db():
             'trial_start': 'TEXT',
             'trial_used': 'INTEGER DEFAULT 0',
             'trial_active': 'INTEGER DEFAULT 0',
-            'last_image_reset': 'TEXT'
+            'last_image_reset': 'TEXT',
+            'referral_bonus_images': 'INTEGER DEFAULT 0',
+            'referral_bonus_requests': 'INTEGER DEFAULT 0'
         }
         
         for col, dtype in columns_to_add.items():
@@ -126,10 +131,7 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                        (6957852385, datetime.now().isoformat()))
         
-        # 🔥 ФИКС: синхронизируем планы для всех пользователей
         cursor.execute("UPDATE users SET plan = 'premium' WHERE premium_until IS NOT NULL AND premium_until > datetime('now') AND plan = 'basic'")
-        print("✅ Синхронизация планов выполнена")
-        
         print("✅ База данных готова")
 
 def get_user(user_id):
@@ -138,14 +140,10 @@ def get_user(user_id):
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             user = cursor.fetchone()
-            
-            # 🔥 ФИКС: если есть premium_until, но plan basic — исправляем на лету
             if user and len(user) > 9 and user[9] == 'basic' and user[3] and user[3] > datetime.now().isoformat():
                 cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 user = cursor.fetchone()
-                print(f"🔥 Исправлен план для {user_id} на premium")
-            
             return user
     except Exception as e:
         print(f"⚠️ Ошибка get_user: {e}")
@@ -159,12 +157,11 @@ def create_user(user_id, username):
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
                 return True
-            
             cursor.execute("""
                 INSERT INTO users 
-                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, now, now, 1, now, 0, 0, 0))
+                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0))
             print(f"✅ Создан пользователь {user_id}")
             return True
     except Exception as e:
@@ -175,10 +172,79 @@ def add_referral(referrer_id, referred_id):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
+            
+            # Проверяем что не приглашает сам себя
+            if referrer_id == referred_id:
+                return False, "Нельзя пригласить самого себя!"
+            
+            # Проверяем что реферер существует
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referrer_id,))
+            if not cursor.fetchone():
+                return False, "Реферер не найден!"
+            
+            # Проверяем что реферал существует
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referred_id,))
+            if not cursor.fetchone():
+                return False, "Пользователь не найден!"
+            
+            # Проверяем что реферал ещё не был приглашён кем-то
+            cursor.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
+            if cursor.fetchone():
+                return False, "Этот пользователь уже был приглашён!"
+            
+            # Проверяем что реферер ещё не приглашал этого пользователя
+            cursor.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", (referrer_id, referred_id))
+            if cursor.fetchone():
+                return False, "Вы уже приглашали этого пользователя!"
+            
+            # Добавляем реферала
             cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
                         (referrer_id, referred_id, datetime.now().isoformat()))
-            cursor.execute("UPDATE users SET free_requests = free_requests + 5 WHERE user_id = ?", (referrer_id,))
-            return True
+            
+            # Даём бонусы рефереру: +3 картинки и +10 запросов
+            cursor.execute("UPDATE users SET referral_bonus_images = referral_bonus_images + 3 WHERE user_id = ?", (referrer_id,))
+            cursor.execute("UPDATE users SET referral_bonus_requests = referral_bonus_requests + 10 WHERE user_id = ?", (referrer_id,))
+            
+            return True, f"✅ Вы получили +3 картинки и +10 запросов за приглашение!"
+    except Exception as e:
+        print(f"⚠️ Ошибка add_referral: {e}")
+        return False, f"Ошибка: {e}"
+
+def get_referral_count(user_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+            return cursor.fetchone()[0] or 0
+    except:
+        return 0
+
+def get_referral_bonuses(user_id):
+    try:
+        user = get_user(user_id)
+        if user:
+            bonus_images = user[14] if len(user) > 14 and user[14] else 0
+            bonus_requests = user[15] if len(user) > 15 and user[15] else 0
+            return bonus_images, bonus_requests
+        return 0, 0
+    except:
+        return 0, 0
+
+def use_referral_bonus_image(user_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET referral_bonus_images = referral_bonus_images - 1 WHERE user_id = ? AND referral_bonus_images > 0", (user_id,))
+            return cursor.rowcount > 0
+    except:
+        return False
+
+def use_referral_bonus_request(user_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET referral_bonus_requests = referral_bonus_requests - 1 WHERE user_id = ? AND referral_bonus_requests > 0", (user_id,))
+            return cursor.rowcount > 0
     except:
         return False
 
@@ -274,7 +340,9 @@ def can_request(user_id):
             return True, 999999
         used = user[4] if len(user) > 4 and user[4] else 0
         used = int(used) if used else 0
-        return used < 10, 10 - used
+        bonus = user[15] if len(user) > 15 and user[15] else 0
+        total = 10 + bonus
+        return used < total, total - used
     except:
         return True, 10
 
@@ -358,7 +426,8 @@ def can_generate_image(user_id):
             return True, 3
         used = user[8] if len(user) > 8 and user[8] else 0
         used = int(used) if used else 0
-        limit = get_image_limit(user_id)
+        bonus = user[14] if len(user) > 14 and user[14] else 0
+        limit = get_image_limit(user_id) + bonus
         return used < limit, limit - used
     except:
         return True, 3
@@ -371,7 +440,8 @@ def get_image_stats(user_id):
             return 0, 3, False, 'basic'
         used = user[8] if len(user) > 8 and user[8] else 0
         used = int(used) if used else 0
-        limit = get_image_limit(user_id)
+        bonus = user[14] if len(user) > 14 and user[14] else 0
+        limit = get_image_limit(user_id) + bonus
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
         return used, limit, prem, plan
@@ -381,24 +451,10 @@ def get_image_stats(user_id):
 
 def add_image_request(user_id):
     try:
-        print(f"🔍 add_image_request: НАЧАЛО для {user_id}")
-        
         with get_db() as conn:
             cursor = conn.cursor()
-            
-            cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
-            old = cursor.fetchone()
-            print(f"📊 Старое значение image_requests: {old[0] if old else 'None'}")
-            
             cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
-            
-            cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
-            new = cursor.fetchone()
-            print(f"✅ НОВОЕ значение image_requests: {new[0] if new else 'None'}")
-            
-            if new:
-                return True
-            return False
+            return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
         return False
@@ -454,3 +510,21 @@ def use_trial_image(user_id):
 def get_mode(user_id):
     user = get_user(user_id)
     return user[7] if user and len(user) > 7 and user[7] else "chat"
+
+def get_messages_count():
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM messages_to_admin WHERE status = 'new'")
+            return cursor.fetchone()[0] or 0
+    except:
+        return 0
+
+def delete_message(message_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM messages_to_admin WHERE id = ?", (message_id,))
+            return True
+    except:
+        return False
