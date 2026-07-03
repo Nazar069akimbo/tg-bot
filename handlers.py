@@ -354,8 +354,21 @@ async def set_mode(callback: types.CallbackQuery):
         return
     mode = callback.data.replace("mode_", "")
     user_modes[user_id] = mode
-    await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
-    await callback.message.edit_text(f"{'🧠 **Текст**' if mode == 'text' else '🖼️ **Картинка**'}\n\nГотов к работе!", reply_markup=main_menu())
+    
+    # Проверяем, нужно ли редактировать
+    new_text = f"{'🧠 **Текст**' if mode == 'text' else '🖼️ **Картинка**'}\n\nГотов к работе!"
+    new_kb = main_menu()
+    
+    # Если текущий текст и клавиатура уже такие же — просто отвечаем
+    try:
+        await callback.message.edit_text(new_text, reply_markup=new_kb)
+    except Exception as e:
+        if "message is not modified" in str(e):
+            await callback.answer("✅ Уже в этом режиме", show_alert=True)
+        else:
+            await callback.message.answer(new_text, reply_markup=new_kb)
+    
+    await callback.answer()
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
@@ -872,14 +885,12 @@ async def handle_admin_input(message: types.Message):
                 user_id_target = msg[1]
                 cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE id = ?", (msg_id,))
                 
-                # Отправляем ответ
                 try:
                     await message.bot.send_message(
                         user_id_target,
                         f"📩 **Ответ от администратора:**\n\n{reply_text}"
                     )
                     
-                    # Кнопки после ответа
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="🗑️ Удалить это сообщение", callback_data=f"delete_msg_{msg_id}")],
                         [InlineKeyboardButton(text="🔙 Назад", callback_data="a_messages")]
