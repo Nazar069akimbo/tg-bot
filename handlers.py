@@ -58,7 +58,6 @@ def get_plan_emoji(plan):
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="referral"), InlineKeyboardButton(text="💎 Premium", callback_data="premium")],
         [InlineKeyboardButton(text="📩 Админу", callback_data="contact_admin"), InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
         [InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard"), InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
@@ -68,6 +67,7 @@ def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
+        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
         [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
@@ -89,81 +89,14 @@ async def start_cmd(message: types.Message):
         await message.answer("👤 Вы приглашены! Реферер +5 запросов.")
     
     await message.answer(
-        "🤖 Vertex AI\n\n🧠 ИИ в Telegram!\n✅ 10 запросов/день\n💎 Premium: безлимит\n👥 Приведи друга → +5 запросов\n\nПросто напиши вопрос!",
+        "🤖 **Vertex AI**\n\n"
+        "🧠 Искусственный интеллект в Telegram!\n\n"
+        "✅ 10 запросов/день бесплатно\n"
+        "💎 Premium: безлимит\n"
+        "👥 Приведи друга → +5 запросов\n\n"
+        "💬 Просто напиши свой вопрос!",
         reply_markup=main_menu()
     )
-
-# ========== КРАСИВЫЙ ПРОФИЛЬ ==========
-
-@router.message(Command("profile"))
-async def profile_cmd(message: types.Message):
-    user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
-        return
-    
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
-        refs = cursor.fetchone()[0] or 0
-    
-    used, limit, prem, plan = get_image_stats(user_id)
-    total_requests = user[5] if len(user) > 5 and user[5] else 0
-    total_images = user[8] if len(user) > 8 and user[8] else 0
-    
-    plan_emoji = get_plan_emoji(plan)
-    remaining = limit - used
-    
-    text = f"👤 **ПРОФИЛЬ**\n\n"
-    text += f"🆔 {user[0]}\n"
-    text += f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
-    text += f"👥 Рефералов: {refs}\n"
-    text += f"📊 Всего запросов: {total_requests}\n"
-    text += f"🖼️ Всего картинок: {total_images}\n"
-    text += f"🖼️ Картинок сегодня: {used}/{limit} (осталось {remaining})\n"
-    text += f"💎 План: {plan_emoji}"
-    
-    await message.answer(text, reply_markup=main_menu())
-
-# ========== КРАСИВАЯ СТАТИСТИКА ==========
-
-@router.message(Command("stats"))
-async def stats_cmd(message: types.Message):
-    user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
-        return
-    
-    ok, rem = can_request(user_id)
-    used, limit, prem, plan = get_image_stats(user_id)
-    trial = get_trial_remaining(user_id)
-    
-    total_requests = user[5] if len(user) > 5 and user[5] else 0
-    total_images = user[8] if len(user) > 8 and user[8] else 0
-    
-    plan_emoji = get_plan_emoji(plan)
-    remaining = limit - used
-    
-    text = f"📊 **СТАТИСТИКА**\n\n"
-    
-    if prem:
-        text += f"📝 Текстовые запросы: ♾️ Безлимит\n"
-    else:
-        text += f"📝 Осталось запросов: {rem} из 10\n"
-    
-    text += f"🖼️ Картинок сегодня: {used}/{limit} (осталось {remaining})\n"
-    
-    if trial > 0 and not prem:
-        text += f"🎁 Пробный период: {trial} картинок\n"
-    
-    text += f"📊 Всего запросов: {total_requests}\n"
-    text += f"🖼️ Всего картинок: {total_images}\n"
-    text += f"💎 План: {plan_emoji}"
-    
-    await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: types.Message):
@@ -171,24 +104,21 @@ async def subscribe_cmd(message: types.Message):
     force_create_user(user_id, message.from_user.username or "")
     
     text = (
-        "💎 Выберите тариф Premium\n\n"
-        "📋 Сравнение тарифов:\n\n"
-        "🔴 Бесплатный — 0⭐\n"
+        "💎 **Выберите тариф Premium**\n\n"
+        "🔴 **Бесплатный** — 0⭐\n"
         "• 10 текстовых запросов/день\n"
-        "• 3 картинки/день\n"
-        "• Обычная обработка\n\n"
-        "💎 Premium — 49⭐/мес\n"
+        "• 3 картинки/день\n\n"
+        "💎 **Premium** — 49⭐/мес\n"
         "• Безлимит текстовых запросов\n"
         "• 50 картинок/день\n"
         "• Приоритетная обработка\n"
-        "• ✨ Бонус: +5 реферальных запросов\n\n"
-        "👑 Premium Deluxe — 99⭐/мес\n"
+        "• ✨ +5 реферальных запросов\n\n"
+        "👑 **Premium Deluxe** — 99⭐/мес\n"
         "• Безлимит текстовых запросов\n"
         "• 200 картинок/день\n"
-        "• Приоритетная обработка\n"
         "• Эксклюзивные промпты\n"
         "• VIP-поддержка 24/7\n"
-        "• ✨✨ Бонус: +20 реферальных запросов"
+        "• ✨✨ +20 реферальных запросов"
     )
     
     await message.answer(
@@ -225,8 +155,8 @@ async def referral_cmd(message: types.Message):
         f"👥 **Рефералы**\n\n"
         f"👤 Приглашено: {count}\n"
         f"💰 Бонус: +{bonus} запросов за каждого друга\n\n"
-        f"🔗 Твоя ссылка:\n{link}\n\n"
-        f"📤 Отправь ссылку друзьям и получай бонусы!",
+        f"🔗 Твоя ссылка:\n`{link}`\n\n"
+        f"📤 Отправь ссылку друзьям!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся к Vertex AI!")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
@@ -236,7 +166,13 @@ async def referral_cmd(message: types.Message):
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
     force_create_user(message.from_user.id, message.from_user.username or "")
-    text = "❓ Помощь\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы"
+    text = (
+        "❓ **Помощь**\n\n"
+        "/start — Главное меню\n"
+        "/subscribe — Premium\n"
+        "/referral — Рефералы\n"
+        "/help — Помощь"
+    )
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("leaderboard"))
@@ -267,7 +203,13 @@ async def contact_admin_cmd(message: types.Message):
     user_id = message.from_user.id
     force_create_user(user_id, message.from_user.username or "")
     user_pages[user_id] = {"state": "waiting_contact"}
-    await message.answer("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
+    await message.answer(
+        "📩 **Обращение к администратору**\n\n"
+        "Напишите ваше сообщение.\n"
+        "Администратор ответит вам.\n\n"
+        "⏹ Отмена: /cancel",
+        reply_markup=main_menu()
+    )
 
 # ========== ОБРАБОТКА ТЕКСТА ==========
 
@@ -407,27 +349,7 @@ async def set_mode(callback: types.CallbackQuery):
     mode = callback.data.replace("mode_", "")
     user_modes[user_id] = mode
     await callback.answer(f"✅ Режим: {'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}", show_alert=True)
-    await callback.message.edit_text(f"{'🧠 Текст' if mode == 'text' else '🖼️ Картинка'}\n\nГотов к работе!", reply_markup=main_menu())
-
-@router.callback_query(F.data == "stats")
-async def stats_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = force_create_user(user_id, callback.from_user.username or "")
-    if not user:
-        await callback.answer("❌ Ошибка!", show_alert=True)
-        return
-    await stats_cmd(callback.message)
-    await callback.answer()
-
-@router.callback_query(F.data == "profile")
-async def profile_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = force_create_user(user_id, callback.from_user.username or "")
-    if not user:
-        await callback.answer("❌ Ошибка!", show_alert=True)
-        return
-    await profile_cmd(callback.message)
-    await callback.answer()
+    await callback.message.edit_text(f"{'🧠 **Текст**' if mode == 'text' else '🖼️ **Картинка**'}\n\nГотов к работе!", reply_markup=main_menu())
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
@@ -465,7 +387,10 @@ async def contact_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     user_pages[user_id] = {"state": "waiting_contact"}
-    await callback.message.edit_text("📩 Напишите сообщение админу.\n⏹ /cancel", reply_markup=main_menu())
+    await callback.message.edit_text(
+        "📩 Напишите сообщение админу.\n\n⏹ /cancel",
+        reply_markup=main_menu()
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "back_to_main")
@@ -537,7 +462,7 @@ async def payment_success(message: types.Message):
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
     if is_admin(message.from_user.id):
-        await message.answer("🛡️ АДМИН-ПАНЕЛЬ", reply_markup=admin_kb())
+        await message.answer("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
     else:
         await message.answer("🔐 Введите код: /admin_code 30121979")
 
@@ -550,7 +475,7 @@ async def admin_code_cmd(message: types.Message):
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
     if is_admin(callback.from_user.id):
-        await callback.message.edit_text("🛡️ АДМИН-ПАНЕЛЬ", reply_markup=admin_kb())
+        await callback.message.edit_text("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
         await callback.answer()
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
@@ -602,7 +527,7 @@ async def a_users_cb(callback: types.CallbackQuery):
         for u in users:
             emoji = plan_emoji.get(u[4], '🔴')
             blocked = "🚫" if u[5] == 1 else "✅"
-            text += f"{blocked} {emoji} {u[0]} — {u[1] or 'без имени'}\n"
+            text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
             text += f"   📝{u[2]} запросов | 🖼️{u[3]} картинок\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -611,6 +536,72 @@ async def a_users_cb(callback: types.CallbackQuery):
     
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
+
+# ========== АДМИНКА: ОБРАЩЕНИЯ ==========
+
+@router.callback_query(F.data == "a_messages")
+async def a_messages_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
+        messages = cursor.fetchall()
+    
+    if not messages:
+        await callback.message.edit_text(
+            "📩 **Обращения**\n\nНет обращений.",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
+        return
+    
+    text = "📩 **Обращения**\n\n"
+    for msg in messages:
+        status = "🆕" if msg[5] == "new" else "✅"
+        name = msg[2] or f"User_{msg[1]}"
+        text += f"{status} `{msg[1]}` — {name}\n"
+        text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
+        text += f"🕐 {msg[4][:16]}\n"
+        text += f"👉 /reply_{msg[1]} текст ответа\n\n"
+    
+    await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
+    await callback.answer()
+
+# ========== АДМИНКА: ОТВЕТ НА ОБРАЩЕНИЕ ==========
+
+@router.message(Command("reply"))
+async def reply_to_user(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("❌ Использование: /reply_123 Текст ответа")
+        return
+    
+    try:
+        user_id = int(parts[0].replace("/reply_", ""))
+        reply_text = parts[2]
+        
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE user_id = ? AND status = 'new'", (user_id,))
+        
+        try:
+            await message.bot.send_message(
+                user_id,
+                f"📩 **Ответ от администратора:**\n\n{reply_text}"
+            )
+            await message.answer(f"✅ Сообщение отправлено пользователю `{user_id}`")
+        except Exception as e:
+            await message.answer(f"❌ Не удалось отправить: {e}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 # ========== АДМИНКА: ВЫДАТЬ PREMIUM ==========
 
@@ -659,7 +650,7 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     ])
     
     await callback.message.edit_text(
-        f"👤 Пользователь: {user_id}\n\nВыберите план:",
+        f"👤 Пользователь: `{user_id}`\n\nВыберите план:",
         reply_markup=kb
     )
     await callback.answer()
@@ -679,7 +670,7 @@ async def confirm_premium(callback: types.CallbackQuery):
     plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
     await callback.message.edit_text(
-        f"✅ {plan_names.get(plan, 'Premium')} на 30 дней выдан пользователю {user_id}!",
+        f"✅ {plan_names.get(plan, 'Premium')} на 30 дней выдан пользователю `{user_id}`!",
         reply_markup=admin_kb()
     )
     await callback.answer()
