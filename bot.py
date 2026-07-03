@@ -33,10 +33,17 @@ async def main():
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # ВРЕМЕННО ОТКЛЮЧАЕМ ВОССТАНОВЛЕНИЕ БЕКАПА
-    # backup = GitHubBackup()
-    # backup.restore_latest_backup()
-    logger.info("⚠️ Восстановление бекапа ОТКЛЮЧЕНО для создания чистой БД")
+    # ВОССТАНАВЛИВАЕМ БЕКАП
+    try:
+        backup = GitHubBackup()
+        backup.restore_latest_backup()
+        logger.info("✅ Бекап восстановлен")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось восстановить бекап: {e}")
+    
+    # Снова запускаем миграцию после восстановления
+    init_db()
+    logger.info("✅ Миграция БД выполнена")
     
     def backup_loop():
         while True:
