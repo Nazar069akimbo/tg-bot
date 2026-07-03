@@ -17,7 +17,6 @@ IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
 def force_create_user(user_id, username=None):
-    """ПРИНУДИТЕЛЬНО создаёт пользователя"""
     try:
         user = get_user(user_id)
         if user:
@@ -109,11 +108,12 @@ async def profile_cmd(message: types.Message):
         await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
         return
     
-    try:
+    # Используем get_db() вместо глобального cursor
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         refs = cursor.fetchone()[0] or 0
-    except:
-        refs = 0
     
     used, limit, prem, plan = get_image_stats(user_id)
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
@@ -140,11 +140,12 @@ async def referral_cmd(message: types.Message):
         await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
         return
     
-    try:
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         count = cursor.fetchone()[0] or 0
-    except:
-        count = 0
+    
     link = f"https://t.me/Vertex1bot?start={user_id}"
     await message.answer(f"👥 **Рефералы**\n\nПриглашено: {count}\nБонус: +5 запросов\n\n🔗 {link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
@@ -161,8 +162,13 @@ async def help_cmd(message: types.Message):
 async def leaderboard_cmd(message: types.Message):
     user_id = message.from_user.id
     force_create_user(user_id, message.from_user.username or "")
-    cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
-    users = cursor.fetchall()
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, total_requests FROM users ORDER BY total_requests DESC LIMIT 10")
+        users = cursor.fetchall()
+    
     if not users:
         return await message.answer("🏆 Пока нет данных", reply_markup=main_menu())
     medals = ['🥇', '🥈', '🥉']
@@ -300,7 +306,7 @@ async def generate_image(message: types.Message):
         logger.error(f"❌ Ошибка генерации: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ========== ВСЕ CALLBACK'и ==========
+# ========== CALLBACK'и ==========
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
@@ -395,9 +401,13 @@ async def pay_cb(callback: types.CallbackQuery):
         else:
             return await callback.answer("❌ Неверный тариф", show_alert=True)
         payload = secrets.token_hex(16)
-        cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
-                    (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
-        conn.commit()
+        
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
+                        (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
+        
         await callback.bot.send_invoice(
             chat_id=user_id, title=title, description=f"{days} дней Premium",
             payload=payload, provider_token="", currency="XTR",
@@ -414,13 +424,19 @@ async def pre_checkout(query: types.PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def payment_success(message: types.Message):
     payload = message.successful_payment.invoice_payload
-    cursor.execute("SELECT stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
-    row = cursor.fetchone()
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
+        row = cursor.fetchone()
+    
     if row:
         stars, plan = row
         add_premium(message.from_user.id, 30, plan)
-        cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
-        conn.commit()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
         do_backup()
         plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
         await message.answer(f"✅ {plan_names.get(plan, 'Premium')} на 30 дней активирован!")
@@ -455,8 +471,13 @@ async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     total, prem, req = get_stats()
-    cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
-    deluxe = cursor.fetchone()[0] or 0
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
+        deluxe = cursor.fetchone()[0] or 0
+    
     await callback.message.edit_text(f"📊 **Статистика**\n\n👥 Всего: {total}\n💎 Premium: {prem - deluxe}\n👑 Premium Deluxe: {deluxe}\n📝 Запросов: {req}", reply_markup=admin_kb())
     await callback.answer()
 
@@ -464,8 +485,13 @@ async def a_stats_cb(callback: types.CallbackQuery):
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    cursor.execute("SELECT user_id, username, total_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
-    users = cursor.fetchall()
+    
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, total_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        users = cursor.fetchall()
+    
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
     text = "👥 **Пользователи**\n\n" + "\n".join([f"{'🚫' if u[4] else '✅'} {plan_emoji.get(u[3], '🔴')} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users]) if users else "Нет пользователей"
     await callback.message.edit_text(text, reply_markup=admin_kb())
@@ -612,8 +638,13 @@ async def handle_admin_input(message: types.Message):
             user_pages.pop(user_id, None)
             return await message.answer("✅ Отменено", reply_markup=admin_kb())
         await message.answer("📢 Рассылка...")
-        cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-        users = cursor.fetchall()
+        
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+            users = cursor.fetchall()
+        
         sent = 0
         for u in users:
             try:
@@ -628,9 +659,12 @@ async def handle_admin_input(message: types.Message):
         return
     
     if state.get("state") == "waiting_contact":
-        cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
-                    (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
-        conn.commit()
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
+                        (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
+        
         await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")
         await message.answer("✅ Отправлено админу!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
