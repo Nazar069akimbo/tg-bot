@@ -394,9 +394,21 @@ async def stats_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    class FakeMessage:
+        def __init__(self, uid, username):
+            self.from_user = type('obj', (object,), {'id': uid, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = callback.message.reply_markup
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username or "")
+    await profile_cmd(fake_msg)
     await callback.answer()
-    await profile_cmd(callback.message)
-
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
     await callback.answer()
