@@ -39,7 +39,8 @@ def init_db():
             trial_active INTEGER DEFAULT 0,
             last_image_reset TEXT,
             referral_bonus_images INTEGER DEFAULT 0,
-            referral_bonus_requests INTEGER DEFAULT 0
+            referral_bonus_requests INTEGER DEFAULT 0,
+            paid_premium INTEGER DEFAULT 0
         )
         ''')
         
@@ -102,7 +103,8 @@ def init_db():
             'trial_active': 'INTEGER DEFAULT 0',
             'last_image_reset': 'TEXT',
             'referral_bonus_images': 'INTEGER DEFAULT 0',
-            'referral_bonus_requests': 'INTEGER DEFAULT 0'
+            'referral_bonus_requests': 'INTEGER DEFAULT 0',
+            'paid_premium': 'INTEGER DEFAULT 0'
         }
         
         for col, dtype in columns_to_add.items():
@@ -159,9 +161,9 @@ def create_user(user_id, username):
                 return True
             cursor.execute("""
                 INSERT INTO users 
-                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0))
+                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests, paid_premium) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0, 0))
             print(f"✅ Создан пользователь {user_id}")
             return True
     except Exception as e:
@@ -173,35 +175,28 @@ def add_referral(referrer_id, referred_id):
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем что не приглашает сам себя
             if referrer_id == referred_id:
                 return False, "Нельзя пригласить самого себя!"
             
-            # Проверяем что реферер существует
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referrer_id,))
             if not cursor.fetchone():
                 return False, "Реферер не найден!"
             
-            # Проверяем что реферал существует
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referred_id,))
             if not cursor.fetchone():
                 return False, "Пользователь не найден!"
             
-            # Проверяем что реферал ещё не был приглашён кем-то
             cursor.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
             if cursor.fetchone():
                 return False, "Этот пользователь уже был приглашён!"
             
-            # Проверяем что реферер ещё не приглашал этого пользователя
             cursor.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", (referrer_id, referred_id))
             if cursor.fetchone():
                 return False, "Вы уже приглашали этого пользователя!"
             
-            # Добавляем реферала
             cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
                         (referrer_id, referred_id, datetime.now().isoformat()))
             
-            # Даём бонусы рефереру: +3 картинки и +10 запросов
             cursor.execute("UPDATE users SET referral_bonus_images = referral_bonus_images + 3 WHERE user_id = ?", (referrer_id,))
             cursor.execute("UPDATE users SET referral_bonus_requests = referral_bonus_requests + 10 WHERE user_id = ?", (referrer_id,))
             
@@ -230,23 +225,23 @@ def get_referral_bonuses(user_id):
     except:
         return 0, 0
 
-def use_referral_bonus_image(user_id):
+def mark_paid_premium(user_id):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE users SET referral_bonus_images = referral_bonus_images - 1 WHERE user_id = ? AND referral_bonus_images > 0", (user_id,))
-            return cursor.rowcount > 0
+            cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
+            return True
     except:
         return False
 
-def use_referral_bonus_request(user_id):
+def get_paid_premium_count():
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE users SET referral_bonus_requests = referral_bonus_requests - 1 WHERE user_id = ? AND referral_bonus_requests > 0", (user_id,))
-            return cursor.rowcount > 0
+            cursor.execute("SELECT COUNT(*) FROM users WHERE paid_premium = 1")
+            return cursor.fetchone()[0] or 0
     except:
-        return False
+        return 0
 
 def is_admin(user_id):
     try:
@@ -293,13 +288,15 @@ def set_user_plan(user_id, plan):
     except:
         return False
 
-def add_premium(user_id, days, plan='premium'):
+def add_premium(user_id, days, plan='premium', paid=False):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             new_date = (datetime.now() + timedelta(days=days)).isoformat()
             cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
                         (new_date, plan, user_id))
+            if paid:
+                cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
             return True
     except:
         return False
@@ -471,9 +468,31 @@ def get_stats():
             req = cursor.fetchone()[0] or 0
             cursor.execute("SELECT SUM(image_requests) FROM users")
             images = cursor.fetchone()[0] or 0
-            return total, prem, req, images
+            cursor.execute("SELECT COUNT(*) FROM users WHERE paid_premium = 1")
+            paid = cursor.fetchone()[0] or 0
+            return total, prem, req, images, paid
     except:
-        return 0, 0, 0, 0
+        return 0, 0, 0, 0, 0
+
+def get_daily_stats(days=30):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            result = []
+            for i in range(days):
+                date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+                cursor.execute("""
+                    SELECT COUNT(*) FROM users WHERE date(joined) = ?
+                """, (date,))
+                new_users = cursor.fetchone()[0] or 0
+                cursor.execute("""
+                    SELECT COUNT(*) FROM payments WHERE date(timestamp) = ? AND status = 'completed'
+                """, (date,))
+                payments = cursor.fetchone()[0] or 0
+                result.append({'date': date, 'new_users': new_users, 'payments': payments})
+            return list(reversed(result))
+    except:
+        return []
 
 def is_trial_active(user_id):
     try:
@@ -528,3 +547,12 @@ def delete_message(message_id):
             return True
     except:
         return False
+
+def get_message_by_id(message_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM messages_to_admin WHERE id = ?", (message_id,))
+            return cursor.fetchone()
+    except:
+        return None

@@ -6,6 +6,8 @@ from ai.client import solve_problem
 from backup import GitHubBackup
 import logging, secrets, os, requests, asyncio
 from datetime import datetime
+from io import BytesIO
+import matplotlib.pyplot as plt
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -15,6 +17,10 @@ ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
+
+# Настройка matplotlib для кириллицы
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['font.size'] = 10
 
 def force_create_user(user_id, username=None):
     try:
@@ -64,16 +70,16 @@ def main_menu():
     ])
 
 def admin_kb():
-    # Считаем новые обращения
     new_messages = get_messages_count()
     badge = f" ({new_messages})" if new_messages > 0 else ""
     
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
         [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
         [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 # ========== КОМАНДЫ ==========
@@ -91,7 +97,6 @@ async def start_cmd(message: types.Message):
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
         if referrer_id != user_id:
-            # Проверяем и добавляем реферала
             success, msg = add_referral(referrer_id, user_id)
             if success:
                 await message.answer(msg)
@@ -448,7 +453,8 @@ async def payment_success(message: types.Message):
     
     if row:
         stars, plan = row
-        add_premium(message.from_user.id, 30, plan)
+        add_premium(message.from_user.id, 30, plan, paid=True)
+        mark_paid_premium(message.from_user.id)
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
@@ -488,7 +494,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    total, prem, req, images = get_stats()
+    total, prem, req, images, paid = get_stats()
     
     from database.db import get_db
     with get_db() as conn:
@@ -501,8 +507,58 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"👥 Всего пользователей: {total}\n"
         f"💎 Premium: {prem - deluxe}\n"
         f"👑 Premium Deluxe: {deluxe}\n"
+        f"💰 Оплатили Premium: {paid}\n"
         f"📝 Всего запросов: {req}\n"
         f"🖼️ Всего картинок: {images}",
+        reply_markup=admin_kb()
+    )
+    await callback.answer()
+
+# ========== АДМИНКА: ГРАФИК ==========
+
+@router.callback_query(F.data == "a_chart")
+async def a_chart_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    data = get_daily_stats(30)
+    
+    if not data:
+        await callback.message.edit_text(
+            "📈 **График за месяц**\n\nНет данных для отображения.",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
+        return
+    
+    dates = [d['date'] for d in data]
+    new_users = [d['new_users'] for d in data]
+    payments = [d['payments'] for d in data]
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(dates, new_users, label='Новые пользователи', color='blue', marker='o', linewidth=2, markersize=4)
+    ax.plot(dates, payments, label='Оплаты Premium', color='green', marker='s', linewidth=2, markersize=4)
+    ax.set_xlabel('Дата')
+    ax.set_ylabel('Количество')
+    ax.set_title('📊 Статистика за 30 дней')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=45)
+    
+    # Убираем пустые даты
+    ax.set_xticks([d for i, d in enumerate(dates) if i % 3 == 0])
+    
+    plt.tight_layout()
+    
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    buf.seek(0)
+    plt.close()
+    
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
+        caption="📈 **График за 30 дней**\n\nСиний — новые пользователи\nЗелёный — оплаты Premium",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -565,17 +621,10 @@ async def a_messages_cb(callback: types.CallbackQuery):
         name = msg[2] or f"User_{msg[1]}"
         text += f"{status} `{msg[1]}` — {name}\n"
         text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
-        text += f"🕐 {msg[4][:16]}\n"
-        
-        # Кнопки для каждого сообщения
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply_msg_{msg[0]}")],
-            [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_msg_{msg[0]}")]
-        ])
-        text += "\n"
+        text += f"🕐 {msg[4][:16]}\n\n"
     
-    # Добавляем кнопку очистки всех
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Ответить на последнее", callback_data="reply_last")],
         [InlineKeyboardButton(text="🗑️ Очистить все", callback_data="delete_all_messages")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
@@ -583,36 +632,35 @@ async def a_messages_cb(callback: types.CallbackQuery):
     await callback.message.edit_text(text[:4000], reply_markup=kb)
     await callback.answer()
 
-# ========== АДМИНКА: ОТВЕТ НА ОБРАЩЕНИЕ (ЧЕРЕЗ КНОПКУ) ==========
+# ========== АДМИНКА: ОТВЕТ НА ПОСЛЕДНЕЕ ОБРАЩЕНИЕ ==========
 
-@router.callback_query(F.data.startswith("reply_msg_"))
-async def reply_message_cb(callback: types.CallbackQuery):
+@router.callback_query(F.data == "reply_last")
+async def reply_last_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    msg_id = int(callback.data.replace("reply_msg_", ""))
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM messages_to_admin WHERE status = 'new' ORDER BY date DESC LIMIT 1")
+        row = cursor.fetchone()
+    
+    if not row:
+        await callback.answer("❌ Нет новых обращений", show_alert=True)
+        return
+    
+    msg_id = row[0]
     user_pages[callback.from_user.id] = {"state": "waiting_reply", "msg_id": msg_id}
     
     await callback.message.edit_text(
         "✏️ Введите текст ответа.\n\n"
+        "После ответа сообщение будет помечено как обработанное.\n\n"
         "⏹ Отмена: /cancel",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="a_messages")]
         ])
     )
     await callback.answer()
-
-# ========== АДМИНКА: УДАЛИТЬ ОБРАЩЕНИЕ ==========
-
-@router.callback_query(F.data.startswith("delete_msg_"))
-async def delete_message_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    msg_id = int(callback.data.replace("delete_msg_", ""))
-    delete_message(msg_id)
-    await callback.answer("🗑️ Сообщение удалено", show_alert=True)
-    await a_messages_cb(callback)
 
 # ========== АДМИНКА: ОЧИСТИТЬ ВСЕ ОБРАЩЕНИЯ ==========
 
@@ -819,18 +867,28 @@ async def handle_admin_input(message: types.Message):
         from database.db import get_db
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM messages_to_admin WHERE id = ?", (msg_id,))
-            row = cursor.fetchone()
-            if row:
-                user_id_target = row[0]
+            msg = get_message_by_id(msg_id)
+            if msg:
+                user_id_target = msg[1]
                 cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE id = ?", (msg_id,))
                 
+                # Отправляем ответ
                 try:
                     await message.bot.send_message(
                         user_id_target,
                         f"📩 **Ответ от администратора:**\n\n{reply_text}"
                     )
-                    await message.answer(f"✅ Ответ отправлен пользователю `{user_id_target}`", reply_markup=admin_kb())
+                    
+                    # Кнопки после ответа
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🗑️ Удалить это сообщение", callback_data=f"delete_msg_{msg_id}")],
+                        [InlineKeyboardButton(text="🔙 Назад", callback_data="a_messages")]
+                    ])
+                    
+                    await message.answer(
+                        f"✅ Ответ отправлен пользователю `{user_id_target}`",
+                        reply_markup=kb
+                    )
                 except Exception as e:
                     await message.answer(f"❌ Не удалось отправить: {e}", reply_markup=admin_kb())
             else:
@@ -901,6 +959,16 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отправлено админу!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
+
+@router.callback_query(F.data.startswith("delete_msg_"))
+async def delete_message_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    msg_id = int(callback.data.replace("delete_msg_", ""))
+    delete_message(msg_id)
+    await callback.answer("🗑️ Сообщение удалено", show_alert=True)
+    await a_messages_cb(callback)
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: types.Message):
