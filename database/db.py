@@ -7,7 +7,6 @@ os.makedirs('data', exist_ok=True)
 
 @contextmanager
 def get_db():
-    """Создаёт соединение с БД и автоматически закрывает его"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -23,7 +22,6 @@ def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # Создаём таблицы
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -90,7 +88,6 @@ def init_db():
         )
         ''')
         
-        # Проверяем колонки
         cursor.execute("PRAGMA table_info(users)")
         existing_cols = [row[1] for row in cursor.fetchall()]
         
@@ -111,7 +108,6 @@ def init_db():
                 except:
                     pass
         
-        # Настройки по умолчанию
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -153,9 +149,9 @@ def create_user(user_id, username):
             
             cursor.execute("""
                 INSERT INTO users 
-                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, now, now, 1, now, 0))
+                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, now, now, 1, now, 0, 0, 0))
             print(f"✅ Создан пользователь {user_id}")
             return True
     except Exception as e:
@@ -372,14 +368,25 @@ def get_image_stats(user_id):
 
 def add_image_request(user_id):
     try:
+        print(f"🔍 add_image_request: НАЧАЛО для {user_id}")
+        
         with get_db() as conn:
             cursor = conn.cursor()
+            
+            # Проверяем текущее значение
+            cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
+            old = cursor.fetchone()
+            print(f"📊 Старое значение image_requests: {old[0] if old else 'None'}")
+            
+            # Увеличиваем на 1
             cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
             
+            # Проверяем новое значение
             cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            if result:
-                print(f"✅ image_requests для {user_id} теперь = {result[0]}")
+            new = cursor.fetchone()
+            print(f"✅ НОВОЕ значение image_requests: {new[0] if new else 'None'}")
+            
+            if new:
                 return True
             return False
     except Exception as e:
@@ -396,9 +403,11 @@ def get_stats():
             prem = cursor.fetchone()[0]
             cursor.execute("SELECT SUM(total_requests) FROM users")
             req = cursor.fetchone()[0] or 0
-            return total, prem, req
+            cursor.execute("SELECT SUM(image_requests) FROM users")
+            images = cursor.fetchone()[0] or 0
+            return total, prem, req, images
     except:
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
 def is_trial_active(user_id):
     try:
