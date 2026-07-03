@@ -57,6 +57,40 @@ def admin_kb():
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+def get_plan_emoji(plan):
+    """Возвращает эмодзи и название плана"""
+    if plan == 'premium_deluxe':
+        return "👑 Premium Deluxe ✨✨✨"
+    elif plan == 'premium':
+        return "💎 Premium ✨"
+    else:
+        return "🔴 Бесплатный"
+
+def get_plan_bonuses(plan):
+    """Возвращает список плюсов для плана"""
+    if plan == 'premium_deluxe':
+        return [
+            "✅ Безлимит текстовых запросов",
+            "✅ 200 картинок в день",
+            "✅ Приоритетная обработка",
+            "✅ Эксклюзивные промпты",
+            "✅ VIP-поддержка 24/7"
+        ]
+    elif plan == 'premium':
+        return [
+            "✅ Безлимит текстовых запросов",
+            "✅ 50 картинок в день",
+            "✅ Приоритетная обработка"
+        ]
+    else:
+        return [
+            "❌ 10 текстовых запросов/день",
+            "❌ 3 картинки/день",
+            "❌ Обычная обработка"
+        ]
+
 # ========== КОМАНДЫ ==========
 
 @router.message(Command("start"))
@@ -93,16 +127,42 @@ async def stats_cmd(message: types.Message):
     total_requests = user[5] if len(user) > 5 and user[5] else 0
     total_images = user[8] if len(user) > 8 and user[8] else 0
     
-    plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+    plan_name = get_plan_emoji(plan)
     
     text = f"📊 **СТАТИСТИКА**\n\n"
-    text += f"📝 Текстовых запросов осталось: {rem if not prem else '∞'}\n"
-    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
-    text += f"📊 Всего запросов: {total_requests}\n"
-    text += f"🖼️ Всего картинок: {total_images}\n"
+    
+    # Текстовые запросы
+    if prem:
+        text += f"📝 Текстовые запросы: **♾️ Безлимит**\n"
+    else:
+        text += f"📝 Текстовых запросов осталось: **{rem} из 10**\n"
+    
+    # Картинки
+    if prem:
+        text += f"🖼️ Картинок сегодня: **{used}/{limit}**\n"
+    else:
+        remaining = limit - used
+        text += f"🖼️ Картинок сегодня: **{used}/{limit}** (осталось {remaining})\n"
+    
+    # Пробный период
     if trial > 0 and not prem:
-        text += f"🎁 Пробный период: {trial} картинок\n"
-    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
+        text += f"🎁 Пробный период: **{trial} картинок** осталось\n"
+    
+    text += f"\n📊 Всего запросов: **{total_requests}**\n"
+    text += f"🖼️ Всего картинок: **{total_images}**\n"
+    
+    text += f"\n💎 План: **{plan_name}**\n"
+    
+    # Плюсы плана
+    text += "\n**Преимущества:**\n"
+    for bonus in get_plan_bonuses(plan):
+        text += f"{bonus}\n"
+    
+    # Ссылка на покупку
+    if plan == 'basic':
+        text += f"\n💎 Хочешь больше? Нажми /subscribe"
+    elif plan == 'premium':
+        text += f"\n👑 Хочешь ещё больше? Нажми /subscribe"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -123,16 +183,37 @@ async def profile_cmd(message: types.Message):
     used, limit, prem, plan = get_image_stats(user_id)
     total_requests = user[5] if len(user) > 5 and user[5] else 0
     total_images = user[8] if len(user) > 8 and user[8] else 0
-    plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+    
+    plan_name = get_plan_emoji(plan)
     
     text = f"👤 **ПРОФИЛЬ**\n\n"
-    text += f"🆔 ID: {user[0]}\n"
-    text += f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
-    text += f"📝 Всего запросов: {total_requests}\n"
-    text += f"🖼️ Всего картинок: {total_images}\n"
-    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
-    text += f"👥 Приглашено: {refs}\n"
-    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
+    text += f"🆔 ID: **{user[0]}**\n"
+    text += f"📆 Регистрация: **{user[2][:10] if user[2] else 'Нет'}**\n"
+    
+    # Статистика использования
+    text += f"\n📊 **Использование:**\n"
+    text += f"📝 Всего запросов: **{total_requests}**\n"
+    text += f"🖼️ Всего картинок: **{total_images}**\n"
+    
+    if prem:
+        text += f"🖼️ Картинок сегодня: **{used}/{limit}**\n"
+    else:
+        remaining = limit - used
+        text += f"🖼️ Картинок сегодня: **{used}/{limit}** (осталось {remaining})\n"
+    
+    text += f"\n👥 Приглашено друзей: **{refs}**\n"
+    text += f"💎 План: **{plan_name}**\n"
+    
+    # Плюсы плана
+    text += "\n**Преимущества:**\n"
+    for bonus in get_plan_bonuses(plan):
+        text += f"{bonus}\n"
+    
+    # Ссылка на покупку
+    if plan == 'basic':
+        text += f"\n💎 Хочешь больше? Нажми /subscribe"
+    elif plan == 'premium':
+        text += f"\n👑 Хочешь ещё больше? Нажми /subscribe"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -140,8 +221,30 @@ async def profile_cmd(message: types.Message):
 async def subscribe_cmd(message: types.Message):
     user_id = message.from_user.id
     force_create_user(user_id, message.from_user.username or "")
+    
+    text = (
+        "💎 **Выберите тариф Premium**\n\n"
+        "📋 **Сравнение тарифов:**\n\n"
+        "🔴 **Бесплатный** — 0⭐\n"
+        "• 10 текстовых запросов/день\n"
+        "• 3 картинки/день\n"
+        "• Обычная обработка\n\n"
+        "💎 **Premium** — 49⭐/мес\n"
+        "• Безлимит текстовых запросов\n"
+        "• 50 картинок/день\n"
+        "• Приоритетная обработка\n"
+        "• ✨ Бонус: +5 реферальных запросов\n\n"
+        "👑 **Premium Deluxe** — 99⭐/мес\n"
+        "• Безлимит текстовых запросов\n"
+        "• 200 картинок/день\n"
+        "• Приоритетная обработка\n"
+        "• Эксклюзивные промпты\n"
+        "• VIP-поддержка 24/7\n"
+        "• ✨✨ Бонус: +20 реферальных запросов"
+    )
+    
     await message.answer(
-        "💎 **Выберите тариф**\n\n💎 Premium — 49⭐/мес\n👑 Premium Deluxe — 99⭐/мес",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💎 Premium 49⭐", callback_data="pay_premium"), InlineKeyboardButton(text="👑 Deluxe 99⭐", callback_data="pay_deluxe")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
@@ -163,10 +266,27 @@ async def referral_cmd(message: types.Message):
         count = cursor.fetchone()[0] or 0
     
     link = f"https://t.me/Vertex1bot?start={user_id}"
-    await message.answer(f"👥 **Рефералы**\n\nПриглашено: {count}\nБонус: +5 запросов\n\n🔗 {link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся!")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ]))
+    
+    # Бонусы за рефералов
+    plan = get_user_plan(user_id)
+    if plan == 'premium_deluxe':
+        bonus = "20"
+    elif plan == 'premium':
+        bonus = "5"
+    else:
+        bonus = "5"
+    
+    await message.answer(
+        f"👥 **Реферальная система**\n\n"
+        f"👤 Приглашено: **{count}**\n"
+        f"💰 Бонус: **+{bonus} запросов** за каждого друга\n\n"
+        f"🔗 Твоя ссылка:\n`{link}`\n\n"
+        f"📤 Отправь ссылку друзьям и получай бонусы!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Присоединяйся к Vertex AI!")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ])
+    )
 
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
@@ -226,14 +346,14 @@ async def generate_text(message: types.Message):
     user_id = message.from_user.id
     ok, rem = can_request(user_id)
     if not ok:
-        return await message.answer("🔒 Лимит исчерпан! /subscribe")
+        return await message.answer("🔒 Лимит исчерпан! Купи Premium: /subscribe")
     prem = is_premium(user_id)
     status_msg = await message.answer("🤔 Думаю...")
     try:
         answer = solve_problem(message.text, "chat", prem)
         add_request(user_id)
         do_backup()
-        await status_msg.edit_text(f"🧠 {answer}\n\n{'∞' if prem else rem-1} запросов осталось")
+        await status_msg.edit_text(f"🧠 {answer}\n\n{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
@@ -257,7 +377,7 @@ async def generate_image(message: types.Message):
         can_gen, _ = can_generate_image(user_id)
     
     if not can_gen:
-        return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /subscribe")
+        return await message.answer(f"❌ Лимит картинок исчерпан! {used}/{limit}\n💎 Купи Premium: /subscribe")
     
     status_msg = await message.answer("🎨 Генерирую...")
     try:
@@ -309,11 +429,12 @@ async def generate_image(message: types.Message):
                     new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     logger.info(f"📊 После генерации: used={new_used}, limit={new_limit}")
                     
-                    plan_emoji = "💎 Premium" if new_plan == 'premium' else "👑 Premium Deluxe" if new_plan == 'premium_deluxe' else "🔴 Бесплатный"
+                    plan_emoji = get_plan_emoji(new_plan)
+                    remaining = new_limit - new_used
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {new_limit - new_used}\n💎 {plan_emoji}"
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: **{remaining}**\n💎 План: **{plan_emoji}**"
                     )
                     await status_msg.delete()
                     return
@@ -500,11 +621,11 @@ async def a_stats_cb(callback: types.CallbackQuery):
     
     await callback.message.edit_text(
         f"📊 **СТАТИСТИКА БОТА**\n\n"
-        f"👥 Всего пользователей: {total}\n"
-        f"💎 Premium: {prem - deluxe}\n"
-        f"👑 Premium Deluxe: {deluxe}\n"
-        f"📝 Всего запросов: {req}\n"
-        f"🖼️ Всего картинок: {images}",
+        f"👥 Всего пользователей: **{total}**\n"
+        f"💎 Premium: **{prem - deluxe}**\n"
+        f"👑 Premium Deluxe: **{deluxe}**\n"
+        f"📝 Всего запросов: **{req}**\n"
+        f"🖼️ Всего картинок: **{images}**",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -533,7 +654,6 @@ async def a_users_cb(callback: types.CallbackQuery):
             text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
             text += f"   📝{u[2]} запросов | 🖼️{u[3]} картинок\n"
     
-    # Кнопки для выбора пользователя
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
@@ -541,14 +661,13 @@ async def a_users_cb(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
-# ========== АДМИНКА: ВЫДАТЬ PREMIUM (БЕЗ ID) ==========
+# ========== АДМИНКА: ВЫДАТЬ PREMIUM ==========
 
 @router.callback_query(F.data == "a_give_premium")
 async def a_give_premium_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    # Показываем список пользователей для выдачи Premium
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
@@ -575,7 +694,6 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# Обработка выбора пользователя для Premium
 @router.callback_query(F.data.startswith("give_premium_"))
 async def give_premium_confirm(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -583,7 +701,6 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     
     user_id = int(callback.data.replace("give_premium_", ""))
     
-    # Кнопки выбора плана
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💎 Premium (30 дней)", callback_data=f"confirm_premium_{user_id}_premium")],
         [InlineKeyboardButton(text="👑 Premium Deluxe (30 дней)", callback_data=f"confirm_premium_{user_id}_premium_deluxe")],
@@ -591,13 +708,11 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     ])
     
     await callback.message.edit_text(
-        f"👤 Пользователь: `{user_id}`\n\n"
-        f"Выберите план:",
+        f"👤 Пользователь: `{user_id}`\n\nВыберите план:",
         reply_markup=kb
     )
     await callback.answer()
 
-# Подтверждение выдачи Premium
 @router.callback_query(F.data.startswith("confirm_premium_"))
 async def confirm_premium(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -618,14 +733,13 @@ async def confirm_premium(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ========== АДМИНКА: БЛОКИРОВКА (БЕЗ ID) ==========
+# ========== АДМИНКА: БЛОКИРОВКА ==========
 
 @router.callback_query(F.data == "a_block")
 async def a_block_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    # Показываем список пользователей
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
@@ -648,7 +762,6 @@ async def a_block_cb(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# Обработка блокировки
 @router.callback_query(F.data.startswith("block_user_"))
 async def block_user_action(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -671,8 +784,6 @@ async def block_user_action(callback: types.CallbackQuery):
         await callback.answer("🚫 Пользователь ЗАБЛОКИРОВАН", show_alert=True)
     
     do_backup()
-    
-    # Обновляем список
     await a_block_cb(callback)
 
 # ========== АДМИНКА: ТАРИФЫ ==========
