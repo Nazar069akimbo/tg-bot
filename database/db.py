@@ -40,7 +40,11 @@ def init_db():
             last_image_reset TEXT,
             referral_bonus_images INTEGER DEFAULT 0,
             referral_bonus_requests INTEGER DEFAULT 0,
-            paid_premium INTEGER DEFAULT 0
+            paid_premium INTEGER DEFAULT 0,
+            bonus_images INTEGER DEFAULT 0,
+            bonus_requests INTEGER DEFAULT 0,
+            last_checkin TEXT,
+            checkin_streak INTEGER DEFAULT 0
         )
         ''')
         
@@ -104,7 +108,11 @@ def init_db():
             'last_image_reset': 'TEXT',
             'referral_bonus_images': 'INTEGER DEFAULT 0',
             'referral_bonus_requests': 'INTEGER DEFAULT 0',
-            'paid_premium': 'INTEGER DEFAULT 0'
+            'paid_premium': 'INTEGER DEFAULT 0',
+            'bonus_images': 'INTEGER DEFAULT 0',
+            'bonus_requests': 'INTEGER DEFAULT 0',
+            'last_checkin': 'TEXT',
+            'checkin_streak': 'INTEGER DEFAULT 0'
         }
         
         for col, dtype in columns_to_add.items():
@@ -124,7 +132,10 @@ def init_db():
             ('premium_deluxe_output_words', '500'),
             ('image_limit_free', '3'),
             ('image_limit_premium', '50'),
-            ('image_limit_premium_deluxe', '200')
+            ('image_limit_premium_deluxe', '200'),
+            ('bonus_limit_free', '3'),
+            ('bonus_limit_premium', '5'),
+            ('bonus_limit_deluxe', '10')
         ]
         
         for key, value in default_settings:
@@ -161,9 +172,9 @@ def create_user(user_id, username):
                 return True
             cursor.execute("""
                 INSERT INTO users 
-                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests, paid_premium) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0, 0))
+                (user_id, username, joined, trial_start, trial_active, last_image_reset, image_requests, free_requests, total_requests, referral_bonus_images, referral_bonus_requests, paid_premium, bonus_images, bonus_requests, last_checkin, checkin_streak) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, now, now, 1, now, 0, 0, 0, 0, 0, 0, 0, 0, None, 0))
             print(f"✅ Создан пользователь {user_id}")
             return True
     except Exception as e:
@@ -332,57 +343,131 @@ def can_request(user_id):
     try:
         user = get_user(user_id)
         if not user:
-            return True, 10
+            return True, 10, 0
+        
+        # Если Premium — безлимит
         if is_premium(user_id):
-            return True, 999999
+            return True, 999999, 0
+        
+        # Основной счет
         used = user[4] if len(user) > 4 and user[4] else 0
         used = int(used) if used else 0
-        bonus = user[15] if len(user) > 15 and user[15] else 0
+        
+        # Бонусный счет
+        bonus = user[17] if len(user) > 17 and user[17] else 0
+        bonus = int(bonus) if bonus else 0
+        
+        # Всего доступно
         total = 10 + bonus
-        return used < total, total - used
+        remaining = total - used
+        
+        if remaining > 0:
+            return True, remaining, bonus
+        return False, 0, bonus
     except:
-        return True, 10
+        return True, 10, 0
 
 def add_request(user_id):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+            user = get_user(user_id)
+            
+            # Если Premium — не тратим запросы
+            if is_premium(user_id):
+                cursor.execute("UPDATE users SET total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+                return True
+            
+            # Сначала тратим бонусные
+            bonus = user[17] if len(user) > 17 and user[17] else 0
+            if bonus > 0:
+                cursor.execute("UPDATE users SET bonus_requests = bonus_requests - 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
             return True
     except:
         return False
 
-def get_setting(key):
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            r = cursor.fetchone()
-            if r:
-                return r[0]
-    except:
-        pass
-    defaults = {
-        'free_input_chars': '500',
-        'free_output_words': '50',
-        'premium_input_chars': '3000',
-        'premium_output_words': '300',
-        'premium_deluxe_input_chars': '5000',
-        'premium_deluxe_output_words': '500',
-        'image_limit_free': '3',
-        'image_limit_premium': '50',
-        'image_limit_premium_deluxe': '200'
-    }
-    return defaults.get(key, '0')
+def get_image_limit(user_id):
+    plan = get_user_plan(user_id)
+    if plan == 'premium_deluxe':
+        return int(get_setting('image_limit_premium_deluxe') or 200)
+    elif plan == 'premium':
+        return int(get_setting('image_limit_premium') or 50)
+    else:
+        return int(get_setting('image_limit_free') or 3)
 
-def set_setting(key, value):
+def can_generate_image(user_id):
+    try:
+        reset_image_count_if_needed(user_id)
+        user = get_user(user_id)
+        if not user:
+            return True, 3, 0
+        
+        used = user[8] if len(user) > 8 and user[8] else 0
+        used = int(used) if used else 0
+        
+        # Бонусные картинки
+        bonus = user[16] if len(user) > 16 and user[16] else 0
+        bonus = int(bonus) if bonus else 0
+        
+        limit = get_image_limit(user_id) + bonus
+        remaining = limit - used
+        
+        if remaining > 0:
+            return True, remaining, bonus
+        return False, 0, bonus
+    except:
+        return True, 3, 0
+
+def get_image_stats(user_id):
+    try:
+        reset_image_count_if_needed(user_id)
+        user = get_user(user_id)
+        if not user:
+            return 0, 3, False, 'basic', 0
+        
+        used = user[8] if len(user) > 8 and user[8] else 0
+        used = int(used) if used else 0
+        
+        bonus = user[16] if len(user) > 16 and user[16] else 0
+        bonus = int(bonus) if bonus else 0
+        
+        limit = get_image_limit(user_id) + bonus
+        prem = is_premium(user_id)
+        plan = get_user_plan(user_id)
+        return used, limit, prem, plan, bonus
+    except Exception as e:
+        print(f"⚠️ Ошибка get_image_stats: {e}")
+        return 0, 3, False, 'basic', 0
+
+def add_image_request(user_id):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            user = get_user(user_id)
+            
+            # Сначала тратим бонусные
+            bonus = user[16] if len(user) > 16 and user[16] else 0
+            if bonus > 0:
+                cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
             return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка add_image_request: {e}")
         return False
+
+def get_bonus_balance(user_id):
+    try:
+        user = get_user(user_id)
+        if user:
+            bonus_images = user[16] if len(user) > 16 and user[16] else 0
+            bonus_requests = user[17] if len(user) > 17 and user[17] else 0
+            return int(bonus_images) if bonus_images else 0, int(bonus_requests) if bonus_requests else 0
+        return 0, 0
+    except:
+        return 0, 0
 
 def reset_image_count_if_needed(user_id):
     try:
@@ -405,56 +490,6 @@ def reset_image_count_if_needed(user_id):
                                   (today.isoformat(), user_id))
     except:
         pass
-
-def get_image_limit(user_id):
-    plan = get_user_plan(user_id)
-    if plan == 'premium_deluxe':
-        return int(get_setting('image_limit_premium_deluxe') or 200)
-    elif plan == 'premium':
-        return int(get_setting('image_limit_premium') or 50)
-    else:
-        return int(get_setting('image_limit_free') or 3)
-
-def can_generate_image(user_id):
-    try:
-        reset_image_count_if_needed(user_id)
-        user = get_user(user_id)
-        if not user:
-            return True, 3
-        used = user[8] if len(user) > 8 and user[8] else 0
-        used = int(used) if used else 0
-        bonus = user[14] if len(user) > 14 and user[14] else 0
-        limit = get_image_limit(user_id) + bonus
-        return used < limit, limit - used
-    except:
-        return True, 3
-
-def get_image_stats(user_id):
-    try:
-        reset_image_count_if_needed(user_id)
-        user = get_user(user_id)
-        if not user:
-            return 0, 3, False, 'basic'
-        used = user[8] if len(user) > 8 and user[8] else 0
-        used = int(used) if used else 0
-        bonus = user[14] if len(user) > 14 and user[14] else 0
-        limit = get_image_limit(user_id) + bonus
-        prem = is_premium(user_id)
-        plan = get_user_plan(user_id)
-        return used, limit, prem, plan
-    except Exception as e:
-        print(f"⚠️ Ошибка get_image_stats: {e}")
-        return 0, 3, False, 'basic'
-
-def add_image_request(user_id):
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
-            return True
-    except Exception as e:
-        print(f"❌ Ошибка add_image_request: {e}")
-        return False
 
 def get_stats():
     try:
@@ -556,3 +591,128 @@ def get_message_by_id(message_id):
             return cursor.fetchone()
     except:
         return None
+
+# ========== ДНЕВНЫЕ БОНУСЫ ==========
+
+def get_bonus_amount(user_id):
+    """Возвращает бонус за чек-ин в зависимости от плана"""
+    plan = get_user_plan(user_id)
+    if plan == 'premium_deluxe':
+        return int(get_setting('bonus_limit_deluxe') or 10)
+    elif plan == 'premium':
+        return int(get_setting('bonus_limit_premium') or 5)
+    else:
+        return int(get_setting('bonus_limit_free') or 3)
+
+def get_bonus_requests_amount(user_id):
+    """Возвращает бонусные запросы за чек-ин"""
+    plan = get_user_plan(user_id)
+    if plan == 'premium_deluxe':
+        return 5
+    elif plan == 'premium':
+        return 3
+    else:
+        return 1
+
+def do_daily_checkin(user_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            today = datetime.now().date().isoformat()
+            
+            cursor.execute("SELECT last_checkin, checkin_streak FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            
+            if not row:
+                cursor.execute("UPDATE users SET last_checkin = ?, checkin_streak = 1 WHERE user_id = ?", (today, user_id))
+                return True, 1, "✅ День 1/7! Ты получил +1 запрос."
+            
+            last_checkin = row[0]
+            streak = row[1] if row[1] else 0
+            
+            if last_checkin == today:
+                return False, streak, "✅ Ты уже получил бонус сегодня! Возвращайся завтра."
+            
+            if last_checkin and datetime.fromisoformat(last_checkin).date() == datetime.now().date() - timedelta(days=1):
+                streak += 1
+            else:
+                streak = 1
+            
+            bonus_images = get_bonus_amount(user_id)
+            bonus_requests = get_bonus_requests_amount(user_id)
+            
+            # Особый бонус за 7 дней
+            if streak >= 7:
+                bonus_images = bonus_images * 2
+                bonus_requests = bonus_requests * 2
+                cursor.execute("UPDATE users SET checkin_streak = 0 WHERE user_id = ?", (user_id,))
+                msg = f"🎉 ТЫ СОБРАЛ 7 ДНЕЙ! Получил +{bonus_images} картинок и +{bonus_requests} запросов!"
+            else:
+                cursor.execute("UPDATE users SET checkin_streak = ? WHERE user_id = ?", (streak, user_id))
+                msg = f"✅ День {streak}/7! Ты получил +{bonus_images} картинок и +{bonus_requests} запросов."
+            
+            # Начисляем бонусы
+            cursor.execute("UPDATE users SET bonus_images = bonus_images + ?, bonus_requests = bonus_requests + ? WHERE user_id = ?", 
+                         (bonus_images, bonus_requests, user_id))
+            cursor.execute("UPDATE users SET last_checkin = ? WHERE user_id = ?", (today, user_id))
+            
+            return True, streak, msg
+    except Exception as e:
+        print(f"❌ Ошибка do_daily_checkin: {e}")
+        return False, 0, "❌ Ошибка! Попробуйте позже."
+
+def get_user_info(user_id):
+    """Полная информация о пользователе для профиля"""
+    user = get_user(user_id)
+    if not user:
+        return None
+    
+    bonus_images = user[16] if len(user) > 16 and user[16] else 0
+    bonus_requests = user[17] if len(user) > 17 and user[17] else 0
+    streak = user[19] if len(user) > 19 and user[19] else 0
+    used_images = user[8] if len(user) > 8 and user[8] else 0
+    limit = get_image_limit(user_id) + bonus_images
+    
+    return {
+        'id': user[0],
+        'username': user[1],
+        'joined': user[2],
+        'plan': user[9],
+        'total_requests': user[5] or 0,
+        'total_images': user[8] or 0,
+        'used_images': used_images,
+        'image_limit': limit,
+        'bonus_images': bonus_images,
+        'bonus_requests': bonus_requests,
+        'streak': streak,
+        'is_premium': is_premium(user_id)
+    }
+
+# ========== СМЕНА ТАРИФА ==========
+
+def change_user_plan(user_id, new_plan):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем существует ли пользователь
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if not cursor.fetchone():
+                return False, "Пользователь не найден!"
+            
+            # Проверяем валидность плана
+            if new_plan not in ['basic', 'premium', 'premium_deluxe']:
+                return False, "Неверный план!"
+            
+            # Если меняем на basic — снимаем Premium
+            if new_plan == 'basic':
+                cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
+            else:
+                # Даём Premium на 30 дней
+                new_date = (datetime.now() + timedelta(days=30)).isoformat()
+                cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
+                            (new_date, new_plan, user_id))
+            
+            return True, f"✅ План изменён на {new_plan.upper()}!"
+    except Exception as e:
+        return False, f"❌ Ошибка: {e}"
