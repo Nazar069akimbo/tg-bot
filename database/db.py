@@ -126,6 +126,10 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                        (6957852385, datetime.now().isoformat()))
         
+        # 🔥 ФИКС: синхронизируем планы для всех пользователей
+        cursor.execute("UPDATE users SET plan = 'premium' WHERE premium_until IS NOT NULL AND premium_until > datetime('now') AND plan = 'basic'")
+        print("✅ Синхронизация планов выполнена")
+        
         print("✅ База данных готова")
 
 def get_user(user_id):
@@ -133,7 +137,16 @@ def get_user(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            return cursor.fetchone()
+            user = cursor.fetchone()
+            
+            # 🔥 ФИКС: если есть premium_until, но plan basic — исправляем на лету
+            if user and len(user) > 9 and user[9] == 'basic' and user[3] and user[3] > datetime.now().isoformat():
+                cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
+                cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                user = cursor.fetchone()
+                print(f"🔥 Исправлен план для {user_id} на premium")
+            
+            return user
     except Exception as e:
         print(f"⚠️ Ошибка get_user: {e}")
         return None
@@ -373,15 +386,12 @@ def add_image_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем текущее значение
             cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
             old = cursor.fetchone()
             print(f"📊 Старое значение image_requests: {old[0] if old else 'None'}")
             
-            # Увеличиваем на 1
             cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
             
-            # Проверяем новое значение
             cursor.execute("SELECT image_requests FROM users WHERE user_id = ?", (user_id,))
             new = cursor.fetchone()
             print(f"✅ НОВОЕ значение image_requests: {new[0] if new else 'None'}")
