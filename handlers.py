@@ -389,9 +389,21 @@ async def set_mode(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "stats")
 async def stats_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    class FakeMessage:
+        def __init__(self, uid, username):
+            self.from_user = type('obj', (object,), {'id': uid, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = callback.message.reply_markup
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username or "")
+    await stats_cmd(fake_msg)
     await callback.answer()
-    await stats_cmd(callback.message)
-
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -411,9 +423,21 @@ async def profile_cb(callback: types.CallbackQuery):
     await callback.answer()
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    class FakeMessage:
+        def __init__(self, uid, username):
+            self.from_user = type('obj', (object,), {'id': uid, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = callback.message.reply_markup
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username or "")
+    await referral_cmd(fake_msg)
     await callback.answer()
-    await referral_cmd(callback.message)
-
 @router.callback_query(F.data == "premium")
 async def premium_cb(callback: types.CallbackQuery):
     await callback.answer()
@@ -421,14 +445,38 @@ async def premium_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "help")
 async def help_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    class FakeMessage:
+        def __init__(self, uid, username):
+            self.from_user = type('obj', (object,), {'id': uid, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = callback.message.reply_markup
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username or "")
+    await help_cmd(fake_msg)
     await callback.answer()
-    await help_cmd(callback.message)
-
 @router.callback_query(F.data == "leaderboard")
 async def leaderboard_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    class FakeMessage:
+        def __init__(self, uid, username):
+            self.from_user = type('obj', (object,), {'id': uid, 'username': username})()
+            self.answer = callback.message.answer
+            self.reply_markup = callback.message.reply_markup
+    
+    fake_msg = FakeMessage(user_id, callback.from_user.username or "")
+    await leaderboard_cmd(fake_msg)
     await callback.answer()
-    await leaderboard_cmd(callback.message)
-
 @router.callback_query(F.data == "contact_admin")
 async def contact_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
