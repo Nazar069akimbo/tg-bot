@@ -20,6 +20,13 @@ def force_create_user(user_id, username=None):
     try:
         user = get_user(user_id)
         if user:
+            if len(user) > 9 and user[9] == 'basic' and user[3] and user[3] > datetime.now().isoformat():
+                from database.db import get_db
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
+                    logger.info(f"🔥 Исправлен план для {user_id} на premium")
+                user = get_user(user_id)
             return user
         logger.info(f"👤 Создаём пользователя {user_id}")
         result = create_user(user_id, username or str(user_id))
@@ -279,6 +286,8 @@ async def help_cmd(message: types.Message):
     text = "❓ Помощь\n\n/start — меню\n/profile — профиль\n/stats — статистика\n/subscribe — Premium\n/referral — рефералы"
     await message.answer(text, reply_markup=main_menu())
 
+# ========== ИСПРАВЛЕННЫЙ РЕЙТИНГ (ПОКАЗЫВАЕТ ВСЕХ 10 ПОЛЬЗОВАТЕЛЕЙ) ==========
+
 @router.message(Command("leaderboard"))
 async def leaderboard_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -292,8 +301,14 @@ async def leaderboard_cmd(message: types.Message):
     
     if not users:
         return await message.answer("🏆 Пока нет данных", reply_markup=main_menu())
+    
     medals = ['🥇', '🥈', '🥉']
-    text = "🏆 Рейтинг\n\n" + "\n".join([f"{medals[i] if i < 3 else f'{i+1}.'} {u[0]} — {u[1] or 'без имени'} — {u[2]} задач" for i, u in enumerate(users)])
+    text = "🏆 Рейтинг\n\n"
+    for i, u in enumerate(users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        name = u[1] or str(u[0])
+        text += f"{medal} {name} — {u[2]} задач\n"
+    
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("contact_admin"))
