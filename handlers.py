@@ -90,15 +90,16 @@ async def stats_cmd(message: types.Message):
     used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
     
-    # Получаем общее количество запросов из БД
     total_requests = user[5] if len(user) > 5 and user[5] else 0
+    total_images = user[8] if len(user) > 8 and user[8] else 0
     
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
     text = f"📊 **СТАТИСТИКА**\n\n"
-    text += f"📝 Текстовых запросов: {rem if not prem else '∞'}\n"
+    text += f"📝 Текстовых запросов осталось: {rem if not prem else '∞'}\n"
     text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
     text += f"📊 Всего запросов: {total_requests}\n"
+    text += f"🖼️ Всего картинок: {total_images}\n"
     if trial > 0 and not prem:
         text += f"🎁 Пробный период: {trial} картинок\n"
     text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
@@ -121,12 +122,14 @@ async def profile_cmd(message: types.Message):
     
     used, limit, prem, plan = get_image_stats(user_id)
     total_requests = user[5] if len(user) > 5 and user[5] else 0
+    total_images = user[8] if len(user) > 8 and user[8] else 0
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
     text = f"👤 **ПРОФИЛЬ**\n\n"
     text += f"🆔 ID: {user[0]}\n"
     text += f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
     text += f"📝 Всего запросов: {total_requests}\n"
+    text += f"🖼️ Всего картинок: {total_images}\n"
     text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
     text += f"👥 Приглашено: {refs}\n"
     text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
@@ -204,7 +207,6 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
     
-    # Проверяем состояния админа
     if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact"]:
         await handle_admin_input(message)
         return
@@ -481,32 +483,33 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
+# ========== АДМИНКА: СТАТИСТИКА ==========
+
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    total, prem, req = get_stats()
+    
+    total, prem, req, images = get_stats()
     
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
         deluxe = cursor.fetchone()[0] or 0
-        cursor.execute("SELECT SUM(total_requests) FROM users")
-        total_req = cursor.fetchone()[0] or 0
-        cursor.execute("SELECT SUM(image_requests) FROM users")
-        total_images = cursor.fetchone()[0] or 0
     
     await callback.message.edit_text(
         f"📊 **СТАТИСТИКА БОТА**\n\n"
         f"👥 Всего пользователей: {total}\n"
         f"💎 Premium: {prem - deluxe}\n"
         f"👑 Premium Deluxe: {deluxe}\n"
-        f"📝 Всего запросов: {total_req}\n"
-        f"🖼️ Всего картинок: {total_images}",
+        f"📝 Всего запросов: {req}\n"
+        f"🖼️ Всего картинок: {images}",
         reply_markup=admin_kb()
     )
     await callback.answer()
+
+# ========== АДМИНКА: ПОЛЬЗОВАТЕЛИ ==========
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
@@ -530,30 +533,149 @@ async def a_users_cb(callback: types.CallbackQuery):
             text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
             text += f"   📝{u[2]} запросов | 🖼️{u[3]} картинок\n"
     
-    await callback.message.edit_text(text, reply_markup=admin_kb())
+    # Кнопки для выбора пользователя
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
+
+# ========== АДМИНКА: ВЫДАТЬ PREMIUM (БЕЗ ID) ==========
 
 @router.callback_query(F.data == "a_give_premium")
 async def a_give_premium_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_premium_user"}
+    
+    # Показываем список пользователей для выдачи Premium
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, plan FROM users WHERE plan = 'basic' ORDER BY user_id LIMIT 20")
+        users = cursor.fetchall()
+    
+    if not users:
+        await callback.message.edit_text("👥 Все пользователи уже имеют Premium!", reply_markup=admin_kb())
+        await callback.answer()
+        return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for u in users:
+        username = u[1] or str(u[0])
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=f"👤 {username}", callback_data=f"give_premium_{u[0]}")
+        ])
+    
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    
     await callback.message.edit_text(
-        "💎 **Выдать Premium**\n\nФормат: `ID план дни`\nПримеры:\n`123456 premium 30`\n`123456 premium_deluxe 30`\n\n⏹ /cancel",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]])
+        "💎 **Выдать Premium**\n\nВыберите пользователя для выдачи Premium (30 дней):",
+        reply_markup=kb
     )
     await callback.answer()
+
+# Обработка выбора пользователя для Premium
+@router.callback_query(F.data.startswith("give_premium_"))
+async def give_premium_confirm(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    user_id = int(callback.data.replace("give_premium_", ""))
+    
+    # Кнопки выбора плана
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💎 Premium (30 дней)", callback_data=f"confirm_premium_{user_id}_premium")],
+        [InlineKeyboardButton(text="👑 Premium Deluxe (30 дней)", callback_data=f"confirm_premium_{user_id}_premium_deluxe")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="a_give_premium")]
+    ])
+    
+    await callback.message.edit_text(
+        f"👤 Пользователь: `{user_id}`\n\n"
+        f"Выберите план:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+# Подтверждение выдачи Premium
+@router.callback_query(F.data.startswith("confirm_premium_"))
+async def confirm_premium(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    parts = callback.data.split("_")
+    user_id = int(parts[2])
+    plan = parts[3]
+    
+    add_premium(user_id, 30, plan)
+    do_backup()
+    
+    plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+    
+    await callback.message.edit_text(
+        f"✅ {plan_names.get(plan, 'Premium')} на 30 дней выдан пользователю `{user_id}`!",
+        reply_markup=admin_kb()
+    )
+    await callback.answer()
+
+# ========== АДМИНКА: БЛОКИРОВКА (БЕЗ ID) ==========
 
 @router.callback_query(F.data == "a_block")
 async def a_block_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_block_user"}
+    
+    # Показываем список пользователей
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        users = cursor.fetchall()
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for u in users:
+        username = u[1] or str(u[0])
+        status = "🔓" if u[2] == 0 else "🔒"
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=f"{status} {username}", callback_data=f"block_user_{u[0]}")
+        ])
+    
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    
     await callback.message.edit_text(
-        "🚫 **Блокировка**\n\nВведите ID пользователя.\n\n⏹ /cancel",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]])
+        "🚫 **Блокировка пользователей**\n\nНажмите на пользователя для блокировки/разблокировки:",
+        reply_markup=kb
     )
     await callback.answer()
+
+# Обработка блокировки
+@router.callback_query(F.data.startswith("block_user_"))
+async def block_user_action(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    user_id = int(callback.data.replace("block_user_", ""))
+    user = get_user(user_id)
+    
+    if not user:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+    
+    is_blocked = user[6] if len(user) > 6 else 0
+    
+    if is_blocked == 1:
+        unblock_user(user_id)
+        await callback.answer("✅ Пользователь РАЗБЛОКИРОВАН", show_alert=True)
+    else:
+        block_user(user_id)
+        await callback.answer("🚫 Пользователь ЗАБЛОКИРОВАН", show_alert=True)
+    
+    do_backup()
+    
+    # Обновляем список
+    await a_block_cb(callback)
+
+# ========== АДМИНКА: ТАРИФЫ ==========
 
 @router.callback_query(F.data == "a_plans")
 async def a_plans_cb(callback: types.CallbackQuery):
@@ -580,6 +702,8 @@ async def edit_plan_cb(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+# ========== АДМИНКА: БЭКАП ==========
+
 @router.callback_query(F.data == "a_backup")
 async def a_backup_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -589,6 +713,8 @@ async def a_backup_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("✅ Бэкап создан!" if result else "❌ Ошибка", reply_markup=admin_kb())
     await callback.answer()
 
+# ========== АДМИНКА: РАССЫЛКА ==========
+
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -596,6 +722,8 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]))
     await callback.answer()
+
+# ========== ОБРАБОТКА АДМИН-ВВОДА ==========
 
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
@@ -625,48 +753,6 @@ async def handle_admin_input(message: types.Message):
             user_pages.pop(user_id, None)
         except:
             await message.answer("❌ Ошибка! Формат: картинки символы", reply_markup=admin_kb())
-        return
-    
-    if state.get("state") == "waiting_premium_user":
-        if message.text == "/cancel":
-            user_pages.pop(user_id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
-        try:
-            parts = message.text.split()
-            if len(parts) < 2:
-                return await message.answer("❌ Формат: ID план [дни]", reply_markup=admin_kb())
-            uid, plan = int(parts[0]), parts[1]
-            days = int(parts[2]) if len(parts) > 2 else 30
-            if plan not in ['premium', 'premium_deluxe']:
-                return await message.answer("❌ План: premium или premium_deluxe", reply_markup=admin_kb())
-            add_premium(uid, days, plan)
-            await message.answer(f"✅ {plan} на {days} дней выдан {uid}", reply_markup=admin_kb())
-            do_backup()
-            user_pages.pop(user_id, None)
-        except:
-            await message.answer("❌ Ошибка! Формат: ID план дни", reply_markup=admin_kb())
-        return
-    
-    if state.get("state") == "waiting_block_user":
-        if message.text == "/cancel":
-            user_pages.pop(user_id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
-        try:
-            uid = int(message.text.strip())
-            user = get_user(uid)
-            if not user:
-                return await message.answer(f"❌ Пользователь {uid} не найден", reply_markup=admin_kb())
-            is_blocked = user[6] if len(user) > 6 else 0
-            if is_blocked == 1:
-                unblock_user(uid)
-                await message.answer(f"✅ Пользователь {uid} РАЗБЛОКИРОВАН", reply_markup=admin_kb())
-            else:
-                block_user(uid)
-                await message.answer(f"🚫 Пользователь {uid} ЗАБЛОКИРОВАН", reply_markup=admin_kb())
-            do_backup()
-            user_pages.pop(user_id, None)
-        except:
-            await message.answer("❌ Введите ID", reply_markup=admin_kb())
         return
     
     if state.get("state") == "waiting_broadcast":
