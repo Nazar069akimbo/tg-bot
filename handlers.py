@@ -18,7 +18,6 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
-# Настройка matplotlib
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.size'] = 10
 
@@ -55,8 +54,6 @@ def get_plan_emoji(plan):
         return "💎 Premium"
     else:
         return "🔴 Бесплатный"
-
-# ========== МЕНЮ ==========
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -123,7 +120,6 @@ async def stats_cmd(message: types.Message):
     trial = get_trial_remaining(user_id)
     total_requests = user[5] if len(user) > 5 and user[5] else 0
     total_images = user[8] if len(user) > 8 and user[8] else 0
-    caps_used = user[16] if len(user) > 16 and user[16] else 0
     
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
@@ -133,7 +129,6 @@ async def stats_cmd(message: types.Message):
         f"🖼️ Картинок сегодня: {used}/{limit}\n"
         f"📊 Всего запросов: {total_requests}\n"
         f"🖼️ Всего картинок: {total_images}\n"
-        f"💰 Потрачено CAPS: {caps_used}\n"
         f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
     )
     await message.answer(text, reply_markup=main_menu())
@@ -151,7 +146,6 @@ async def profile_cmd(message: types.Message):
     total_images = user[8] if len(user) > 8 and user[8] else 0
     refs = get_referral_count(user_id)
     bonus_images, bonus_requests = get_referral_bonuses(user_id)
-    caps_used = user[16] if len(user) > 16 and user[16] else 0
     plan_name = get_plan_emoji(plan)
     
     text = (
@@ -163,7 +157,6 @@ async def profile_cmd(message: types.Message):
         f"🖼️ Сегодня: {used}/{limit}\n"
         f"👥 Приглашено: {refs}\n"
         f"🎁 Бонусы: {bonus_images} карт, {bonus_requests} запросов\n"
-        f"💰 Потрачено CAPS: {caps_used}\n"
         f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}"
     )
     await message.answer(text, reply_markup=main_menu())
@@ -301,13 +294,11 @@ async def generate_text(message: types.Message):
     status_msg = await message.answer("🤔 Думаю...")
     try:
         answer = solve_problem(message.text, "chat", prem)
-        add_request(user_id)
+        add_request(user_id, caps=0)  # CAPS считаем отдельно, не показываем пользователю
         do_backup()
-        caps_used = 100
         await status_msg.edit_text(
             f"🧠 {answer}\n\n"
-            f"{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}\n"
-            f"💰 CAPS: -{caps_used}"
+            f"{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}"
         )
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
@@ -379,11 +370,10 @@ async def generate_image(message: types.Message):
                     new_used, new_limit, new_prem, new_plan = get_image_stats(user_id)
                     plan_emoji = get_plan_emoji(new_plan)
                     remaining = new_limit - new_used
-                    caps_used = 1700
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 {plan_emoji}\n💰 CAPS: -{caps_used}"
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
@@ -535,6 +525,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
         return await callback.answer("⛔ Нет доступа")
     
     total, prem, req, images, paid, caps = get_stats()
+    caps_stats = get_caps_stats()
     
     from database.db import get_db
     with get_db() as conn:
@@ -550,7 +541,9 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"💰 Оплатили: {paid}\n"
         f"📝 Запросов: {req}\n"
         f"🖼️ Картинок: {images}\n"
-        f"💰 CAPS потрачено: {caps}",
+        f"💰 Всего CAPS: {caps}\n"
+        f"📊 Среднее CAPS: {caps_stats['avg']}\n"
+        f"🔥 Максимум CAPS: {caps_stats['max']}",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -591,6 +584,10 @@ async def chart_requests_cb(callback: types.CallbackQuery):
         cursor.execute("SELECT date(timestamp) as date, COUNT(*) as payments FROM payments WHERE status = 'completed' GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30")
         payments_data = cursor.fetchall()
     
+    if not users_data:
+        await callback.answer("Нет данных", show_alert=True)
+        return
+    
     dates = [d[0] for d in users_data[::-1]]
     users = [d[1] for d in users_data[::-1]]
     payments_dict = {d[0]: d[1] for d in payments_data}
@@ -626,21 +623,18 @@ async def chart_caps_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, caps_used FROM users ORDER BY caps_used DESC LIMIT 20")
-        users = cursor.fetchall()
+    caps_users = get_caps_by_user()
     
-    if not users:
+    if not caps_users:
         await callback.answer("Нет данных о CAPS", show_alert=True)
         return
     
-    user_ids = [str(u[0]) for u in users[:10]]
-    caps = [u[1] for u in users[:10]]
+    user_ids = [str(u[0]) for u in caps_users]
+    caps = [u[2] for u in caps_users]
     
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.barh(user_ids, caps, color='purple', alpha=0.7)
+    colors = ['purple' if c > 10000 else 'blue' for c in caps]
+    ax.barh(user_ids, caps, color=colors, alpha=0.7)
     ax.set_xlabel('CAPS потрачено')
     ax.set_ylabel('Пользователь')
     ax.set_title('💰 Топ пользователей по CAPS')
@@ -655,7 +649,7 @@ async def chart_caps_cb(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer_photo(
         BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
-        caption="💰 **Топ пользователей по CAPS**\n\nСамые активные пользователи по тратам CAPS",
+        caption="💰 **Топ пользователей по CAPS**\n\nФиолетовые — больше 10000 CAPS\nСиние — до 10000 CAPS",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -708,7 +702,7 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, image_requests, caps_used, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, image_requests, caps_used, plan, is_blocked FROM users ORDER BY caps_used DESC LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}

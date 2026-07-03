@@ -345,12 +345,13 @@ def can_request(user_id):
     except:
         return True, 10
 
-def add_request(user_id):
+def add_request(user_id, caps=0):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET free_requests = free_requests + 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
-            cursor.execute("UPDATE users SET caps_used = caps_used + 100 WHERE user_id = ?", (user_id,))
+            if caps > 0:
+                cursor.execute("UPDATE users SET caps_used = caps_used + ? WHERE user_id = ?", (caps, user_id))
             return True
     except:
         return False
@@ -454,7 +455,6 @@ def add_image_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
-            cursor.execute("UPDATE users SET caps_used = caps_used + 1700 WHERE user_id = ?", (user_id,))
             return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
@@ -562,3 +562,26 @@ def get_message_by_id(message_id):
             return cursor.fetchone()
     except:
         return None
+
+def get_caps_stats():
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT SUM(caps_used) as total, AVG(caps_used) as avg, MAX(caps_used) as max FROM users")
+            row = cursor.fetchone()
+            return {
+                'total': row[0] or 0,
+                'avg': int(row[1]) if row[1] else 0,
+                'max': row[2] or 0
+            }
+    except:
+        return {'total': 0, 'avg': 0, 'max': 0}
+
+def get_caps_by_user():
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username, caps_used FROM users WHERE caps_used > 0 ORDER BY caps_used DESC LIMIT 10")
+            return cursor.fetchall()
+    except:
+        return []
