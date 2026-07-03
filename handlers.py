@@ -34,13 +34,6 @@ def force_create_user(user_id, username=None):
         logger.error(f"❌ Ошибка force_create_user: {e}")
         return None
 
-def ensure_user(user_id, username=None):
-    user = get_user(user_id)
-    if not user:
-        create_user(user_id, username or str(user_id))
-        user = get_user(user_id)
-    return user
-
 def do_backup():
     try:
         GitHubBackup().backup_db()
@@ -96,8 +89,20 @@ async def stats_cmd(message: types.Message):
     ok, rem = can_request(user_id)
     used, limit, prem, plan = get_image_stats(user_id)
     trial = get_trial_remaining(user_id)
+    
+    # Получаем общее количество запросов из БД
+    total_requests = user[5] if len(user) > 5 and user[5] else 0
+    
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-    text = f"📊 **Статистика**\n\n📝 Запросов: {rem if not prem else '∞'}\n🖼️ Картинок: {used}/{limit}\n" + (f"🎁 Пробный: {trial}\n" if trial > 0 else "") + f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
+    
+    text = f"📊 **СТАТИСТИКА**\n\n"
+    text += f"📝 Текстовых запросов: {rem if not prem else '∞'}\n"
+    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
+    text += f"📊 Всего запросов: {total_requests}\n"
+    if trial > 0 and not prem:
+        text += f"🎁 Пробный период: {trial} картинок\n"
+    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
+    
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("profile"))
@@ -108,7 +113,6 @@ async def profile_cmd(message: types.Message):
         await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
         return
     
-    # Используем get_db() вместо глобального cursor
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
@@ -116,8 +120,17 @@ async def profile_cmd(message: types.Message):
         refs = cursor.fetchone()[0] or 0
     
     used, limit, prem, plan = get_image_stats(user_id)
+    total_requests = user[5] if len(user) > 5 and user[5] else 0
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-    text = f"👤 **Профиль**\n\n🆔 {user[0]}\n📆 {user[2][:10] if user[2] else 'Нет'}\n📊 Запросов: {user[5] or 0}\n👥 Приглашено: {refs}\n💎 План: {plan_names.get(plan, '🔴 Бесплатный')}\n🖼️ Картинки: {used}/{limit}"
+    
+    text = f"👤 **ПРОФИЛЬ**\n\n"
+    text += f"🆔 ID: {user[0]}\n"
+    text += f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
+    text += f"📝 Всего запросов: {total_requests}\n"
+    text += f"🖼️ Картинок сегодня: {used}/{limit}\n"
+    text += f"👥 Приглашено: {refs}\n"
+    text += f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
+    
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("subscribe"))
@@ -190,6 +203,8 @@ async def handle_message(message: types.Message):
         return
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
+    
+    # Проверяем состояния админа
     if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact"]:
         await handle_admin_input(message)
         return
@@ -477,8 +492,20 @@ async def a_stats_cb(callback: types.CallbackQuery):
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users WHERE plan = 'premium_deluxe' AND premium_until > datetime('now')")
         deluxe = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT SUM(total_requests) FROM users")
+        total_req = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT SUM(image_requests) FROM users")
+        total_images = cursor.fetchone()[0] or 0
     
-    await callback.message.edit_text(f"📊 **Статистика**\n\n👥 Всего: {total}\n💎 Premium: {prem - deluxe}\n👑 Premium Deluxe: {deluxe}\n📝 Запросов: {req}", reply_markup=admin_kb())
+    await callback.message.edit_text(
+        f"📊 **СТАТИСТИКА БОТА**\n\n"
+        f"👥 Всего пользователей: {total}\n"
+        f"💎 Premium: {prem - deluxe}\n"
+        f"👑 Premium Deluxe: {deluxe}\n"
+        f"📝 Всего запросов: {total_req}\n"
+        f"🖼️ Всего картинок: {total_images}",
+        reply_markup=admin_kb()
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "a_users")
@@ -489,11 +516,20 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, image_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
-    text = "👥 **Пользователи**\n\n" + "\n".join([f"{'🚫' if u[4] else '✅'} {plan_emoji.get(u[3], '🔴')} `{u[0]}` — {u[1] or 'без имени'} — {u[2]} запросов" for u in users]) if users else "Нет пользователей"
+    if not users:
+        text = "👥 Пользователей не найдено"
+    else:
+        text = "👥 **Пользователи**\n\n"
+        for u in users:
+            emoji = plan_emoji.get(u[4], '🔴')
+            blocked = "🚫" if u[5] == 1 else "✅"
+            text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
+            text += f"   📝{u[2]} запросов | 🖼️{u[3]} картинок\n"
+    
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
