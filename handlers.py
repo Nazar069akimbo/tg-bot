@@ -69,15 +69,13 @@ def admin_kb():
     badge = f" ({new_messages})" if new_messages > 0 else ""
     
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 Графики", callback_data="a_charts")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
         [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
         [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
-
-# ========== КОМАНДЫ ==========
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -261,8 +259,6 @@ async def contact_admin_cmd(message: types.Message):
     user_pages[user_id] = {"state": "waiting_contact"}
     await message.answer("📩 Напишите сообщение админу.\n\n⏹ /cancel", reply_markup=main_menu())
 
-# ========== ОБРАБОТКА ТЕКСТА ==========
-
 @router.message(F.text)
 async def handle_message(message: types.Message):
     if message.text.startswith("/"):
@@ -294,7 +290,7 @@ async def generate_text(message: types.Message):
     status_msg = await message.answer("🤔 Думаю...")
     try:
         answer = solve_problem(message.text, "chat", prem)
-        add_request(user_id, caps=0)  # CAPS считаем отдельно, не показываем пользователю
+        add_request(user_id)
         do_backup()
         await status_msg.edit_text(
             f"🧠 {answer}\n\n"
@@ -381,8 +377,6 @@ async def generate_image(message: types.Message):
         await status_msg.edit_text("❌ Не удалось получить картинку")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
-
-# ========== CALLBACK'и ==========
 
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
@@ -494,8 +488,6 @@ async def payment_success(message: types.Message):
     else:
         await message.answer("❌ Ошибка активации")
 
-# ========== АДМИНКА ==========
-
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
     if is_admin(message.from_user.id):
@@ -517,15 +509,12 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
-# ========== СТАТИСТИКА ==========
-
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    total, prem, req, images, paid, caps = get_stats()
-    caps_stats = get_caps_stats()
+    total, prem, req, images, paid = get_stats()
     
     from database.db import get_db
     with get_db() as conn:
@@ -540,65 +529,42 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"👑 Premium Deluxe: {deluxe}\n"
         f"💰 Оплатили: {paid}\n"
         f"📝 Запросов: {req}\n"
-        f"🖼️ Картинок: {images}\n"
-        f"💰 Всего CAPS: {caps}\n"
-        f"📊 Среднее CAPS: {caps_stats['avg']}\n"
-        f"🔥 Максимум CAPS: {caps_stats['max']}",
+        f"🖼️ Картинок: {images}",
         reply_markup=admin_kb()
     )
     await callback.answer()
 
-# ========== ГРАФИКИ ==========
+# ========== ГРАФИК (ЛОМАНАЯ ЛИНИЯ) ==========
 
-@router.callback_query(F.data == "a_charts")
-async def a_charts_cb(callback: types.CallbackQuery):
+@router.callback_query(F.data == "a_chart")
+async def a_chart_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Запросы и картинки", callback_data="chart_requests")],
-        [InlineKeyboardButton(text="💰 CAPS (потрачено)", callback_data="chart_caps")],
-        [InlineKeyboardButton(text="📈 Новые пользователи", callback_data="chart_users")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-    ])
+    data = get_daily_stats(30)
     
-    await callback.message.edit_text(
-        "📈 **Выберите график:**\n\n"
-        "• Запросы и картинки — статистика использования\n"
-        "• CAPS — сколько потрачено CAPS\n"
-        "• Новые пользователи — рост аудитории",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "chart_requests")
-async def chart_requests_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT date(joined) as date, COUNT(*) as users FROM users GROUP BY date(joined) ORDER BY date DESC LIMIT 30")
-        users_data = cursor.fetchall()
-        cursor.execute("SELECT date(timestamp) as date, COUNT(*) as payments FROM payments WHERE status = 'completed' GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30")
-        payments_data = cursor.fetchall()
-    
-    if not users_data:
-        await callback.answer("Нет данных", show_alert=True)
+    if not data:
+        await callback.message.edit_text(
+            "📈 **График за месяц**\n\nНет данных.",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
         return
     
-    dates = [d[0] for d in users_data[::-1]]
-    users = [d[1] for d in users_data[::-1]]
-    payments_dict = {d[0]: d[1] for d in payments_data}
-    payments = [payments_dict.get(d, 0) for d in dates]
+    dates = [d['date'] for d in data]
+    new_users = [d['new_users'] for d in data]
+    payments = [d['payments'] for d in data]
     
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.bar(dates, users, label='Новые пользователи', color='blue', alpha=0.7)
-    ax.plot(dates, payments, label='Оплаты Premium', color='green', marker='o', linewidth=2)
+    
+    # ЛОМАНАЯ ЛИНИЯ для новых пользователей
+    ax.plot(dates, new_users, label='Новые пользователи', color='blue', marker='o', linewidth=2, markersize=6)
+    # ЛОМАНАЯ ЛИНИЯ для оплат
+    ax.plot(dates, payments, label='Оплаты Premium', color='green', marker='s', linewidth=2, markersize=6)
+    
     ax.set_xlabel('Дата')
     ax.set_ylabel('Количество')
-    ax.set_title('📊 Запросы и картинки')
+    ax.set_title('📈 Новые пользователи и оплаты за 30 дней')
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.tick_params(axis='x', rotation=45)
@@ -613,81 +579,7 @@ async def chart_requests_cb(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer_photo(
         BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
-        caption="📊 **Запросы и картинки**\n\nСиние столбцы — новые пользователи\nЗелёная линия — оплаты Premium",
-        reply_markup=admin_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "chart_caps")
-async def chart_caps_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    caps_users = get_caps_by_user()
-    
-    if not caps_users:
-        await callback.answer("Нет данных о CAPS", show_alert=True)
-        return
-    
-    user_ids = [str(u[0]) for u in caps_users]
-    caps = [u[2] for u in caps_users]
-    
-    fig, ax = plt.subplots(figsize=(12, 6))
-    colors = ['purple' if c > 10000 else 'blue' for c in caps]
-    ax.barh(user_ids, caps, color=colors, alpha=0.7)
-    ax.set_xlabel('CAPS потрачено')
-    ax.set_ylabel('Пользователь')
-    ax.set_title('💰 Топ пользователей по CAPS')
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    
-    buf = BytesIO()
-    fig.savefig(buf, format='png', dpi=150)
-    buf.seek(0)
-    plt.close()
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
-        caption="💰 **Топ пользователей по CAPS**\n\nФиолетовые — больше 10000 CAPS\nСиние — до 10000 CAPS",
-        reply_markup=admin_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "chart_users")
-async def chart_users_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    data = get_daily_stats(30)
-    
-    if not data:
-        await callback.message.edit_text("📈 Нет данных.", reply_markup=admin_kb())
-        await callback.answer()
-        return
-    
-    dates = [d['date'] for d in data]
-    new_users = [d['new_users'] for d in data]
-    
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.bar(dates, new_users, color='blue', alpha=0.7)
-    ax.set_xlabel('Дата')
-    ax.set_ylabel('Новые пользователи')
-    ax.set_title('📈 Новые пользователи за 30 дней')
-    ax.grid(True, alpha=0.3)
-    ax.tick_params(axis='x', rotation=45)
-    ax.set_xticks([d for i, d in enumerate(dates) if i % 3 == 0])
-    plt.tight_layout()
-    
-    buf = BytesIO()
-    fig.savefig(buf, format='png', dpi=150)
-    buf.seek(0)
-    plt.close()
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        BufferedInputFile(file=buf.getvalue(), filename="chart.png"),
-        caption="📈 **Новые пользователи за 30 дней**",
+        caption="📈 **Новые пользователи и оплаты за 30 дней**\n\n🔵 Синий — новые пользователи\n🟢 Зелёный — оплаты Premium",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -702,7 +594,7 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, image_requests, caps_used, plan, is_blocked FROM users ORDER BY caps_used DESC LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, image_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
@@ -711,10 +603,10 @@ async def a_users_cb(callback: types.CallbackQuery):
     else:
         text = "👥 **Пользователи**\n\n"
         for u in users:
-            emoji = plan_emoji.get(u[5], '🔴')
-            blocked = "🚫" if u[6] == 1 else "✅"
+            emoji = plan_emoji.get(u[4], '🔴')
+            blocked = "🚫" if u[5] == 1 else "✅"
             text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
-            text += f"   📝{u[2]} | 🖼️{u[3]} | 💰{u[4]} CAPS\n"
+            text += f"   📝{u[2]} | 🖼️{u[3]}\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
