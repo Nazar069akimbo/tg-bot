@@ -55,14 +55,6 @@ def get_plan_emoji(plan):
     else:
         return "🔴 Бесплатный"
 
-def get_plan_bonuses(plan):
-    if plan == 'premium_deluxe':
-        return "Бонус за чек-ин: +10 карт, +5 запросов"
-    elif plan == 'premium':
-        return "Бонус за чек-ин: +5 карт, +3 запроса"
-    else:
-        return "Бонус за чек-ин: +3 карт, +1 запрос"
-
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -128,6 +120,8 @@ async def daily_cmd(message: types.Message):
     success, streak, msg = do_daily_checkin(user_id)
     await message.answer(msg, reply_markup=main_menu())
 
+# ========== УПРОЩЁННАЯ СТАТИСТИКА ==========
+
 @router.message(Command("stats"))
 async def stats_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -136,9 +130,7 @@ async def stats_cmd(message: types.Message):
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
-    ok, rem, bonus_req = can_request(user_id)
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
-    trial = get_trial_remaining(user_id)
     total_requests = user[5] if len(user) > 5 and user[5] else 0
     total_images = user[8] if len(user) > 8 and user[8] else 0
     streak = user[19] if len(user) > 19 and user[19] else 0
@@ -147,16 +139,15 @@ async def stats_cmd(message: types.Message):
     
     text = (
         f"📊 **Статистика**\n\n"
-        f"📝 Запросов осталось: {rem if not prem else '♾️ Безлимит'}\n"
-        f"💰 Бонусных запросов: {bonus_req}\n"
-        f"🖼️ Картинок сегодня: {used}/{limit}\n"
-        f"🎁 Бонусных картинок: {bonus_img}\n"
-        f"📊 Всего запросов: {total_requests}\n"
-        f"🖼️ Всего картинок: {total_images}\n"
+        f"📝 Запросов: {total_requests}\n"
+        f"🖼️ Картинок: {total_images}\n"
+        f"🖼️ Сегодня: {used}/{limit}\n"
         f"📅 Серия чек-ина: {streak} дней\n"
         f"💎 План: {plan_names.get(plan, '🔴 Бесплатный')}"
     )
     await message.answer(text, reply_markup=main_menu())
+
+# ========== УПРОЩЁННЫЙ ПРОФИЛЬ ==========
 
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
@@ -170,25 +161,23 @@ async def profile_cmd(message: types.Message):
     total_requests = user[5] if len(user) > 5 and user[5] else 0
     total_images = user[8] if len(user) > 8 and user[8] else 0
     refs = get_referral_count(user_id)
-    bonus_images, bonus_requests = get_referral_bonuses(user_id)
     plan_name = get_plan_emoji(plan)
     streak = user[19] if len(user) > 19 and user[19] else 0
     
-    # Получаем бонусный баланс
+    # Получаем бонусный баланс (без бага)
     b_img, b_req = get_bonus_balance(user_id)
     
     text = (
         f"👤 **Профиль**\n\n"
-        f"🆔 ID: `{user[0]}`\n"
+        f"🆔 ID: {user[0]}\n"
         f"💎 План: {plan_name}\n"
-        f"📝 Запросов: {total_requests}\n"
-        f"🖼️ Картинок: {total_images}\n"
+        f"📝 Всего запросов: {total_requests}\n"
+        f"🖼️ Всего картинок: {total_images}\n"
         f"🖼️ Сегодня: {used}/{limit}\n"
         f"🎁 Бонусов: {b_img} карт, {b_req} запросов\n"
         f"👥 Приглашено: {refs}\n"
         f"📅 Серия чек-ина: {streak} дней\n"
-        f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}\n"
-        f"📋 {get_plan_bonuses(plan)}"
+        f"📆 Регистрация: {user[2][:10] if user[2] else 'Нет'}"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -201,17 +190,14 @@ async def premium_cmd(message: types.Message):
         "💎 **Premium**\n\n"
         "🔴 **Бесплатный** — 0⭐\n"
         "• 10 текстовых запросов/день\n"
-        "• 3 картинки/день\n"
-        "• Бонус чек-ин: +3 карт, +1 запрос\n\n"
+        "• 3 картинки/день\n\n"
         "💎 **Premium** — 49⭐/мес\n"
         "• Безлимит текста\n"
         "• 50 картинок/день\n"
-        "• Бонус чек-ин: +5 карт, +3 запроса\n"
         "• Приоритетная обработка\n\n"
         "👑 **Premium Deluxe** — 99⭐/мес\n"
         "• Безлимит текста\n"
         "• 200 картинок/день\n"
-        "• Бонус чек-ин: +10 карт, +5 запросов\n"
         "• VIP-поддержка"
     )
     await message.answer(
@@ -238,7 +224,7 @@ async def referral_cmd(message: types.Message):
         f"👥 **Рефералы**\n\n"
         f"👤 Приглашено: {count}\n"
         f"🎁 Бонусы: +{bonus_images} карт, +{bonus_requests} запросов\n\n"
-        f"🔗 Твоя ссылка:\n`{link}`"
+        f"🔗 Твоя ссылка:\n{link}"
     )
     await message.answer(
         text,
@@ -333,16 +319,14 @@ async def generate_text(message: types.Message):
         add_request(user_id)
         do_backup()
         
-        # Показываем откуда взят запрос
-        if bonus_req > 0:
-            source = "🎁 Бонусный"
+        # Просто показываем остаток
+        if prem:
+            remaining = "♾️ Безлимит"
         else:
-            source = "📊 Основной"
+            remaining = f"Осталось {rem-1} запросов"
         
         await status_msg.edit_text(
-            f"🧠 {answer}\n\n"
-            f"{'♾️ Безлимит' if prem else f'Осталось {rem-1} запросов'}\n"
-            f"📌 Источник: {source}"
+            f"🧠 {answer}\n\n{remaining}"
         )
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
@@ -404,15 +388,8 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    # Проверяем бонусные картинки
-                    if bonus_img > 0:
-                        # Тратим бонусную
-                        add_image_request(user_id)
-                        source = "🎁 Бонусная"
-                    else:
-                        add_image_request(user_id)
-                        source = "📊 Основная"
-                    
+                    # Тратим картинку
+                    add_image_request(user_id)
                     do_backup()
                     
                     new_used, new_limit, new_prem, new_plan, new_bonus = get_image_stats(user_id)
@@ -421,7 +398,7 @@ async def generate_image(message: types.Message):
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 {plan_emoji}\n📌 Источник: {source}"
+                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось: {remaining}\n💎 {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
@@ -651,8 +628,6 @@ async def a_stats_cb(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ========== ГРАФИК ==========
-
 @router.callback_query(F.data == "a_chart")
 async def a_chart_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -715,7 +690,7 @@ async def a_users_cb(callback: types.CallbackQuery):
         for u in users:
             emoji = plan_emoji.get(u[4], '🔴')
             blocked = "🚫" if u[5] == 1 else "✅"
-            text += f"{blocked} {emoji} `{u[0]}` — {u[1] or 'без имени'}\n"
+            text += f"{blocked} {emoji} {u[0]} — {u[1] or 'без имени'}\n"
             text += f"   📝{u[2]} | 🖼️{u[3]}\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -772,7 +747,7 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     ])
     
     await callback.message.edit_text(
-        f"👤 Пользователь: `{user_id}`\n\nВыберите план:",
+        f"👤 Пользователь: {user_id}\n\nВыберите план:",
         reply_markup=kb
     )
     await callback.answer()
@@ -792,12 +767,12 @@ async def confirm_premium(callback: types.CallbackQuery):
     plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
     
     await callback.message.edit_text(
-        f"✅ {plan_names.get(plan)} на 30 дней выдан `{user_id}`!",
+        f"✅ {plan_names.get(plan)} на 30 дней выдан {user_id}!",
         reply_markup=admin_kb()
     )
     await callback.answer()
 
-# ========== СМЕНА ТАРИФА (НОВОЕ) ==========
+# ========== СМЕНА ТАРИФА ==========
 
 @router.callback_query(F.data == "a_change_plan")
 async def a_change_plan_cb(callback: types.CallbackQuery):
@@ -827,8 +802,7 @@ async def a_change_plan_cb(callback: types.CallbackQuery):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     
     await callback.message.edit_text(
-        "🔄 **Сменить тариф**\n\n"
-        "Выберите пользователя:",
+        "🔄 **Сменить тариф**\n\nВыберите пользователя:",
         reply_markup=kb
     )
     await callback.answer()
@@ -848,9 +822,7 @@ async def change_plan_select(callback: types.CallbackQuery):
     ])
     
     await callback.message.edit_text(
-        f"🔄 **Сменить тариф**\n\n"
-        f"👤 Пользователь: `{user_id}`\n\n"
-        f"Выберите новый план:",
+        f"🔄 **Сменить тариф**\n\n👤 Пользователь: {user_id}\n\nВыберите новый план:",
         reply_markup=kb
     )
     await callback.answer()
@@ -868,9 +840,7 @@ async def set_plan_confirm(callback: types.CallbackQuery):
     await callback.answer("✅" if success else "❌", show_alert=True)
     
     await callback.message.edit_text(
-        f"{msg}\n\n"
-        f"👤 Пользователь: `{user_id}`\n"
-        f"📊 Новый план: {new_plan.upper()}",
+        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {new_plan.upper()}",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -897,7 +867,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
     for msg in messages:
         status = "🆕" if msg[5] == "new" else "✅"
         name = msg[2] or f"User_{msg[1]}"
-        text += f"{status} `{msg[1]}` — {name}\n"
+        text += f"{status} {msg[1]} — {name}\n"
         text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
         text += f"🕐 {msg[4][:16]}\n\n"
     
@@ -1020,7 +990,7 @@ async def edit_plan_cb(callback: types.CallbackQuery):
     plan_names = {'free': '🔹 Бесплатный', 'premium': '💎 Premium', 'deluxe': '👑 Premium Deluxe'}
     user_pages[callback.from_user.id] = {"state": "waiting_plan_edit", "plan": plan}
     await callback.message.edit_text(
-        f"⚙️ **{plan_names.get(plan)}**\n\nВведите: `<картинки>`\nПример: `10`\n\n⏹ /cancel",
+        f"⚙️ **{plan_names.get(plan)}**\n\nВведите: <картинки>\nПример: 10\n\n⏹ /cancel",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="a_plans")]])
     )
     await callback.answer()
@@ -1084,7 +1054,7 @@ async def handle_admin_input(message: types.Message):
                     ])
                     
                     await message.answer(
-                        f"✅ Ответ отправлен `{user_id_target}`",
+                        f"✅ Ответ отправлен {user_id_target}",
                         reply_markup=kb
                     )
                 except Exception as e:
