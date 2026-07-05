@@ -345,19 +345,15 @@ def can_request(user_id):
         if not user:
             return True, 10, 0
         
-        # Если Premium — безлимит
         if is_premium(user_id):
             return True, 999999, 0
         
-        # Основной счет
         used = user[4] if len(user) > 4 and user[4] else 0
         used = int(used) if used else 0
         
-        # Бонусный счет
         bonus = user[17] if len(user) > 17 and user[17] else 0
         bonus = int(bonus) if bonus else 0
         
-        # Всего доступно
         total = 10 + bonus
         remaining = total - used
         
@@ -373,12 +369,10 @@ def add_request(user_id):
             cursor = conn.cursor()
             user = get_user(user_id)
             
-            # Если Premium — не тратим запросы
             if is_premium(user_id):
                 cursor.execute("UPDATE users SET total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
                 return True
             
-            # Сначала тратим бонусные
             bonus = user[17] if len(user) > 17 and user[17] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_requests = bonus_requests - 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
@@ -387,6 +381,63 @@ def add_request(user_id):
             return True
     except:
         return False
+
+def get_setting(key):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            r = cursor.fetchone()
+            if r:
+                return r[0]
+    except:
+        pass
+    defaults = {
+        'free_input_chars': '500',
+        'free_output_words': '50',
+        'premium_input_chars': '3000',
+        'premium_output_words': '300',
+        'premium_deluxe_input_chars': '5000',
+        'premium_deluxe_output_words': '500',
+        'image_limit_free': '3',
+        'image_limit_premium': '50',
+        'image_limit_premium_deluxe': '200',
+        'bonus_limit_free': '3',
+        'bonus_limit_premium': '5',
+        'bonus_limit_deluxe': '10'
+    }
+    return defaults.get(key, '0')
+
+def set_setting(key, value):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            return True
+    except:
+        return False
+
+def reset_image_count_if_needed(user_id):
+    try:
+        user = get_user(user_id)
+        if not user or len(user) < 14:
+            return
+        last_reset = user[13] if len(user) > 13 else None
+        if not last_reset:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+            return
+        if last_reset:
+            last_date = datetime.fromisoformat(last_reset)
+            today = datetime.now()
+            if last_date.date() < today.date():
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
+                                  (today.isoformat(), user_id))
+    except:
+        pass
 
 def get_image_limit(user_id):
     plan = get_user_plan(user_id)
@@ -407,7 +458,6 @@ def can_generate_image(user_id):
         used = user[8] if len(user) > 8 and user[8] else 0
         used = int(used) if used else 0
         
-        # Бонусные картинки
         bonus = user[16] if len(user) > 16 and user[16] else 0
         bonus = int(bonus) if bonus else 0
         
@@ -447,7 +497,6 @@ def add_image_request(user_id):
             cursor = conn.cursor()
             user = get_user(user_id)
             
-            # Сначала тратим бонусные
             bonus = user[16] if len(user) > 16 and user[16] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
@@ -468,28 +517,6 @@ def get_bonus_balance(user_id):
         return 0, 0
     except:
         return 0, 0
-
-def reset_image_count_if_needed(user_id):
-    try:
-        user = get_user(user_id)
-        if not user or len(user) < 14:
-            return
-        last_reset = user[13] if len(user) > 13 else None
-        if not last_reset:
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE users SET last_image_reset = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
-            return
-        if last_reset:
-            last_date = datetime.fromisoformat(last_reset)
-            today = datetime.now()
-            if last_date.date() < today.date():
-                with get_db() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE users SET image_requests = 0, last_image_reset = ? WHERE user_id = ?", 
-                                  (today.isoformat(), user_id))
-    except:
-        pass
 
 def get_stats():
     try:
@@ -592,10 +619,7 @@ def get_message_by_id(message_id):
     except:
         return None
 
-# ========== ДНЕВНЫЕ БОНУСЫ ==========
-
 def get_bonus_amount(user_id):
-    """Возвращает бонус за чек-ин в зависимости от плана"""
     plan = get_user_plan(user_id)
     if plan == 'premium_deluxe':
         return int(get_setting('bonus_limit_deluxe') or 10)
@@ -605,7 +629,6 @@ def get_bonus_amount(user_id):
         return int(get_setting('bonus_limit_free') or 3)
 
 def get_bonus_requests_amount(user_id):
-    """Возвращает бонусные запросы за чек-ин"""
     plan = get_user_plan(user_id)
     if plan == 'premium_deluxe':
         return 5
@@ -625,7 +648,7 @@ def do_daily_checkin(user_id):
             
             if not row:
                 cursor.execute("UPDATE users SET last_checkin = ?, checkin_streak = 1 WHERE user_id = ?", (today, user_id))
-                return True, 1, "✅ День 1/7! Ты получил +1 запрос."
+                return True, 1, "✅ День 1/7! Ты получил бонусы!"
             
             last_checkin = row[0]
             streak = row[1] if row[1] else 0
@@ -641,17 +664,15 @@ def do_daily_checkin(user_id):
             bonus_images = get_bonus_amount(user_id)
             bonus_requests = get_bonus_requests_amount(user_id)
             
-            # Особый бонус за 7 дней
             if streak >= 7:
                 bonus_images = bonus_images * 2
                 bonus_requests = bonus_requests * 2
                 cursor.execute("UPDATE users SET checkin_streak = 0 WHERE user_id = ?", (user_id,))
-                msg = f"🎉 ТЫ СОБРАЛ 7 ДНЕЙ! Получил +{bonus_images} картинок и +{bonus_requests} запросов!"
+                msg = f"🎉 ТЫ СОБРАЛ 7 ДНЕЙ! Получил +{bonus_images} карт и +{bonus_requests} запросов!"
             else:
                 cursor.execute("UPDATE users SET checkin_streak = ? WHERE user_id = ?", (streak, user_id))
-                msg = f"✅ День {streak}/7! Ты получил +{bonus_images} картинок и +{bonus_requests} запросов."
+                msg = f"✅ День {streak}/7! Ты получил +{bonus_images} карт и +{bonus_requests} запросов."
             
-            # Начисляем бонусы
             cursor.execute("UPDATE users SET bonus_images = bonus_images + ?, bonus_requests = bonus_requests + ? WHERE user_id = ?", 
                          (bonus_images, bonus_requests, user_id))
             cursor.execute("UPDATE users SET last_checkin = ? WHERE user_id = ?", (today, user_id))
@@ -661,54 +682,21 @@ def do_daily_checkin(user_id):
         print(f"❌ Ошибка do_daily_checkin: {e}")
         return False, 0, "❌ Ошибка! Попробуйте позже."
 
-def get_user_info(user_id):
-    """Полная информация о пользователе для профиля"""
-    user = get_user(user_id)
-    if not user:
-        return None
-    
-    bonus_images = user[16] if len(user) > 16 and user[16] else 0
-    bonus_requests = user[17] if len(user) > 17 and user[17] else 0
-    streak = user[19] if len(user) > 19 and user[19] else 0
-    used_images = user[8] if len(user) > 8 and user[8] else 0
-    limit = get_image_limit(user_id) + bonus_images
-    
-    return {
-        'id': user[0],
-        'username': user[1],
-        'joined': user[2],
-        'plan': user[9],
-        'total_requests': user[5] or 0,
-        'total_images': user[8] or 0,
-        'used_images': used_images,
-        'image_limit': limit,
-        'bonus_images': bonus_images,
-        'bonus_requests': bonus_requests,
-        'streak': streak,
-        'is_premium': is_premium(user_id)
-    }
-
-# ========== СМЕНА ТАРИФА ==========
-
 def change_user_plan(user_id, new_plan):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем существует ли пользователь
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
                 return False, "Пользователь не найден!"
             
-            # Проверяем валидность плана
             if new_plan not in ['basic', 'premium', 'premium_deluxe']:
                 return False, "Неверный план!"
             
-            # Если меняем на basic — снимаем Premium
             if new_plan == 'basic':
                 cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
             else:
-                # Даём Premium на 30 дней
                 new_date = (datetime.now() + timedelta(days=30)).isoformat()
                 cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
                             (new_date, new_plan, user_id))
@@ -716,29 +704,3 @@ def change_user_plan(user_id, new_plan):
             return True, f"✅ План изменён на {new_plan.upper()}!"
     except Exception as e:
         return False, f"❌ Ошибка: {e}"
-
-
-def get_setting(key):
-    """Возвращает значение настройки по ключу"""
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            result = cursor.fetchone()
-            if result:
-                return result[0]
-    except:
-        pass
-    
-    defaults = {
-        'free_input_chars': '500',
-        'free_output_words': '50',
-        'premium_input_chars': '3000',
-        'premium_output_words': '300',
-        'premium_deluxe_input_chars': '5000',
-        'premium_deluxe_output_words': '500',
-        'image_limit_free': '3',
-        'image_limit_premium': '50',
-        'image_limit_premium_deluxe': '200'
-    }
-    return defaults.get(key, '0')
