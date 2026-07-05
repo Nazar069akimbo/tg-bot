@@ -153,7 +153,7 @@ def get_user(user_id):
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             user = cursor.fetchone()
-            if user and len(user) > 9 and user[9] == 'basic' and user[3] and user[3] > datetime.now().isoformat():
+            if user and user['plan'] == 'basic' and user['premium_until'] and user['premium_until'] > datetime.now().isoformat():
                 cursor.execute("UPDATE users SET plan = 'premium' WHERE user_id = ?", (user_id,))
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 user = cursor.fetchone()
@@ -229,8 +229,8 @@ def get_referral_bonuses(user_id):
     try:
         user = get_user(user_id)
         if user:
-            bonus_images = user[14] if len(user) > 14 and user[14] else 0
-            bonus_requests = user[15] if len(user) > 15 and user[15] else 0
+            bonus_images = user['referral_bonus_images'] if user['referral_bonus_images'] else 0
+            bonus_requests = user['referral_bonus_requests'] if user['referral_bonus_requests'] else 0
             return bonus_images, bonus_requests
         return 0, 0
     except:
@@ -277,15 +277,15 @@ def is_premium(user_id):
         user = get_user(user_id)
         if not user:
             return False
-        premium_until = user[3] if len(user) > 3 else None
+        premium_until = user['premium_until'] if user['premium_until'] else None
         return premium_until and datetime.now().isoformat() < premium_until
     except:
         return False
 
 def get_user_plan(user_id):
     user = get_user(user_id)
-    if user and len(user) > 9:
-        plan = user[9]
+    if user:
+        plan = user['plan'] if user['plan'] else 'basic'
         if plan in ['premium', 'premium_deluxe']:
             return plan
     return 'basic'
@@ -348,11 +348,8 @@ def can_request(user_id):
         if is_premium(user_id):
             return True, 999999, 0
         
-        used = user[4] if len(user) > 4 and user[4] else 0
-        used = int(used) if used else 0
-        
-        bonus = user[17] if len(user) > 17 and user[17] else 0
-        bonus = int(bonus) if bonus else 0
+        used = user['free_requests'] if user['free_requests'] else 0
+        bonus = user['bonus_requests'] if user['bonus_requests'] else 0
         
         total = 10 + bonus
         remaining = total - used
@@ -373,7 +370,7 @@ def add_request(user_id):
                 cursor.execute("UPDATE users SET total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
                 return True
             
-            bonus = user[17] if len(user) > 17 and user[17] else 0
+            bonus = user['bonus_requests'] if user['bonus_requests'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_requests = bonus_requests - 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
             else:
@@ -420,9 +417,9 @@ def set_setting(key, value):
 def reset_image_count_if_needed(user_id):
     try:
         user = get_user(user_id)
-        if not user or len(user) < 14:
+        if not user:
             return
-        last_reset = user[13] if len(user) > 13 else None
+        last_reset = user['last_image_reset'] if user['last_image_reset'] else None
         if not last_reset:
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -455,11 +452,8 @@ def can_generate_image(user_id):
         if not user:
             return True, 3, 0
         
-        used = user[8] if len(user) > 8 and user[8] else 0
-        used = int(used) if used else 0
-        
-        bonus = user[16] if len(user) > 16 and user[16] else 0
-        bonus = int(bonus) if bonus else 0
+        used = user['image_requests'] if user['image_requests'] else 0
+        bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
         remaining = limit - used
@@ -477,11 +471,8 @@ def get_image_stats(user_id):
         if not user:
             return 0, 3, False, 'basic', 0
         
-        used = user[8] if len(user) > 8 and user[8] else 0
-        used = int(used) if used else 0
-        
-        bonus = user[16] if len(user) > 16 and user[16] else 0
-        bonus = int(bonus) if bonus else 0
+        used = user['image_requests'] if user['image_requests'] else 0
+        bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
         prem = is_premium(user_id)
@@ -497,7 +488,7 @@ def add_image_request(user_id):
             cursor = conn.cursor()
             user = get_user(user_id)
             
-            bonus = user[16] if len(user) > 16 and user[16] else 0
+            bonus = user['bonus_images'] if user['bonus_images'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
             else:
@@ -511,8 +502,8 @@ def get_bonus_balance(user_id):
     try:
         user = get_user(user_id)
         if user:
-            bonus_images = user[16] if len(user) > 16 and user[16] else 0
-            bonus_requests = user[17] if len(user) > 17 and user[17] else 0
+            bonus_images = user['bonus_images'] if user['bonus_images'] else 0
+            bonus_requests = user['bonus_requests'] if user['bonus_requests'] else 0
             return int(bonus_images) if bonus_images else 0, int(bonus_requests) if bonus_requests else 0
         return 0, 0
     except:
@@ -559,9 +550,9 @@ def get_daily_stats(days=30):
 def is_trial_active(user_id):
     try:
         user = get_user(user_id)
-        if not user or len(user) < 11:
+        if not user:
             return False
-        trial_start = user[10] if len(user) > 10 else None
+        trial_start = user['trial_start'] if user['trial_start'] else None
         if not trial_start:
             return False
         start_date = datetime.fromisoformat(trial_start)
@@ -573,10 +564,9 @@ def get_trial_remaining(user_id):
     if not is_trial_active(user_id):
         return 0
     user = get_user(user_id)
-    if not user or len(user) < 12:
+    if not user:
         return 0
-    trial_used = user[11] if user[11] else 0
-    trial_used = int(trial_used) if trial_used else 0
+    trial_used = user['trial_used'] if user['trial_used'] else 0
     return max(0, 5 - trial_used)
 
 def use_trial_image(user_id):
@@ -590,7 +580,7 @@ def use_trial_image(user_id):
 
 def get_mode(user_id):
     user = get_user(user_id)
-    return user[7] if user and len(user) > 7 and user[7] else "chat"
+    return user['mode'] if user and user['mode'] else "chat"
 
 def get_messages_count():
     try:
@@ -648,13 +638,13 @@ def do_daily_checkin(user_id):
             
             if not row:
                 cursor.execute("UPDATE users SET last_checkin = ?, checkin_streak = 1 WHERE user_id = ?", (today, user_id))
-                return True, 1, "✅ День 1/7! Ты получил бонусы!"
+                return True, 1, "✅ Бонус дня! День 1 из 7."
             
             last_checkin = row[0]
             streak = row[1] if row[1] else 0
             
             if last_checkin == today:
-                return False, streak, "✅ Ты уже получил бонус сегодня! Возвращайся завтра."
+                return False, streak, "✅ Ты уже получил бонус сегодня!"
             
             if last_checkin and datetime.fromisoformat(last_checkin).date() == datetime.now().date() - timedelta(days=1):
                 streak += 1
@@ -667,20 +657,19 @@ def do_daily_checkin(user_id):
             if streak >= 7:
                 bonus_images = bonus_images * 2
                 bonus_requests = bonus_requests * 2
-                cursor.execute("UPDATE users SET checkin_streak = 0 WHERE user_id = ?", (user_id,))
-                msg = f"🎉 ТЫ СОБРАЛ 7 ДНЕЙ! Получил +{bonus_images} карт и +{bonus_requests} запросов!"
+                cursor.execute("UPDATE users SET checkin_streak = 0, last_checkin = ? WHERE user_id = ?", (today, user_id))
+                msg = f"🎉 7 ДНЕЙ! +{bonus_images} карт и +{bonus_requests} запросов!"
             else:
-                cursor.execute("UPDATE users SET checkin_streak = ? WHERE user_id = ?", (streak, user_id))
-                msg = f"✅ День {streak}/7! Ты получил +{bonus_images} карт и +{bonus_requests} запросов."
+                cursor.execute("UPDATE users SET checkin_streak = ?, last_checkin = ? WHERE user_id = ?", (streak, today, user_id))
+                msg = f"✅ День {streak} из 7! +{bonus_images} карт и +{bonus_requests} запросов."
             
             cursor.execute("UPDATE users SET bonus_images = bonus_images + ?, bonus_requests = bonus_requests + ? WHERE user_id = ?", 
                          (bonus_images, bonus_requests, user_id))
-            cursor.execute("UPDATE users SET last_checkin = ? WHERE user_id = ?", (today, user_id))
             
             return True, streak, msg
     except Exception as e:
         print(f"❌ Ошибка do_daily_checkin: {e}")
-        return False, 0, "❌ Ошибка! Попробуйте позже."
+        return False, 0, "❌ Ошибка!"
 
 def change_user_plan(user_id, new_plan):
     try:

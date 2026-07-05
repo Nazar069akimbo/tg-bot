@@ -25,7 +25,7 @@ def force_create_user(user_id, username=None):
     try:
         user = get_user(user_id)
         if user:
-            if len(user) > 9 and user[9] == 'basic' and user[3] and user[3] > datetime.now().isoformat():
+            if user['plan'] == 'basic' and user['premium_until'] and user['premium_until'] > datetime.now().isoformat():
                 from database.db import get_db
                 with get_db() as conn:
                     cursor = conn.cursor()
@@ -78,6 +78,8 @@ def admin_kb():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
+# ========== КОМАНДЫ ==========
+
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -127,9 +129,9 @@ async def stats_cmd(message: types.Message):
         return
     
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
-    total_requests = user[5] if len(user) > 5 and user[5] else 0
-    total_images = user[8] if len(user) > 8 and user[8] else 0
-    streak = user[19] if len(user) > 19 and user[19] else 0
+    total_requests = user['total_requests'] if user['total_requests'] else 0
+    total_images = user['image_requests'] if user['image_requests'] else 0
+    streak = user['checkin_streak'] if user['checkin_streak'] else 0
     b_img, b_req = get_bonus_balance(user_id)
     
     plan_names = {'basic': 'Бесплатный', 'premium': 'Premium', 'premium_deluxe': 'Premium Deluxe'}
@@ -154,16 +156,16 @@ async def profile_cmd(message: types.Message):
         return
     
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
-    total_requests = user[5] if len(user) > 5 and user[5] else 0
-    total_images = user[8] if len(user) > 8 and user[8] else 0
+    total_requests = user['total_requests'] if user['total_requests'] else 0
+    total_images = user['image_requests'] if user['image_requests'] else 0
     refs = get_referral_count(user_id)
     plan_name = get_plan_emoji(plan)
-    streak = user[19] if len(user) > 19 and user[19] else 0
+    streak = user['checkin_streak'] if user['checkin_streak'] else 0
     b_img, b_req = get_bonus_balance(user_id)
     
     text = (
         "👤 Профиль\n\n"
-        f"ID: {user[0]}\n"
+        f"ID: {user['user_id']}\n"
         f"План: {plan_name}\n"
         f"Всего запросов: {total_requests}\n"
         f"Всего картинок: {total_images}\n"
@@ -171,7 +173,7 @@ async def profile_cmd(message: types.Message):
         f"Бонусов: {b_img} карт, {b_req} запросов\n"
         f"Приглашено: {refs}\n"
         f"Серия бонусов: {streak} дней\n"
-        f"Регистрация: {user[2][:10] if user[2] else 'Нет'}"
+        f"Регистрация: {user['joined'][:10] if user['joined'] else 'Нет'}"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -265,8 +267,8 @@ async def leaderboard_cmd(message: types.Message):
     text = "🏆 Рейтинг\n\n"
     for i, u in enumerate(users):
         medal = medals[i] if i < 3 else f"{i+1}."
-        name = u[1] or str(u[0])
-        text += f"{medal} {name} — {u[2]} задач\n"
+        name = u['username'] if u['username'] else str(u['user_id'])
+        text += f"{medal} {name} — {u['total_requests']} задач\n"
     
     await message.answer(text, reply_markup=main_menu())
 
@@ -276,6 +278,8 @@ async def contact_admin_cmd(message: types.Message):
     force_create_user(user_id, message.from_user.username or "")
     user_pages[user_id] = {"state": "waiting_contact"}
     await message.answer("📩 Напишите сообщение админу.\n\n⏹ /cancel", reply_markup=main_menu())
+
+# ========== ОБРАБОТКА ТЕКСТА ==========
 
 @router.message(F.text)
 async def handle_message(message: types.Message):
@@ -331,7 +335,7 @@ async def generate_image(message: types.Message):
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
     
     if prem:
-        can_gen = used < limit
+        can_gen = True
     elif trial_rem > 0:
         can_gen = True
         limit = 5
@@ -379,7 +383,11 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    add_image_request(user_id)
+                    if trial_rem > 0:
+                        use_trial_image(user_id)
+                    else:
+                        add_image_request(user_id)
+                    
                     do_backup()
                     
                     new_used, new_limit, new_prem, new_plan, new_bonus = get_image_stats(user_id)
@@ -579,7 +587,8 @@ async def admin_cmd(message: types.Message):
 
 @router.message(Command("admin_code"))
 async def admin_code_cmd(message: types.Message):
-    if len(message.text.split()) > 1 and message.text.split()[1] == ADMIN_CODE:
+    args = message.text.split()
+    if len(args) > 1 and args[1] == ADMIN_CODE:
         add_admin(message.from_user.id)
         await message.answer("✅ Вы админ!", reply_markup=admin_kb())
 
@@ -674,10 +683,10 @@ async def a_users_cb(callback: types.CallbackQuery):
     else:
         text = "👥 Пользователи\n\n"
         for u in users:
-            emoji = plan_emoji.get(u[4], '🔴')
-            blocked = "🚫" if u[5] == 1 else "✅"
-            text += f"{blocked} {emoji} {u[0]} — {u[1] or 'без имени'}\n"
-            text += f"   📝{u[2]} | 🖼️{u[3]}\n"
+            emoji = plan_emoji.get(u['plan'], '🔴')
+            blocked = "🚫" if u['is_blocked'] == 1 else "✅"
+            text += f"{blocked} {emoji} {u['user_id']} — {u['username'] or 'без имени'}\n"
+            text += f"   📝{u['total_requests']} | 🖼️{u['image_requests']}\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
@@ -704,9 +713,9 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        username = u[1] or str(u[0])
+        username = u['username'] if u['username'] else str(u['user_id'])
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"👤 {username}", callback_data=f"give_premium_{u[0]}")
+            InlineKeyboardButton(text=f"👤 {username}", callback_data=f"give_premium_{u['user_id']}")
         ])
     
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
@@ -774,11 +783,11 @@ async def a_change_plan_cb(callback: types.CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        username = u[1] or str(u[0])
-        current_plan = u[2] or 'basic'
+        username = u['username'] if u['username'] else str(u['user_id'])
+        current_plan = u['plan'] if u['plan'] else 'basic'
         emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}.get(current_plan, '🔴')
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"{emoji} {username} ({current_plan})", callback_data=f"change_plan_{u[0]}")
+            InlineKeyboardButton(text=f"{emoji} {username} ({current_plan})", callback_data=f"change_plan_{u['user_id']}")
         ])
     
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
@@ -845,11 +854,11 @@ async def a_messages_cb(callback: types.CallbackQuery):
     
     text = "📩 Обращения\n\n"
     for msg in messages:
-        status = "🆕" if msg[5] == "new" else "✅"
-        name = msg[2] or f"User_{msg[1]}"
-        text += f"{status} {msg[1]} — {name}\n"
-        text += f"📝 {msg[3][:50]}{'...' if len(msg[3]) > 50 else ''}\n"
-        text += f"🕐 {msg[4][:16]}\n\n"
+        status = "🆕" if msg['status'] == "new" else "✅"
+        name = msg['username'] if msg['username'] else f"User_{msg['user_id']}"
+        text += f"{status} {msg['user_id']} — {name}\n"
+        text += f"📝 {msg['text'][:50]}{'...' if len(msg['text']) > 50 else ''}\n"
+        text += f"🕐 {msg['date'][:16]}\n\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Ответить", callback_data="reply_last")],
@@ -912,10 +921,10 @@ async def a_block_cb(callback: types.CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        username = u[1] or str(u[0])
-        status = "🔓" if u[2] == 0 else "🔒"
+        username = u['username'] if u['username'] else str(u['user_id'])
+        status = "🔓" if u['is_blocked'] == 0 else "🔒"
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"{status} {username}", callback_data=f"block_user_{u[0]}")
+            InlineKeyboardButton(text=f"{status} {username}", callback_data=f"block_user_{u['user_id']}")
         ])
     
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
@@ -938,7 +947,7 @@ async def block_user_action(callback: types.CallbackQuery):
         await callback.answer("Пользователь не найден", show_alert=True)
         return
     
-    is_blocked = user[6] if len(user) > 6 else 0
+    is_blocked = user['is_blocked'] if user['is_blocked'] else 0
     
     if is_blocked == 1:
         unblock_user(user_id)
@@ -1002,15 +1011,18 @@ async def delete_message_cb(callback: types.CallbackQuery):
     await callback.answer("🗑️ Удалено", show_alert=True)
     await a_messages_cb(callback)
 
+# ========== ОБРАБОТКА АДМИН-ВВОДА ==========
+
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
     
+    if message.text == "/cancel":
+        user_pages.pop(user_id, None)
+        await message.answer("✅ Отменено", reply_markup=main_menu() if not is_admin(user_id) else admin_kb())
+        return
+    
     if state.get("state") == "waiting_reply":
-        if message.text == "/cancel":
-            user_pages.pop(user_id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
-        
         msg_id = state.get("msg_id")
         reply_text = message.text
         
@@ -1019,7 +1031,7 @@ async def handle_admin_input(message: types.Message):
             cursor = conn.cursor()
             msg = get_message_by_id(msg_id)
             if msg:
-                user_id_target = msg[1]
+                user_id_target = msg['user_id']
                 cursor.execute("UPDATE messages_to_admin SET status = 'answered' WHERE id = ?", (msg_id,))
                 
                 try:
@@ -1046,9 +1058,6 @@ async def handle_admin_input(message: types.Message):
         return
     
     if state.get("state") == "waiting_plan_edit":
-        if message.text == "/cancel":
-            user_pages.pop(user_id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
         try:
             parts = message.text.split()
             if len(parts) != 1:
@@ -1069,9 +1078,6 @@ async def handle_admin_input(message: types.Message):
         return
     
     if state.get("state") == "waiting_broadcast":
-        if message.text == "/cancel":
-            user_pages.pop(user_id, None)
-            return await message.answer("✅ Отменено", reply_markup=admin_kb())
         await message.answer("📢 Рассылка...")
         
         from database.db import get_db
@@ -1083,7 +1089,7 @@ async def handle_admin_input(message: types.Message):
         sent = 0
         for u in users:
             try:
-                await message.bot.send_message(u[0], f"📢 {message.text}")
+                await message.bot.send_message(u['user_id'], f"📢 {message.text}")
                 sent += 1
                 await asyncio.sleep(0.05)
             except:
