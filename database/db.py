@@ -33,6 +33,7 @@ def init_db():
             is_blocked INTEGER DEFAULT 0,
             mode TEXT DEFAULT "chat",
             image_requests INTEGER DEFAULT 0,
+            total_images INTEGER DEFAULT 0,
             plan TEXT DEFAULT "basic",
             trial_start TEXT,
             trial_used INTEGER DEFAULT 0,
@@ -492,7 +493,7 @@ def add_image_request(user_id):
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
             else:
-                cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
+                cursor.execute("UPDATE users SET image_requests = image_requests + 1, total_images = total_images + 1 WHERE user_id = ?", (user_id,))
             return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
