@@ -72,7 +72,7 @@ def admin_kb():
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
         [InlineKeyboardButton(text="🔄 Сменить тариф", callback_data="a_change_plan")],
-        [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
+        [InlineKeyboardButton(text=f"📬 Почта{badge}", callback_data="a_messages")],
         [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
