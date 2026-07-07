@@ -475,7 +475,7 @@ async def generate_image(message: types.Message):
                     await asyncio.sleep(0.2)
                     
                     # 🔍 ДИАГНОСТИКА КАРТИНОК
-                        print(f"🔍 user_id={user_id}, trial_rem={trial_rem}")
+                                            print(f"🔍 user_id={user_id}, trial_rem={trial_rem}")
                         
                         if trial_rem > 0:
                             print("➡️ Пробный период")
