@@ -128,7 +128,7 @@ async def stats_cmd(message: types.Message):
     
     used, limit, prem, plan_from_stats, bonus_img = get_image_stats(user_id)
     total_requests = user['total_requests'] if user['total_requests'] else 0
-    total_images = user['image_requests'] if user['image_requests'] else 0
+    total_images = user['total_images'] if user['total_images'] else 0
     streak = user['checkin_streak'] if user['checkin_streak'] else 0
     b_img, b_req = get_bonus_balance(user_id)
     
