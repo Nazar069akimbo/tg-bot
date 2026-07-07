@@ -821,6 +821,18 @@ async def set_plan_confirm(callback: types.CallbackQuery):
     success, msg = change_user_plan(user_id, new_plan)
     await callback.answer("✅" if success else "❌", show_alert=True)
     
+    # Отладка
+    print(f"🔍 Смена плана: user_id={user_id}, new_plan={new_plan}, success={success}, msg={msg}")
+    
+    # Проверяем что в БД
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT plan FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            print(f"🔍 План в БД после изменения: {row[0]}")
+    
     await callback.message.edit_text(
         f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {new_plan.upper()}",
         reply_markup=admin_kb()
