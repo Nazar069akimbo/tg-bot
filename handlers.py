@@ -85,7 +85,6 @@ async def start_cmd(message: types.Message):
     if not user:
         await message.answer("❌ Ошибка регистрации.")
         return
-    
     args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
@@ -93,7 +92,6 @@ async def start_cmd(message: types.Message):
             success, msg = add_referral(referrer_id, user_id)
             if success:
                 await message.answer(msg)
-    
     text = (
         "🤖 **Vertex AI**\n\n"
         "Искусственный интеллект в Telegram!\n\n"
@@ -123,7 +121,6 @@ async def stats_cmd(message: types.Message):
     if not user:
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
-    
     used, limit, prem, plan_from_stats, bonus_img = get_image_stats(user_id)
     total_requests = user['total_requests'] if user['total_requests'] else 0
     total_images = user['image_requests'] if user['image_requests'] else 0
@@ -131,7 +128,6 @@ async def stats_cmd(message: types.Message):
     b_img, b_req = get_bonus_balance(user_id)
     plan = user['plan'] if user['plan'] else 'basic'
     plan_names = {'basic': '🔴 Бесплатный', 'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-    
     text = (
         "📊 **Статистика**\n\n"
         f"📝 Запросов: {total_requests}\n"
@@ -265,7 +261,7 @@ async def handle_message(message: types.Message):
         return
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
-    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply", "waiting_change_plan", "waiting_email", "waiting_email_to", "waiting_email_subject", "waiting_email_text"]:
+    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply", "waiting_change_plan", "waiting_email"]:
         await handle_admin_input(message)
         return
     user = force_create_user(user_id, message.from_user.username or "")
@@ -803,8 +799,9 @@ async def set_plan_confirm(callback: types.CallbackQuery):
     user = get_user(user_id)
     if user:
         print(f"🔍 План из get_user: {user['plan']}")
+    plan_names = {"basic": "🔴 Бесплатный", "premium": "💎 Premium", "premium_deluxe": "👑 Premium Deluxe"}
     await callback.message.edit_text(
-        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {plan_names.get(new_plan, new_plan)}\n📅 Действует 30 дней",
+        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {plan_names.get(new_plan, new_plan.upper())}\n📅 Действует 30 дней",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -960,7 +957,7 @@ async def a_email_cb(callback: types.CallbackQuery):
         return await callback.answer("⛔ Нет доступа")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📩 Входящие", callback_data="email_inbox")],
-        [InlineKeyboardButton(text="📤 Отправить", callback_data="email_send")],
+        [InlineKeyboardButton(text="📤 Написать", callback_data="email_send")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
     await callback.message.edit_text("📧 **Почта**\n\nВыберите действие:", reply_markup=kb)
@@ -1032,10 +1029,11 @@ async def email_read_cmd(message: types.Message):
 async def email_send_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_email_to"}
+    user_pages[callback.from_user.id] = {"state": "waiting_email"}
     await callback.message.edit_text(
-        "📤 **Отправить письмо**\n\n"
-        "Введите **ID получателя** или **0** для рассылки всем админам:\n\n"
+        "📧 **Новое письмо**\n\n"
+        "Введите текст письма.\n"
+        "Оно будет отправлено ВСЕМ админам.\n\n"
         "⏹ /cancel",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="a_email")]
@@ -1055,10 +1053,35 @@ async def delete_message_cb(callback: types.CallbackQuery):
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
+    
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=main_menu() if not is_admin(user_id) else admin_kb())
         return
+    
+    if state.get("state") == "waiting_email":
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM admins")
+            admins = cursor.fetchall()
+        
+        sent = 0
+        for admin in admins:
+            try:
+                await message.bot.send_message(
+                    admin['user_id'],
+                    f"📧 **Письмо от админа**\n\n{message.text}"
+                )
+                sent += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        
+        await message.answer(f"✅ Письмо отправлено {sent} админам!", reply_markup=admin_kb())
+        user_pages.pop(user_id, None)
+        return
+    
     if state.get("state") == "waiting_reply":
         msg_id = state.get("msg_id")
         reply_text = message.text
@@ -1082,6 +1105,7 @@ async def handle_admin_input(message: types.Message):
                 await message.answer("❌ Сообщение не найдено", reply_markup=admin_kb())
         user_pages.pop(user_id, None)
         return
+    
     if state.get("state") == "waiting_plan_edit":
         try:
             parts = message.text.split() if message.text else []
@@ -1101,6 +1125,7 @@ async def handle_admin_input(message: types.Message):
         except:
             await message.answer("❌ Ошибка! Введите число", reply_markup=admin_kb())
         return
+    
     if state.get("state") == "waiting_broadcast":
         await message.answer("📢 Рассылка...")
         from database.db import get_db
@@ -1120,6 +1145,7 @@ async def handle_admin_input(message: types.Message):
         do_backup()
         user_pages.pop(user_id, None)
         return
+    
     if state.get("state") == "waiting_contact":
         from database.db import get_db
         with get_db() as conn:
@@ -1128,43 +1154,6 @@ async def handle_admin_input(message: types.Message):
                         (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
         await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")
         await message.answer("✅ Отправлено!", reply_markup=main_menu())
-        user_pages.pop(user_id, None)
-        return
-    if state.get("state") == "waiting_email_to":
-        try:
-            receiver_id = int(message.text.strip())
-            user_pages[user_id] = {"state": "waiting_email_subject", "receiver_id": receiver_id}
-            await message.answer("📝 Введите **тему** письма:")
-        except:
-            await message.answer("❌ Введите число (ID пользователя или 0)")
-        return
-    if state.get("state") == "waiting_email_subject":
-        user_pages[user_id]["subject"] = message.text
-        user_pages[user_id]["state"] = "waiting_email_text"
-        await message.answer("📝 Введите **текст** письма:")
-        return
-    if state.get("state") == "waiting_email_text":
-        receiver_id = user_pages[user_id].get("receiver_id")
-        subject = user_pages[user_id].get("subject")
-        text = message.text
-        from database.db import get_db
-        with get_db() as conn:
-            cursor = conn.cursor()
-            if receiver_id == 0:
-                cursor.execute("SELECT user_id FROM admins")
-                admins = cursor.fetchall()
-                for admin in admins:
-                    cursor.execute("""
-                        INSERT INTO emails (sender_id, sender_name, receiver_id, subject, text, date, is_read)
-                        VALUES (?, ?, ?, ?, ?, ?, 0)
-                    """, (user_id, message.from_user.username or str(user_id), admin['user_id'], subject, text, datetime.now().isoformat()))
-                await message.answer(f"✅ Письмо отправлено {len(admins)} админам!")
-            else:
-                cursor.execute("""
-                    INSERT INTO emails (sender_id, sender_name, receiver_id, subject, text, date, is_read)
-                    VALUES (?, ?, ?, ?, ?, ?, 0)
-                """, (user_id, message.from_user.username or str(user_id), receiver_id, subject, text, datetime.now().isoformat()))
-                await message.answer(f"✅ Письмо отправлено пользователю {receiver_id}!")
         user_pages.pop(user_id, None)
         return
 
@@ -1203,3 +1192,4 @@ async def set_plan_cmd(message: types.Message):
 async def cancel_cmd(message: types.Message):
     user_pages.pop(message.from_user.id, None)
     await message.answer("✅ Отменено", reply_markup=main_menu())
+
