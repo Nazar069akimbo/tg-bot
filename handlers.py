@@ -126,12 +126,14 @@ async def stats_cmd(message: types.Message):
         await message.answer("Ошибка!", reply_markup=main_menu())
         return
     
-    used, limit, prem, plan, bonus_img = get_image_stats(user_id)
+    used, limit, prem, plan_from_stats, bonus_img = get_image_stats(user_id)
     total_requests = user['total_requests'] if user['total_requests'] else 0
     total_images = user['image_requests'] if user['image_requests'] else 0
     streak = user['checkin_streak'] if user['checkin_streak'] else 0
     b_img, b_req = get_bonus_balance(user_id)
     
+    # Берём план из БД, а не из get_image_stats
+    plan = user['plan'] if user['plan'] else 'basic'
     plan_names = {'basic': 'Бесплатный', 'premium': 'Premium', 'premium_deluxe': 'Premium Deluxe'}
     
     text = (
@@ -139,7 +141,7 @@ async def stats_cmd(message: types.Message):
         f"Запросов: {total_requests}\n"
         f"Картинок: {total_images}\n"
         f"Сегодня: {used}/{limit}\n"
-        f"Бонусов: {b_img} карт, {b_req} запросов\n"
+        f"Бонусов: {b_img} картинок, {b_req} запросов\n"
         f"Серия бонусов: {streak} дней\n"
         f"План: {plan_names.get(plan, 'Бесплатный')}"
     )
