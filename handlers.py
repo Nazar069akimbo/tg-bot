@@ -689,33 +689,54 @@ async def a_users_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_give_premium")
 async def a_give_premium_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        return await callback.answer("⛔ Нет доступа", show_alert=True)
     
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, plan FROM users WHERE plan = 'basic' ORDER BY user_id LIMIT 20")
-        users = cursor.fetchall()
-    
-    if not users:
-        await callback.message.edit_text("Все уже имеют Premium!", reply_markup=admin_kb())
-        await callback.answer()
-        return
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
-    for u in users:
-        username = u['username'] if u['username'] else str(u['user_id'])
+    try:
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT user_id, username, plan 
+                FROM users 
+                WHERE plan != 'premium' AND plan != 'premium_deluxe' 
+                LIMIT 20
+            """)
+            users = cursor.fetchall()
+        
+        if not users:
+            await callback.message.edit_text(
+                "👥 Все пользователи уже имеют Premium!",
+                reply_markup=admin_kb()
+            )
+            await callback.answer()
+            return
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[])
+        for u in users:
+            user_id = u['user_id'] if 'user_id' in u.keys() else u[0]
+            username = u['username'] if 'username' in u.keys() and u['username'] else str(user_id)
+            plan = u['plan'] if 'plan' in u.keys() else 'basic'
+            
+            kb.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text=f"👤 {username} ({plan})", 
+                    callback_data=f"give_premium_{user_id}"
+                )
+            ])
+        
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"👤 {username}", callback_data=f"give_premium_{u['user_id']}")
+            InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")
         ])
-    
-    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    
-    await callback.message.edit_text(
-        "💎 Выдать Premium\n\nВыберите пользователя:",
-        reply_markup=kb
-    )
-    await callback.answer()
+        
+        await callback.message.edit_text(
+            "💎 **Выдать Premium**\n\nВыберите пользователя:",
+            reply_markup=kb
+        )
+        await callback.answer()
+        
+    except Exception as e:
+        print(f"❌ Ошибка a_give_premium: {e}")
+        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
 
 @router.callback_query(F.data.startswith("give_premium_"))
 async def give_premium_confirm(callback: types.CallbackQuery):
@@ -1119,6 +1140,45 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отправлено!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
+
+
+
+@router.message(Command("set_plan"))
+async def set_plan_cmd(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            await message.answer("❌ Использование: /set_plan ID premium|premium_deluxe|basic")
+            return
+        
+        user_id = int(parts[1])
+        plan = parts[2].lower()
+        
+        if plan not in ['premium', 'premium_deluxe', 'basic']:
+            await message.answer("❌ План: premium, premium_deluxe или basic")
+            return
+        
+        if plan == 'basic':
+            remove_premium(user_id)
+            await message.answer(f"✅ Basic восстановлен для {user_id}")
+        else:
+            success = add_premium(user_id, 30, plan)
+            if success:
+                plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+                await message.answer(f"✅ {plan_names.get(plan, plan)} на 30 дней выдан {user_id}")
+            else:
+                await message.answer(f"❌ Ошибка выдачи Premium пользователю {user_id}")
+        
+        do_backup()
+        
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: types.Message):
