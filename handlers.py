@@ -658,7 +658,7 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, image_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, total_images, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
