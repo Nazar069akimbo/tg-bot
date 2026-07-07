@@ -6,6 +6,7 @@ from flask import Flask
 from database.db import init_db, is_admin, add_admin
 from handlers import router
 from backup import GitHubBackup
+import fcntl
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +16,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
+
+# Блокировка для одного экземпляра
+try:
+    lock_file = open("/tmp/bot.lock", "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except:
+    logger.error("❌ Бот уже запущен!")
+    sys.exit(0)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -33,7 +42,6 @@ async def main():
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # ВОССТАНАВЛИВАЕМ БЕКАП
     try:
         backup = GitHubBackup()
         backup.restore_latest_backup()
@@ -41,7 +49,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Не удалось восстановить бекап: {e}")
     
-    # Снова запускаем миграцию после восстановления
     init_db()
     logger.info("✅ Миграция БД выполнена")
     
@@ -66,6 +73,10 @@ async def main():
         types.BotCommand(command="referral", description="👥 Рефералы")
     ])
     logger.info("✅ Бот готов!")
+    
+    # Удаляем старые вебхуки
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
