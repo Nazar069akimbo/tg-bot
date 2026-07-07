@@ -474,10 +474,25 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    if trial_rem > 0:
-                        use_trial_image(user_id)
-                    else:
-                        add_image_request(user_id)
+                    # 🔍 ДИАГНОСТИКА КАРТИНОК
+                        print(f"🔍 user_id={user_id}, trial_rem={trial_rem}")
+                        
+                        if trial_rem > 0:
+                            print("➡️ Пробный период")
+                            use_trial_image(user_id)
+                        else:
+                            print("➡️ Обычная картинка")
+                            result = add_image_request(user_id)
+                            print(f"➡️ Результат add_image_request: {result}")
+                            
+                            # Проверка после обновления
+                            from database.db import get_db
+                            with get_db() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT image_requests, total_images FROM users WHERE user_id = ?", (user_id,))
+                                data = cursor.fetchone()
+                                if data:
+                                    print(f"📊 После обновления: image_requests={data[0]}, total_images={data[1]}")
                     
                     do_backup()
                     
