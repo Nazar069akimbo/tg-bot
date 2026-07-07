@@ -300,26 +300,39 @@ def set_user_plan(user_id, plan):
     except:
         return False
 
+
+
 def add_premium(user_id, days, plan='premium', paid=False):
     try:
-        print(f"🔍 add_premium: user_id={user_id}, days={days}, plan={plan}, paid={paid}")
+        print(f"🔍 add_premium: user_id={user_id}, days={days}, plan={plan}")
         with get_db() as conn:
             cursor = conn.cursor()
+            
+            # Проверяем пользователя
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if not cursor.fetchone():
+                print(f"❌ Пользователь {user_id} не найден!")
+                return False
+            
             new_date = (datetime.now() + timedelta(days=days)).isoformat()
-            cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
-                        (new_date, plan, user_id))
+            cursor.execute("""
+                UPDATE users 
+                SET premium_until = ?, plan = ? 
+                WHERE user_id = ?
+            """, (new_date, plan, user_id))
+            
             if paid:
                 cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
             
-            # Проверяем
             cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
-                print(f"📊 add_premium: plan={row[0]}, premium_until={row[1]}")
+                print(f"📊 ПОСЛЕ: plan={row[0]}, premium_until={row[1]}")
             return True
     except Exception as e:
         print(f"❌ Ошибка add_premium: {e}")
         return False
+
 
 def remove_premium(user_id):
     try:

@@ -757,25 +757,61 @@ async def give_premium_confirm(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+
+
 @router.callback_query(F.data.startswith("confirm_premium_"))
 async def confirm_premium(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        return await callback.answer("⛔ Нет доступа", show_alert=True)
     
-    parts = callback.data.split("_")
-    user_id = int(parts[2])
-    plan = parts[3]
-    
-    add_premium(user_id, 30, plan)
-    do_backup()
-    
-    plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-    
-    await callback.message.edit_text(
-        f"✅ {plan_names.get(plan)} на 30 дней выдан {user_id}!",
-        reply_markup=admin_kb()
-    )
-    await callback.answer()
+    try:
+        data = callback.data.split("_")
+        user_id = int(data[2])
+        plan = data[3]
+        
+        print(f"🔍 confirm_premium: user_id={user_id}, plan={plan}")
+        
+        if plan not in ['premium', 'premium_deluxe']:
+            await callback.answer("❌ Неверный план", show_alert=True)
+            return
+        
+        success = add_premium(user_id, 30, plan)
+        
+        if success:
+            plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+            
+            user = get_user(user_id)
+            if user:
+                plan_actual = user['plan'] if 'plan' in user.keys() else 'unknown'
+                until = user['premium_until'] if 'premium_until' in user.keys() else 'N/A'
+                
+                await callback.message.edit_text(
+                    f"✅ {plan_names.get(plan, plan)} на 30 дней выдан {user_id}!
+"
+                    f"📊 Текущий план: {plan_actual}
+"
+                    f"📅 До: {until[:10] if until else 'бессрочно'}",
+                    reply_markup=admin_kb()
+                )
+            else:
+                await callback.message.edit_text(
+                    f"✅ {plan_names.get(plan, plan)} выдан {user_id}!",
+                    reply_markup=admin_kb()
+                )
+            
+            do_backup()
+            await callback.answer("✅ Premium выдан!", show_alert=True)
+        else:
+            await callback.message.edit_text(
+                f"❌ Ошибка выдачи Premium пользователю {user_id}",
+                reply_markup=admin_kb()
+            )
+            await callback.answer("❌ Ошибка!", show_alert=True)
+            
+    except Exception as e:
+        print(f"❌ Ошибка confirm_premium: {e}")
+        await callback.message.edit_text(f"❌ Ошибка: {str(e)}", reply_markup=admin_kb())
+        await callback.answer("❌ Ошибка!", show_alert=True)
 
 @router.callback_query(F.data == "a_change_plan")
 async def a_change_plan_cb(callback: types.CallbackQuery):
