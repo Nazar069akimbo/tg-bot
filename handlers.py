@@ -347,8 +347,8 @@ async def generate_image(message: types.Message):
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
         
-        for p in [10, 25, 45, 60, 75, 90]:
-            await asyncio.sleep(0.2)
+        for p in range(5, 101, 5):
+            await asyncio.sleep(0.3)
             try:
                 await status_msg.edit_text(f"🎨 {p}%")
             except:
@@ -513,14 +513,20 @@ async def pay_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
     try:
         plan_type = callback.data.replace("pay_", "")
-        if plan_type == "premium":
-            stars, days, plan = 49, 30, "premium"
-            title = "Premium 1 мес"
-        elif plan_type == "deluxe":
-            stars, days, plan = 99, 30, "premium_deluxe"
-            title = "Premium Deluxe 1 мес"
-        else:
+        plans = {
+            "premium_1m": (49, 30, "premium", "💎 Premium 1 мес"),
+            "premium_3m": (129, 90, "premium", "💎 Premium 3 мес"),
+            "premium_6m": (249, 180, "premium", "💎 Premium 6 мес"),
+            "premium_12m": (449, 365, "premium", "💎 Premium 12 мес"),
+            "deluxe_1m": (99, 30, "premium_deluxe", "👑 Deluxe 1 мес"),
+            "deluxe_3m": (269, 90, "premium_deluxe", "👑 Deluxe 3 мес"),
+            "deluxe_6m": (499, 180, "premium_deluxe", "👑 Deluxe 6 мес"),
+            "deluxe_12m": (899, 365, "premium_deluxe", "👑 Deluxe 12 мес"),
+        }
+        if plan_type not in plans:
             return await callback.answer("Неверный тариф", show_alert=True)
+        
+        stars, days, plan, title = plans[plan_type]
         payload = secrets.token_hex(16)
         
         from database.db import get_db
@@ -578,6 +584,34 @@ async def admin_code_cmd(message: types.Message):
     if len(args) > 1 and args[1] == ADMIN_CODE:
         add_admin(message.from_user.id)
         await message.answer("✅ Вы админ!", reply_markup=admin_kb())
+
+
+@router.callback_query(F.data == "a_email")
+async def a_email_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📩 Входящие", callback_data="email_inbox")],
+        [InlineKeyboardButton(text="📤 Отправить", callback_data="email_send")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+    await callback.message.edit_text("📧 Почта\n\nВыберите действие:", reply_markup=kb)
+    await callback.answer()
+
+@router.callback_query(F.data == "email_inbox")
+async def email_inbox_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    await callback.message.edit_text("📭 В разработке...", reply_markup=admin_kb())
+    await callback.answer()
+
+@router.callback_query(F.data == "email_send")
+async def email_send_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    user_pages[callback.from_user.id] = {"state": "waiting_email"}
+    await callback.message.edit_text("📤 Введите текст письма для рассылки админам:\n\n⏹ /cancel", reply_markup=admin_kb())
+    await callback.answer()
 
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
