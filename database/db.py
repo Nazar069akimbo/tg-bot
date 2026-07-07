@@ -23,6 +23,7 @@ def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
         
+        # Таблица пользователей
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -49,6 +50,7 @@ def init_db():
         )
         ''')
         
+        # Таблица рефералов
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +62,7 @@ def init_db():
         )
         ''')
         
+        # Таблица админов
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             user_id INTEGER PRIMARY KEY,
@@ -67,6 +70,7 @@ def init_db():
         )
         ''')
         
+        # Таблица платежей
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +83,7 @@ def init_db():
         )
         ''')
         
+        # Таблица сообщений админу
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +95,21 @@ def init_db():
         )
         ''')
         
+        # ТАБЛИЦА ПОЧТЫ
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER,
+            sender_name TEXT,
+            receiver_id INTEGER,
+            subject TEXT,
+            text TEXT,
+            date TEXT,
+            is_read INTEGER DEFAULT 0
+        )
+        ''')
+        
+        # Таблица настроек
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -97,6 +117,7 @@ def init_db():
         )
         ''')
         
+        # Добавляем недостающие колонки в users
         cursor.execute("PRAGMA table_info(users)")
         existing_cols = [row[1] for row in cursor.fetchall()]
         
@@ -124,6 +145,7 @@ def init_db():
                 except:
                     pass
         
+        # Настройки по умолчанию
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -142,9 +164,11 @@ def init_db():
         for key, value in default_settings:
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
         
+        # Добавляем админа по умолчанию
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                        (6957852385, datetime.now().isoformat()))
         
+        # Обновляем пользователей с истекшим премиумом
         cursor.execute("UPDATE users SET plan = 'premium' WHERE premium_until IS NOT NULL AND premium_until > datetime('now') AND plan = 'basic'")
         print("✅ База данных готова")
 
@@ -300,15 +324,12 @@ def set_user_plan(user_id, plan):
     except:
         return False
 
-
-
 def add_premium(user_id, days, plan='premium', paid=False):
     try:
         print(f"🔍 add_premium: user_id={user_id}, days={days}, plan={plan}")
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем пользователя
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
                 print(f"❌ Пользователь {user_id} не найден!")
@@ -332,7 +353,6 @@ def add_premium(user_id, days, plan='premium', paid=False):
     except Exception as e:
         print(f"❌ Ошибка add_premium: {e}")
         return False
-
 
 def remove_premium(user_id):
     try:
@@ -512,7 +532,6 @@ def add_image_request(user_id):
             cursor = conn.cursor()
             user = get_user(user_id)
             
-            # Проверяем бонусы
             bonus = user['bonus_images'] if user['bonus_images'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
@@ -696,14 +715,10 @@ def do_daily_checkin(user_id):
         print(f"❌ Ошибка do_daily_checkin: {e}")
         return False, 0, "❌ Ошибка!"
 
-
-
 def change_user_plan(user_id, new_plan):
-    """Меняет план пользователя с записью в лог"""
     try:
         print(f"🔍 change_user_plan: user_id={user_id}, new_plan={new_plan}")
         
-        # Проверяем пользователя
         user = get_user(user_id)
         if not user:
             print(f"❌ Пользователь {user_id} не найден!")
@@ -719,7 +734,6 @@ def change_user_plan(user_id, new_plan):
             cursor = conn.cursor()
             
             if new_plan == 'basic':
-                # Отключаем Premium
                 cursor.execute("""
                     UPDATE users 
                     SET premium_until = NULL, 
@@ -728,7 +742,6 @@ def change_user_plan(user_id, new_plan):
                 """, (user_id,))
                 print(f"  ✅ Premium отключён для {user_id}")
             else:
-                # Выдаём Premium на 30 дней
                 new_date = (datetime.now() + timedelta(days=30)).isoformat()
                 cursor.execute("""
                     UPDATE users 
@@ -738,7 +751,6 @@ def change_user_plan(user_id, new_plan):
                 """, (new_date, new_plan, user_id))
                 print(f"  ✅ {new_plan} выдан до {new_date} для {user_id}")
             
-            # Проверяем что изменилось
             cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
