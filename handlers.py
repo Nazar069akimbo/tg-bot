@@ -1223,3 +1223,5 @@ async def cancel_cmd(message: types.Message):
 
 # FORCE CHANGE - Tue Jul  7 13:05:11 +03 2026
 # FORCE CHANGE - Tue Jul  7 13:34:06 +03 2026
+
+# FIX: syntax error fixed - Tue Jul  7 16:12:45 +03 2026
