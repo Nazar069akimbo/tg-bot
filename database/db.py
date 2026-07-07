@@ -698,3 +698,4 @@ def change_user_plan(user_id, new_plan):
         return False, f"❌ Ошибка: {e}"
 
 # DIAGNOSTIC: image counter - Tue Jul  7 11:23:46 +03 2026
+# FORCE CHANGE - Tue Jul  7 13:34:06 +03 2026

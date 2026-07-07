@@ -1099,3 +1099,4 @@ async def cancel_cmd(message: types.Message):
     await message.answer("✅ Отменено", reply_markup=main_menu())
 
 # FORCE CHANGE - Tue Jul  7 13:05:11 +03 2026
+# FORCE CHANGE - Tue Jul  7 13:34:06 +03 2026
