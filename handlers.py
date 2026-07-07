@@ -128,7 +128,7 @@ async def stats_cmd(message: types.Message):
     
     used, limit, prem, plan_from_stats, bonus_img = get_image_stats(user_id)
     total_requests = user['total_requests'] if user['total_requests'] else 0
-    total_images = user['total_images'] if user['total_images'] else 0
+    total_images = user['image_requests'] if user['image_requests'] else 0
     streak = user['checkin_streak'] if user['checkin_streak'] else 0
     b_img, b_req = get_bonus_balance(user_id)
     
@@ -658,7 +658,7 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, total_requests, total_images, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, total_requests, image_requests, plan, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     
     plan_emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}
@@ -670,7 +670,7 @@ async def a_users_cb(callback: types.CallbackQuery):
             emoji = plan_emoji.get(u['plan'], '🔴')
             blocked = "🚫" if u['is_blocked'] == 1 else "✅"
             text += f"{blocked} {emoji} {u['user_id']} — {u['username'] or 'без имени'}\n"
-            text += f"   📝{u['total_requests']} | 🖼️{u['total_images']}\n"
+            text += f"   📝{u['total_requests']} | 🖼️{u['image_requests']}\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
