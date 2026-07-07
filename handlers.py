@@ -373,6 +373,7 @@ async def generate_image(message: types.Message):
                     if trial_rem > 0:
                         use_trial_image(user_id)
                     else:
+                        print(f"📸 Генерирую картинку для {user_id}")
                         add_image_request(user_id)
                     
                     do_backup()
@@ -669,7 +670,7 @@ async def a_users_cb(callback: types.CallbackQuery):
             emoji = plan_emoji.get(u['plan'], '🔴')
             blocked = "🚫" if u['is_blocked'] == 1 else "✅"
             text += f"{blocked} {emoji} {u['user_id']} — {u['username'] or 'без имени'}\n"
-            text += f"   📝{u['total_requests']} | 🖼️{u['image_requests']}\n"
+            text += f"   📝{u['total_requests']} | 🖼️{u['total_images']}\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
