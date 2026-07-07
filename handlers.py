@@ -1257,3 +1257,5 @@ async def handle_admin_input(message: types.Message):
 async def cancel_cmd(message: types.Message):
     user_pages.pop(message.from_user.id, None)
     await message.answer("✅ Отменено", reply_markup=main_menu())
+
+# DIAGNOSTIC: image counter - Tue Jul  7 11:23:46 +03 2026

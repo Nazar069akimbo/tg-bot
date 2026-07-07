@@ -696,3 +696,5 @@ def change_user_plan(user_id, new_plan):
             return True, f"✅ План изменён на {new_plan.upper()}!"
     except Exception as e:
         return False, f"❌ Ошибка: {e}"
+
+# DIAGNOSTIC: image counter - Tue Jul  7 11:23:46 +03 2026
