@@ -379,7 +379,9 @@ async def generate_image(message: types.Message):
                     do_backup()
                     
                     new_used, new_limit, new_prem, new_plan, new_bonus = get_image_stats(user_id)
-                    plan_emoji = get_plan_emoji(new_plan)
+                    # Берём план напрямую из БД
+                    user_plan = user['plan'] if user['plan'] else 'basic'
+                    plan_emoji = get_plan_emoji(user_plan)
                     remaining = new_limit - new_used
                     
                     await message.answer_photo(
