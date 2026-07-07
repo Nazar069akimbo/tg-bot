@@ -509,7 +509,8 @@ def get_bonus_balance(user_id):
             bonus_requests = user['bonus_requests'] if user['bonus_requests'] else 0
             return int(bonus_images) if bonus_images else 0, int(bonus_requests) if bonus_requests else 0
         return 0, 0
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка get_bonus_balance: {e}")
         return 0, 0
 
 def get_stats():
