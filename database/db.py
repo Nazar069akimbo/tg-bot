@@ -700,3 +700,72 @@ def change_user_plan(user_id, new_plan):
 
 # DIAGNOSTIC: image counter - Tue Jul  7 11:23:46 +03 2026
 # FORCE CHANGE - Tue Jul  7 13:34:06 +03 2026
+
+
+# ========== НОВАЯ СИСТЕМА ПОДСЧЁТА КАРТИНОК ==========
+
+def get_image_total(user_id):
+    """Возвращает общее количество картинок"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT total_images FROM image_stats WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+    except:
+        return 0
+
+def get_image_daily(user_id):
+    """Возвращает количество картинок за сегодня"""
+    try:
+        today = datetime.now().date().isoformat()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT daily_images FROM image_stats WHERE user_id = ? AND last_reset = ?", (user_id, today))
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            # Если нет записи за сегодня — создаём
+            cursor.execute("INSERT OR IGNORE INTO image_stats (user_id, daily_images, last_reset) VALUES (?, ?, ?)", 
+                          (user_id, 0, today))
+            return 0
+    except:
+        return 0
+
+def add_image(user_id):
+    """Увеличивает счётчик картинок на 1"""
+    try:
+        today = datetime.now().date().isoformat()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем нужно ли сбросить ежедневный счётчик
+            cursor.execute("SELECT last_reset FROM image_stats WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row and row[0] != today:
+                cursor.execute("UPDATE image_stats SET daily_images = 0, last_reset = ? WHERE user_id = ?", (today, user_id))
+            
+            # Увеличиваем общий и ежедневный счётчики
+            cursor.execute("UPDATE image_stats SET total_images = total_images + 1, daily_images = daily_images + 1 WHERE user_id = ?", (user_id,))
+            
+            # Если пользователя нет — создаём
+            if cursor.rowcount == 0:
+                cursor.execute("INSERT INTO image_stats (user_id, total_images, daily_images, last_reset) VALUES (?, ?, ?, ?)",
+                              (user_id, 1, 1, today))
+            
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Ошибка add_image: {e}")
+        return False
+
+def get_image_stats_new(user_id):
+    """Возвращает (использовано_сегодня, лимит, всего, план)"""
+    try:
+        total = get_image_total(user_id)
+        daily = get_image_daily(user_id)
+        limit = get_image_limit(user_id)
+        plan = get_user_plan(user_id)
+        return daily, limit, total, plan
+    except:
+        return 0, get_image_limit(user_id), 0, 'basic'
