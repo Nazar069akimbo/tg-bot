@@ -7,6 +7,7 @@ os.makedirs('data', exist_ok=True)
 
 @contextmanager
 def get_db():
+    """Создаёт соединение с БД и автоматически закрывает его"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -33,7 +34,6 @@ def init_db():
             is_blocked INTEGER DEFAULT 0,
             mode TEXT DEFAULT "chat",
             image_requests INTEGER DEFAULT 0,
-            total_images INTEGER DEFAULT 0,
             plan TEXT DEFAULT "basic",
             trial_start TEXT,
             trial_used INTEGER DEFAULT 0,
@@ -132,8 +132,8 @@ def init_db():
             ('premium_deluxe_input_chars', '5000'),
             ('premium_deluxe_output_words', '500'),
             ('image_limit_free', '3'),
-            ('image_limit_premium', '50'),
-            ('image_limit_premium_deluxe', '200'),
+            ('image_limit_premium', '20'),
+            ('image_limit_premium_deluxe', '50'),
             ('bonus_limit_free', '3'),
             ('bonus_limit_premium', '5'),
             ('bonus_limit_deluxe', '10')
@@ -398,8 +398,8 @@ def get_setting(key):
         'premium_deluxe_input_chars': '5000',
         'premium_deluxe_output_words': '500',
         'image_limit_free': '3',
-        'image_limit_premium': '50',
-        'image_limit_premium_deluxe': '200',
+        'image_limit_premium': '20',
+        'image_limit_premium_deluxe': '50',
         'bonus_limit_free': '3',
         'bonus_limit_premium': '5',
         'bonus_limit_deluxe': '10'
@@ -419,6 +419,8 @@ def reset_image_count_if_needed(user_id):
     try:
         user = get_user(user_id)
         if not user:
+            return
+        if is_premium(user_id):
             return
         last_reset = user['last_image_reset'] if user['last_image_reset'] else None
         if not last_reset:
@@ -440,9 +442,9 @@ def reset_image_count_if_needed(user_id):
 def get_image_limit(user_id):
     plan = get_user_plan(user_id)
     if plan == 'premium_deluxe':
-        return int(get_setting('image_limit_premium_deluxe') or 200)
+        return int(get_setting('image_limit_premium_deluxe') or 50)
     elif plan == 'premium':
-        return int(get_setting('image_limit_premium') or 50)
+        return int(get_setting('image_limit_premium') or 20)
     else:
         return int(get_setting('image_limit_free') or 3)
 
@@ -454,7 +456,6 @@ def can_generate_image(user_id):
             return True, 3, 0
         
         used = user['image_requests'] if user['image_requests'] else 0
-        total = user['total_images'] if user['total_images'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
@@ -474,13 +475,12 @@ def get_image_stats(user_id):
             return 0, 3, False, 'basic', 0
         
         used = user['image_requests'] if user['image_requests'] else 0
-        total = user['total_images'] if user['total_images'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
-        return used, limit, prem, plan, bonus, total
+        return used, limit, prem, plan, bonus
     except Exception as e:
         print(f"⚠️ Ошибка get_image_stats: {e}")
         return 0, 3, False, 'basic', 0
@@ -491,11 +491,12 @@ def add_image_request(user_id):
             cursor = conn.cursor()
             user = get_user(user_id)
             
+            # Проверяем бонусы
             bonus = user['bonus_images'] if user['bonus_images'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
             else:
-                cursor.execute("UPDATE users SET image_requests = image_requests + 1, total_images = total_images + 1 WHERE user_id = ?", (user_id,))
+                cursor.execute("UPDATE users SET image_requests = image_requests + 1 WHERE user_id = ?", (user_id,))
             return True
     except Exception as e:
         print(f"❌ Ошибка add_image_request: {e}")
@@ -509,8 +510,7 @@ def get_bonus_balance(user_id):
             bonus_requests = user['bonus_requests'] if user['bonus_requests'] else 0
             return int(bonus_images) if bonus_images else 0, int(bonus_requests) if bonus_requests else 0
         return 0, 0
-    except Exception as e:
-        print(f"⚠️ Ошибка get_bonus_balance: {e}")
+    except:
         return 0, 0
 
 def get_stats():
@@ -697,8 +697,3 @@ def change_user_plan(user_id, new_plan):
             return True, f"✅ План изменён на {new_plan.upper()}!"
     except Exception as e:
         return False, f"❌ Ошибка: {e}"
-
-# DIAGNOSTIC: image counter - Tue Jul  7 11:23:46 +03 2026
-# FORCE CHANGE - Tue Jul  7 13:34:06 +03 2026
-
-
