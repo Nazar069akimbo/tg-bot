@@ -384,7 +384,7 @@ async def generate_image(message: types.Message):
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ Твоя картинка\n📝 {user_prompt[:50]}...\n\nОсталось: {remaining}\nПлан: {plan_emoji}"
+                        caption=f"🖼️ Твоя картинка\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n🎁 Бонусных картинок: {new_bonus}\n💎 План: {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
