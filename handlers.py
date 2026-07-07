@@ -126,7 +126,7 @@ async def stats_cmd(message: types.Message):
         await message.answer("Ошибка!", reply_markup=main_menu())
         return
     
-    used, limit, prem, plan_from_stats, bonus_img = get_image_stats_new(user_id)
+    used, limit, prem, plan_from_stats, bonus_img = get_image_stats(user_id)
     total_requests = user['total_requests'] if user['total_requests'] else 0
     total_images = user['image_requests'] if user['image_requests'] else 0
     streak = user['checkin_streak'] if user['checkin_streak'] else 0
@@ -324,7 +324,7 @@ async def generate_image(message: types.Message):
         return await message.answer("Ошибка! Пользователь не найден.")
     
     trial_rem = get_trial_remaining(user_id)
-    used, limit, prem, plan, bonus_img = get_image_stats_new(user_id)
+    used, limit, prem, plan, bonus_img = get_image_stats(user_id)
     
     if prem:
         can_gen = True
@@ -379,11 +379,11 @@ async def generate_image(message: types.Message):
                         use_trial_image(user_id)
                     else:
                         print(f"📸 Генерирую картинку для {user_id}")
-                        add_image(user_id)
+                        add_image_request(user_id)
                     
                     do_backup()
                     
-                    new_used, new_limit, new_prem, new_plan, new_total = get_image_stats_new(user_id)
+                    new_used, new_limit, new_prem, new_plan, new_bonus = get_image_stats(user_id)
                     # Берём план напрямую из БД
                     user_plan = user['plan'] if user['plan'] else 'basic'
                     plan_emoji = get_plan_emoji(user_plan)
@@ -391,7 +391,7 @@ async def generate_image(message: types.Message):
                     
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.content, filename="image.webp"),
-                        caption=f"🖼️ Твоя картинка\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n🎁 Всего картинок: {new_total}\n💎 План: {plan_emoji}"
+                        caption=f"🖼️ Твоя картинка\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n🎁 Бонусных картинок: {new_bonus}\n💎 План: {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
