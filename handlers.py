@@ -318,6 +318,11 @@ async def generate_image(message: types.Message):
     if not API_KEY:
         return await message.answer("API ключ не настроен")
     
+    # Получаем пользователя
+    user = get_user(user_id)
+    if not user:
+        return await message.answer("Ошибка! Пользователь не найден.")
+    
     trial_rem = get_trial_remaining(user_id)
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
     
