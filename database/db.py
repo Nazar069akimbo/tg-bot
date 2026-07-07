@@ -7,7 +7,6 @@ os.makedirs('data', exist_ok=True)
 
 @contextmanager
 def get_db():
-    """Создаёт соединение с БД и автоматически закрывает его"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -22,8 +21,6 @@ def get_db():
 def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
-        
-        # Таблица пользователей
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -49,8 +46,6 @@ def init_db():
             checkin_streak INTEGER DEFAULT 0
         )
         ''')
-        
-        # Таблица рефералов
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,16 +56,12 @@ def init_db():
             UNIQUE(referrer_id, referred_id)
         )
         ''')
-        
-        # Таблица админов
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             user_id INTEGER PRIMARY KEY,
             added_at TEXT
         )
         ''')
-        
-        # Таблица платежей
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,8 +73,6 @@ def init_db():
             plan TEXT
         )
         ''')
-        
-        # Таблица сообщений админу
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,8 +83,6 @@ def init_db():
             status TEXT DEFAULT "new"
         )
         ''')
-        
-        # ТАБЛИЦА ПОЧТЫ
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,19 +95,14 @@ def init_db():
             is_read INTEGER DEFAULT 0
         )
         ''')
-        
-        # Таблица настроек
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
         ''')
-        
-        # Добавляем недостающие колонки в users
         cursor.execute("PRAGMA table_info(users)")
         existing_cols = [row[1] for row in cursor.fetchall()]
-        
         columns_to_add = {
             'image_requests': 'INTEGER DEFAULT 0',
             'plan': 'TEXT DEFAULT "basic"',
@@ -136,16 +118,12 @@ def init_db():
             'last_checkin': 'TEXT',
             'checkin_streak': 'INTEGER DEFAULT 0'
         }
-        
         for col, dtype in columns_to_add.items():
             if col not in existing_cols:
                 try:
                     cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
                     print(f"✅ Добавлена колонка {col}")
-                except:
-                    pass
-        
-        # Настройки по умолчанию
+                except: pass
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -160,15 +138,10 @@ def init_db():
             ('bonus_limit_premium', '5'),
             ('bonus_limit_deluxe', '10')
         ]
-        
         for key, value in default_settings:
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-        
-        # Добавляем админа по умолчанию
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                        (6957852385, datetime.now().isoformat()))
-        
-        # Обновляем пользователей с истекшим премиумом
         cursor.execute("UPDATE users SET plan = 'premium' WHERE premium_until IS NOT NULL AND premium_until > datetime('now') AND plan = 'basic'")
         print("✅ База данных готова")
 
@@ -210,32 +183,24 @@ def add_referral(referrer_id, referred_id):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            
             if referrer_id == referred_id:
                 return False, "Нельзя пригласить самого себя!"
-            
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referrer_id,))
             if not cursor.fetchone():
                 return False, "Реферер не найден!"
-            
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referred_id,))
             if not cursor.fetchone():
                 return False, "Пользователь не найден!"
-            
             cursor.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
             if cursor.fetchone():
                 return False, "Этот пользователь уже был приглашён!"
-            
             cursor.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", (referrer_id, referred_id))
             if cursor.fetchone():
                 return False, "Вы уже приглашали этого пользователя!"
-            
             cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
                         (referrer_id, referred_id, datetime.now().isoformat()))
-            
             cursor.execute("UPDATE users SET referral_bonus_images = referral_bonus_images + 3 WHERE user_id = ?", (referrer_id,))
             cursor.execute("UPDATE users SET referral_bonus_requests = referral_bonus_requests + 10 WHERE user_id = ?", (referrer_id,))
-            
             return True, f"✅ Вы получили +3 картинки и +10 запросов!"
     except Exception as e:
         print(f"⚠️ Ошибка add_referral: {e}")
@@ -329,22 +294,18 @@ def add_premium(user_id, days, plan='premium', paid=False):
         print(f"🔍 add_premium: user_id={user_id}, days={days}, plan={plan}")
         with get_db() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
                 print(f"❌ Пользователь {user_id} не найден!")
                 return False
-            
             new_date = (datetime.now() + timedelta(days=days)).isoformat()
             cursor.execute("""
                 UPDATE users 
                 SET premium_until = ?, plan = ? 
                 WHERE user_id = ?
             """, (new_date, plan, user_id))
-            
             if paid:
                 cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
-            
             cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
@@ -386,16 +347,12 @@ def can_request(user_id):
         user = get_user(user_id)
         if not user:
             return True, 10, 0
-        
         if is_premium(user_id):
             return True, 999999, 0
-        
         used = user['free_requests'] if user['free_requests'] else 0
         bonus = user['bonus_requests'] if user['bonus_requests'] else 0
-        
         total = 10 + bonus
         remaining = total - used
-        
         if remaining > 0:
             return True, remaining, bonus
         return False, 0, bonus
@@ -407,11 +364,9 @@ def add_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             user = get_user(user_id)
-            
             if is_premium(user_id):
                 cursor.execute("UPDATE users SET total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
                 return True
-            
             bonus = user['bonus_requests'] if user['bonus_requests'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_requests = bonus_requests - 1, total_requests = total_requests + 1 WHERE user_id = ?", (user_id,))
@@ -495,13 +450,10 @@ def can_generate_image(user_id):
         user = get_user(user_id)
         if not user:
             return True, 3, 0
-        
         used = user['image_requests'] if user['image_requests'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
-        
         limit = get_image_limit(user_id) + bonus
         remaining = limit - used
-        
         if remaining > 0:
             return True, remaining, bonus
         return False, 0, bonus
@@ -514,10 +466,8 @@ def get_image_stats(user_id):
         user = get_user(user_id)
         if not user:
             return 0, 3, False, 'basic', 0
-        
         used = user['image_requests'] if user['image_requests'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
-        
         limit = get_image_limit(user_id) + bonus
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
@@ -531,7 +481,6 @@ def add_image_request(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             user = get_user(user_id)
-            
             bonus = user['bonus_images'] if user['bonus_images'] else 0
             if bonus > 0:
                 cursor.execute("UPDATE users SET bonus_images = bonus_images - 1 WHERE user_id = ?", (user_id,))
@@ -578,13 +527,9 @@ def get_daily_stats(days=30):
             result = []
             for i in range(days):
                 date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-                cursor.execute("""
-                    SELECT COUNT(*) FROM users WHERE date(joined) = ?
-                """, (date,))
+                cursor.execute("SELECT COUNT(*) FROM users WHERE date(joined) = ?", (date,))
                 new_users = cursor.fetchone()[0] or 0
-                cursor.execute("""
-                    SELECT COUNT(*) FROM payments WHERE date(timestamp) = ? AND status = 'completed'
-                """, (date,))
+                cursor.execute("SELECT COUNT(*) FROM payments WHERE date(timestamp) = ? AND status = 'completed'", (date,))
                 payments = cursor.fetchone()[0] or 0
                 result.append({'date': date, 'new_users': new_users, 'payments': payments})
             return list(reversed(result))
@@ -676,28 +621,21 @@ def do_daily_checkin(user_id):
         with get_db() as conn:
             cursor = conn.cursor()
             today = datetime.now().date().isoformat()
-            
             cursor.execute("SELECT last_checkin, checkin_streak FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
-            
             if not row:
                 cursor.execute("UPDATE users SET last_checkin = ?, checkin_streak = 1 WHERE user_id = ?", (today, user_id))
                 return True, 1, "✅ Бонус дня! День 1 из 7."
-            
             last_checkin = row[0]
             streak = row[1] if row[1] else 0
-            
             if last_checkin == today:
                 return False, streak, "✅ Ты уже получил бонус сегодня!"
-            
             if last_checkin and datetime.fromisoformat(last_checkin).date() == datetime.now().date() - timedelta(days=1):
                 streak += 1
             else:
                 streak = 1
-            
             bonus_images = get_bonus_amount(user_id)
             bonus_requests = get_bonus_requests_amount(user_id)
-            
             if streak >= 7:
                 bonus_images = bonus_images * 2
                 bonus_requests = bonus_requests * 2
@@ -706,10 +644,8 @@ def do_daily_checkin(user_id):
             else:
                 cursor.execute("UPDATE users SET checkin_streak = ?, last_checkin = ? WHERE user_id = ?", (streak, today, user_id))
                 msg = f"✅ День {streak} из 7! +{bonus_images} карт и +{bonus_requests} запросов."
-            
             cursor.execute("UPDATE users SET bonus_images = bonus_images + ?, bonus_requests = bonus_requests + ? WHERE user_id = ?", 
                          (bonus_images, bonus_requests, user_id))
-            
             return True, streak, msg
     except Exception as e:
         print(f"❌ Ошибка do_daily_checkin: {e}")
@@ -718,47 +654,29 @@ def do_daily_checkin(user_id):
 def change_user_plan(user_id, new_plan):
     try:
         print(f"🔍 change_user_plan: user_id={user_id}, new_plan={new_plan}")
-        
         user = get_user(user_id)
         if not user:
             print(f"❌ Пользователь {user_id} не найден!")
             return False, "Пользователь не найден!"
-        
         print(f"📊 Текущий план: {user['plan']}, premium_until: {user['premium_until']}")
-        
         if new_plan not in ['basic', 'premium', 'premium_deluxe']:
             print(f"❌ Неверный план: {new_plan}")
             return False, "Неверный план! Доступны: basic, premium, premium_deluxe"
-        
         with get_db() as conn:
             cursor = conn.cursor()
-            
             if new_plan == 'basic':
-                cursor.execute("""
-                    UPDATE users 
-                    SET premium_until = NULL, 
-                        plan = 'basic' 
-                    WHERE user_id = ?
-                """, (user_id,))
+                cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
                 print(f"  ✅ Premium отключён для {user_id}")
             else:
                 new_date = (datetime.now() + timedelta(days=30)).isoformat()
-                cursor.execute("""
-                    UPDATE users 
-                    SET premium_until = ?, 
-                        plan = ? 
-                    WHERE user_id = ?
-                """, (new_date, new_plan, user_id))
+                cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?", (new_date, new_plan, user_id))
                 print(f"  ✅ {new_plan} выдан до {new_date} для {user_id}")
-            
             cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
                 print(f"📊 ПОСЛЕ: plan={row[0]}, premium_until={row[1]}")
-            
             plan_names = {"basic": "🔴 Бесплатный", "premium": "💎 Premium", "premium_deluxe": "👑 Premium Deluxe"}
-    return True, f"✅ План изменён на {plan_names.get(new_plan, new_plan.upper())}!"
-            
+            return True, f"✅ План изменён на {plan_names.get(new_plan, new_plan.upper())}!"
     except Exception as e:
         print(f"❌ Ошибка change_user_plan: {e}")
         import traceback
