@@ -756,7 +756,8 @@ def change_user_plan(user_id, new_plan):
             if row:
                 print(f"📊 ПОСЛЕ: plan={row[0]}, premium_until={row[1]}")
             
-            return True, f"✅ План изменён на {new_plan.upper()}!"
+            plan_names = {"basic": "🔴 Бесплатный", "premium": "💎 Premium", "premium_deluxe": "👑 Premium Deluxe"}
+    return True, f"✅ План изменён на {plan_names.get(new_plan, new_plan.upper())}!"
             
     except Exception as e:
         print(f"❌ Ошибка change_user_plan: {e}")

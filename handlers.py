@@ -804,7 +804,7 @@ async def set_plan_confirm(callback: types.CallbackQuery):
     if user:
         print(f"🔍 План из get_user: {user['plan']}")
     await callback.message.edit_text(
-        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {new_plan.upper()}\n📅 Действует 30 дней",
+        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {plan_names.get(new_plan, new_plan)}\n📅 Действует 30 дней",
         reply_markup=admin_kb()
     )
     await callback.answer()
