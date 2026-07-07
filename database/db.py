@@ -454,6 +454,7 @@ def can_generate_image(user_id):
             return True, 3, 0
         
         used = user['image_requests'] if user['image_requests'] else 0
+        total = user['total_images'] if user['total_images'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
@@ -473,12 +474,13 @@ def get_image_stats(user_id):
             return 0, 3, False, 'basic', 0
         
         used = user['image_requests'] if user['image_requests'] else 0
+        total = user['total_images'] if user['total_images'] else 0
         bonus = user['bonus_images'] if user['bonus_images'] else 0
         
         limit = get_image_limit(user_id) + bonus
         prem = is_premium(user_id)
         plan = get_user_plan(user_id)
-        return used, limit, prem, plan, bonus
+        return used, limit, prem, plan, bonus, total
     except Exception as e:
         print(f"⚠️ Ошибка get_image_stats: {e}")
         return 0, 3, False, 'basic', 0

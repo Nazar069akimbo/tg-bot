@@ -166,7 +166,7 @@ async def profile_cmd(message: types.Message):
         f"🆔 ID: {user['user_id']}\n"
         f"📛 Имя: {user['username'] or 'Не указано'}\n"
         f"💎 План: {plan_name}\n"
-        f"📊 Статус: {status}\n\n"
+        f"\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "📊 **СТАТИСТИКА ИСПОЛЬЗОВАНИЯ**\n\n"
         f"📝 Всего запросов: {total_requests}\n"
@@ -225,7 +225,7 @@ async def stats_cmd(message: types.Message):
         "━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 **ПОДПИСКА**\n"
         f"📊 План: {plan_names.get(plan, '🔴 Бесплатный')}\n"
-        f"📊 Статус: {sub_status}\n"
+        f""
         f"📊 Лимит: {sub_info}\n\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "📝 **ИСПОЛЬЗОВАНИЕ**\n\n"
@@ -1111,12 +1111,44 @@ async def delete_message_cb(callback: types.CallbackQuery):
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
+    user_id = message.from_user.id
+    state = user_pages.get(user_id, {})
     
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=main_menu() if not is_admin(user_id) else admin_kb())
         return
     
+    
+    if state.get("state") == "waiting_reply_dialog":
+        if message.text == "/cancel":
+            user_pages.pop(user_id, None)
+            return await message.answer("✅ Отменено", reply_markup=admin_kb())
+        
+        user_id_target = state.get("user_id")
+        reply_text = message.text
+        
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO messages_to_admin 
+                (user_id, username, text, date, status) 
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id_target, "admin", reply_text, datetime.now().isoformat(), "answered"))
+        
+        try:
+            await message.bot.send_message(
+                user_id_target,
+                f"📩 **Ответ администратора:**\n\n{reply_text}"
+            )
+            await message.answer(f"✅ Ответ отправлен {user_id_target}", reply_markup=admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
+        
+        user_pages.pop(user_id, None)
+        return
+
     if state.get("state") == "waiting_reply":
         msg_id = state.get("msg_id")
         reply_text = message.text
