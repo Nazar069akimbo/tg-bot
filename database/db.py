@@ -685,14 +685,21 @@ def change_user_plan(user_id, new_plan):
                 return False, "Пользователь не найден!"
             
             if new_plan not in ['basic', 'premium', 'premium_deluxe']:
-                return False, "Неверный план!"
+                return False, "Неверный план! Доступны: basic, premium, premium_deluxe"
             
             if new_plan == 'basic':
                 cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
             else:
+                # Даём Premium на 30 дней
                 new_date = (datetime.now() + timedelta(days=30)).isoformat()
                 cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
                             (new_date, new_plan, user_id))
+            
+            # Проверяем что изменилось
+            cursor.execute("SELECT plan FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                print(f"✅ План для {user_id} изменён на {row[0]}")
             
             return True, f"✅ План изменён на {new_plan.upper()}!"
     except Exception as e:
