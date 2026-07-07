@@ -302,6 +302,7 @@ def set_user_plan(user_id, plan):
 
 def add_premium(user_id, days, plan='premium', paid=False):
     try:
+        print(f"🔍 add_premium: user_id={user_id}, days={days}, plan={plan}, paid={paid}")
         with get_db() as conn:
             cursor = conn.cursor()
             new_date = (datetime.now() + timedelta(days=days)).isoformat()
@@ -309,8 +310,15 @@ def add_premium(user_id, days, plan='premium', paid=False):
                         (new_date, plan, user_id))
             if paid:
                 cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
+            
+            # Проверяем
+            cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                print(f"📊 add_premium: plan={row[0]}, premium_until={row[1]}")
             return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка add_premium: {e}")
         return False
 
 def remove_premium(user_id):
@@ -675,32 +683,58 @@ def do_daily_checkin(user_id):
         print(f"❌ Ошибка do_daily_checkin: {e}")
         return False, 0, "❌ Ошибка!"
 
+
+
 def change_user_plan(user_id, new_plan):
+    """Меняет план пользователя с записью в лог"""
     try:
+        print(f"🔍 change_user_plan: user_id={user_id}, new_plan={new_plan}")
+        
+        # Проверяем пользователя
+        user = get_user(user_id)
+        if not user:
+            print(f"❌ Пользователь {user_id} не найден!")
+            return False, "Пользователь не найден!"
+        
+        print(f"📊 Текущий план: {user['plan']}, premium_until: {user['premium_until']}")
+        
+        if new_plan not in ['basic', 'premium', 'premium_deluxe']:
+            print(f"❌ Неверный план: {new_plan}")
+            return False, "Неверный план! Доступны: basic, premium, premium_deluxe"
+        
         with get_db() as conn:
             cursor = conn.cursor()
             
-            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-            if not cursor.fetchone():
-                return False, "Пользователь не найден!"
-            
-            if new_plan not in ['basic', 'premium', 'premium_deluxe']:
-                return False, "Неверный план! Доступны: basic, premium, premium_deluxe"
-            
             if new_plan == 'basic':
-                cursor.execute("UPDATE users SET premium_until = NULL, plan = 'basic' WHERE user_id = ?", (user_id,))
+                # Отключаем Premium
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium_until = NULL, 
+                        plan = 'basic' 
+                    WHERE user_id = ?
+                """, (user_id,))
+                print(f"  ✅ Premium отключён для {user_id}")
             else:
-                # Даём Premium на 30 дней
+                # Выдаём Premium на 30 дней
                 new_date = (datetime.now() + timedelta(days=30)).isoformat()
-                cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?",
-                            (new_date, new_plan, user_id))
+                cursor.execute("""
+                    UPDATE users 
+                    SET premium_until = ?, 
+                        plan = ? 
+                    WHERE user_id = ?
+                """, (new_date, new_plan, user_id))
+                print(f"  ✅ {new_plan} выдан до {new_date} для {user_id}")
             
             # Проверяем что изменилось
-            cursor.execute("SELECT plan FROM users WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
-                print(f"✅ План для {user_id} изменён на {row[0]}")
+                print(f"📊 ПОСЛЕ: plan={row[0]}, premium_until={row[1]}")
             
             return True, f"✅ План изменён на {new_plan.upper()}!"
+            
     except Exception as e:
+        print(f"❌ Ошибка change_user_plan: {e}")
+        import traceback
+        traceback.print_exc()
         return False, f"❌ Ошибка: {e}"

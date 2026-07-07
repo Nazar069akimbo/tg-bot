@@ -828,13 +828,21 @@ async def set_plan_confirm(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT plan FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT plan, premium_until FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         if row:
-            print(f"🔍 План в БД после изменения: {row[0]}")
+            print(f"🔍 План в БД: {row[0]}, premium_until: {row[1]}")
+        else:
+            print(f"❌ Пользователь {user_id} не найден!")
+    
+    # Обновляем пользователя в памяти
+    from database.db import get_user
+    user = get_user(user_id)
+    if user:
+        print(f"🔍 План из get_user: {user['plan']}")
     
     await callback.message.edit_text(
-        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {new_plan.upper()}",
+        f"{msg}\n\n👤 Пользователь: {user_id}\n📊 Новый план: {new_plan.upper()}\n📅 Действует 30 дней",
         reply_markup=admin_kb()
     )
     await callback.answer()
