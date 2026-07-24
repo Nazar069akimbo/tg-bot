@@ -21,6 +21,7 @@ def get_db():
 def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -43,9 +44,12 @@ def init_db():
             bonus_images INTEGER DEFAULT 0,
             bonus_requests INTEGER DEFAULT 0,
             last_checkin TEXT,
-            checkin_streak INTEGER DEFAULT 0
+            checkin_streak INTEGER DEFAULT 0,
+            last_active TEXT,
+            total_spent INTEGER DEFAULT 0
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,12 +60,14 @@ def init_db():
             UNIQUE(referrer_id, referred_id)
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             user_id INTEGER PRIMARY KEY,
             added_at TEXT
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +79,7 @@ def init_db():
             plan TEXT
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +90,7 @@ def init_db():
             status TEXT DEFAULT "new"
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,14 +103,52 @@ def init_db():
             is_read INTEGER DEFAULT 0
         )
         ''')
+        
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
         ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS promocodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE,
+            bonus_images INTEGER DEFAULT 0,
+            bonus_requests INTEGER DEFAULT 0,
+            max_uses INTEGER DEFAULT 1,
+            used INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT,
+            expires_at TEXT
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS promocode_uses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promocode_id INTEGER,
+            user_id INTEGER,
+            used_at TEXT,
+            FOREIGN KEY (promocode_id) REFERENCES promocodes(id)
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER,
+            action TEXT,
+            target_id INTEGER,
+            details TEXT,
+            timestamp TEXT
+        )
+        ''')
+        
         cursor.execute("PRAGMA table_info(users)")
         existing_cols = [row[1] for row in cursor.fetchall()]
+        
         columns_to_add = {
             'image_requests': 'INTEGER DEFAULT 0',
             'plan': 'TEXT DEFAULT "basic"',
@@ -116,14 +162,19 @@ def init_db():
             'bonus_images': 'INTEGER DEFAULT 0',
             'bonus_requests': 'INTEGER DEFAULT 0',
             'last_checkin': 'TEXT',
-            'checkin_streak': 'INTEGER DEFAULT 0'
+            'checkin_streak': 'INTEGER DEFAULT 0',
+            'last_active': 'TEXT',
+            'total_spent': 'INTEGER DEFAULT 0'
         }
+        
         for col, dtype in columns_to_add.items():
             if col not in existing_cols:
                 try:
                     cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
                     print(f"✅ Добавлена колонка {col}")
-                except: pass
+                except:
+                    pass
+        
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -138,10 +189,13 @@ def init_db():
             ('bonus_limit_premium', '5'),
             ('bonus_limit_deluxe', '10')
         ]
+        
         for key, value in default_settings:
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
                        (6957852385, datetime.now().isoformat()))
+        
         cursor.execute("UPDATE users SET plan = 'premium' WHERE premium_until IS NOT NULL AND premium_until > datetime('now') AND plan = 'basic'")
         print("✅ База данных готова")
 
@@ -683,11 +737,9 @@ def change_user_plan(user_id, new_plan):
         traceback.print_exc()
         return False, f"❌ Ошибка: {e}"
 
-# ===== НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ =====
+# ===== НОВЫЕ ФУНКЦИИ =====
 
 def search_users(query):
-    """Поиск пользователей по имени или ID"""
-    from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -700,34 +752,21 @@ def search_users(query):
         return cursor.fetchall()
 
 def get_user_card(user_id):
-    """Полная карточка пользователя"""
-    from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
         if not user:
             return None
-        
         cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
         referrals = cursor.fetchone()[0] or 0
-        
         cursor.execute("SELECT COUNT(*) FROM payments WHERE user_id = ? AND status = 'completed'", (user_id,))
-        payments_count = cursor.fetchone()[0] or 0
-        
+        payments = cursor.fetchone()[0] or 0
         cursor.execute("SELECT SUM(stars_amount) FROM payments WHERE user_id = ? AND status = 'completed'", (user_id,))
         total_spent = cursor.fetchone()[0] or 0
-        
-        return {
-            'user': user,
-            'referrals': referrals,
-            'payments_count': payments_count,
-            'total_spent': total_spent
-        }
+        return {'user': user, 'referrals': referrals, 'payments': payments, 'total_spent': total_spent}
 
 def get_top_users(limit=10):
-    """Топ активных пользователей"""
-    from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -739,9 +778,6 @@ def get_top_users(limit=10):
         return cursor.fetchall()
 
 def create_promocode(code, bonus_images=0, bonus_requests=0, max_uses=1, expires_days=30):
-    """Создание промокода"""
-    from database.db import get_db
-    from datetime import datetime, timedelta
     with get_db() as conn:
         cursor = conn.cursor()
         expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat()
@@ -752,9 +788,6 @@ def create_promocode(code, bonus_images=0, bonus_requests=0, max_uses=1, expires
         return True
 
 def use_promocode(code, user_id):
-    """Использование промокода"""
-    from database.db import get_db
-    from datetime import datetime
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, bonus_images, bonus_requests, max_uses, used FROM promocodes WHERE code = ? AND expires_at > datetime('now')", (code,))
@@ -776,18 +809,12 @@ def use_promocode(code, user_id):
         return True, f"✅ Промокод активирован! +{promo['bonus_images']} карт, +{promo['bonus_requests']} запросов"
 
 def get_promocodes():
-    """Список всех промокодов"""
-    from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
         return cursor.fetchall()
 
 def export_users_csv():
-    """Экспорт пользователей в CSV"""
-    from database.db import get_db
-    import csv
-    from io import StringIO
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT user_id, username, joined, plan, premium_until, total_requests, image_requests, is_blocked FROM users")
@@ -800,7 +827,6 @@ def export_users_csv():
         return output.getvalue()
 
 def get_backup_list():
-    """Список бэкапов из GitHub"""
     import requests
     import os
     token = os.getenv('GITHUB_TOKEN')
@@ -817,10 +843,8 @@ def get_backup_list():
     return files
 
 def restore_backup(filename):
-    """Восстановление бэкапа по имени файла"""
     import requests
     import os
-    import shutil
     token = os.getenv('GITHUB_TOKEN')
     repo = os.getenv('GITHUB_BACKUP_REPO')
     if not token or not repo:
@@ -840,9 +864,6 @@ def restore_backup(filename):
     return True
 
 def log_admin_action(admin_id, action, target_id=None, details=None):
-    """Логирование действий админа"""
-    from database.db import get_db
-    from datetime import datetime
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
