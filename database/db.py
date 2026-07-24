@@ -682,3 +682,170 @@ def change_user_plan(user_id, new_plan):
         import traceback
         traceback.print_exc()
         return False, f"❌ Ошибка: {e}"
+
+# ===== НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ =====
+
+def search_users(query):
+    """Поиск пользователей по имени или ID"""
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id, username, plan, is_blocked, total_requests, image_requests 
+            FROM users 
+            WHERE username LIKE ? OR user_id = ?
+            ORDER BY total_requests DESC
+            LIMIT 20
+        """, (f"%{query}%", query if query.isdigit() else -1))
+        return cursor.fetchall()
+
+def get_user_card(user_id):
+    """Полная карточка пользователя"""
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            return None
+        
+        cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+        referrals = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM payments WHERE user_id = ? AND status = 'completed'", (user_id,))
+        payments_count = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT SUM(stars_amount) FROM payments WHERE user_id = ? AND status = 'completed'", (user_id,))
+        total_spent = cursor.fetchone()[0] or 0
+        
+        return {
+            'user': user,
+            'referrals': referrals,
+            'payments_count': payments_count,
+            'total_spent': total_spent
+        }
+
+def get_top_users(limit=10):
+    """Топ активных пользователей"""
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id, username, total_requests, image_requests, plan 
+            FROM users 
+            ORDER BY total_requests DESC 
+            LIMIT ?
+        """, (limit,))
+        return cursor.fetchall()
+
+def create_promocode(code, bonus_images=0, bonus_requests=0, max_uses=1, expires_days=30):
+    """Создание промокода"""
+    from database.db import get_db
+    from datetime import datetime, timedelta
+    with get_db() as conn:
+        cursor = conn.cursor()
+        expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat()
+        cursor.execute("""
+            INSERT INTO promocodes (code, bonus_images, bonus_requests, max_uses, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (code, bonus_images, bonus_requests, max_uses, datetime.now().isoformat(), expires_at))
+        return True
+
+def use_promocode(code, user_id):
+    """Использование промокода"""
+    from database.db import get_db
+    from datetime import datetime
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, bonus_images, bonus_requests, max_uses, used FROM promocodes WHERE code = ? AND expires_at > datetime('now')", (code,))
+        promo = cursor.fetchone()
+        if not promo:
+            return False, "Промокод не найден или истёк"
+        if promo['used'] >= promo['max_uses']:
+            return False, "Промокод уже использован"
+        cursor.execute("SELECT id FROM promocode_uses WHERE promocode_id = ? AND user_id = ?", (promo['id'], user_id))
+        if cursor.fetchone():
+            return False, "Вы уже использовали этот промокод"
+        cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)", 
+                      (promo['id'], user_id, datetime.now().isoformat()))
+        cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
+        if promo['bonus_images'] > 0:
+            cursor.execute("UPDATE users SET bonus_images = bonus_images + ? WHERE user_id = ?", (promo['bonus_images'], user_id))
+        if promo['bonus_requests'] > 0:
+            cursor.execute("UPDATE users SET bonus_requests = bonus_requests + ? WHERE user_id = ?", (promo['bonus_requests'], user_id))
+        return True, f"✅ Промокод активирован! +{promo['bonus_images']} карт, +{promo['bonus_requests']} запросов"
+
+def get_promocodes():
+    """Список всех промокодов"""
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
+        return cursor.fetchall()
+
+def export_users_csv():
+    """Экспорт пользователей в CSV"""
+    from database.db import get_db
+    import csv
+    from io import StringIO
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username, joined, plan, premium_until, total_requests, image_requests, is_blocked FROM users")
+        users = cursor.fetchall()
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Имя', 'Дата регистрации', 'План', 'Premium до', 'Запросы', 'Картинки', 'Заблокирован'])
+        for u in users:
+            writer.writerow([u['user_id'], u['username'], u['joined'], u['plan'], u['premium_until'], u['total_requests'], u['image_requests'], u['is_blocked']])
+        return output.getvalue()
+
+def get_backup_list():
+    """Список бэкапов из GitHub"""
+    import requests
+    import os
+    token = os.getenv('GITHUB_TOKEN')
+    repo = os.getenv('GITHUB_BACKUP_REPO')
+    if not token or not repo:
+        return []
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    url = f'https://api.github.com/repos/{repo}/contents/backups'
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        return []
+    files = [f for f in resp.json() if f['name'].endswith('.db')]
+    files.sort(key=lambda x: x['name'], reverse=True)
+    return files
+
+def restore_backup(filename):
+    """Восстановление бэкапа по имени файла"""
+    import requests
+    import os
+    import shutil
+    token = os.getenv('GITHUB_TOKEN')
+    repo = os.getenv('GITHUB_BACKUP_REPO')
+    if not token or not repo:
+        return False
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    url = f'https://api.github.com/repos/{repo}/contents/backups/{filename}'
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        return False
+    file_url = resp.json()['download_url']
+    resp = requests.get(file_url)
+    if resp.status_code != 200:
+        return False
+    os.makedirs('data', exist_ok=True)
+    with open('data/repsolver.db', 'wb') as f:
+        f.write(resp.content)
+    return True
+
+def log_admin_action(admin_id, action, target_id=None, details=None):
+    """Логирование действий админа"""
+    from database.db import get_db
+    from datetime import datetime
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO admin_log (admin_id, action, target_id, details, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+        """, (admin_id, action, target_id, details, datetime.now().isoformat()))
