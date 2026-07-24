@@ -67,12 +67,19 @@ def main_menu():
 def admin_kb():
     new_messages = get_messages_count()
     badge = f" ({new_messages})" if new_messages > 0 else ""
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM emails WHERE receiver_id = ? AND is_read = 0", (6957852385,))
+        new_emails = cursor.fetchone()[0] or 0
+    email_badge = f" ({new_emails})" if new_emails > 0 else ""
+    
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
         [InlineKeyboardButton(text="🔄 Сменить тариф", callback_data="a_change_plan")],
         [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
-        [InlineKeyboardButton(text="📧 Почта", callback_data="a_email"), InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans")],
+        [InlineKeyboardButton(text=f"📧 Почта{email_badge}", callback_data="a_email"), InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans")],
         [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"), InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
@@ -85,6 +92,13 @@ async def start_cmd(message: types.Message):
     if not user:
         await message.answer("❌ Ошибка регистрации.")
         return
+    
+    # Если у пользователя нет имени — запрашиваем
+    if not user['username'] or user['username'] == str(user_id):
+        user_pages[user_id] = {"state": "waiting_name"}
+        await message.answer("👋 Привет! Как мне тебя называть?\nНапиши своё имя:")
+        return
+    
     args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
@@ -261,6 +275,18 @@ async def handle_message(message: types.Message):
         return
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
+    
+    # Обработка ввода имени
+    if state.get("state") == "waiting_name":
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (message.text, user_id))
+        user_pages.pop(user_id, None)
+        await message.answer(f"✅ Отлично, {message.text}! Теперь я запомнил тебя.")
+        await start_cmd(message)
+        return
+    
     if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply", "waiting_change_plan", "waiting_email"]:
         await handle_admin_input(message)
         return
@@ -622,13 +648,14 @@ async def a_users_cb(callback: types.CallbackQuery):
         text = "👥 **Пользователи**\n\n"
         for u in users:
             emoji = plan_emoji.get(u['plan'], '🔴')
-            blocked = "🚫" if u['is_blocked'] == 1 else "✅"
-            text += f"{blocked} {emoji} `{u['user_id']}` — {u['username'] or 'без имени'}\n"
+            status_text = "⛔ Заблокирован" if u['is_blocked'] == 1 else "✅ Активен"
+            name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else "Без имени"
+            text += f"{status_text} {emoji} **{name}** (ID: {u['user_id']})\n"
             text += f"   📝{u['total_requests']} | 🖼️{u['image_requests']}\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
-    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.message.edit_text(text[:4000], reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data == "a_give_premium")
@@ -652,12 +679,12 @@ async def a_give_premium_cb(callback: types.CallbackQuery):
             return
         kb = InlineKeyboardMarkup(inline_keyboard=[])
         for u in users:
-            user_id = u['user_id'] if 'user_id' in u.keys() else u[0]
-            username = u['username'] if 'username' in u.keys() and u['username'] else str(user_id)
-            plan = u['plan'] if 'plan' in u.keys() else 'basic'
+            user_id = u['user_id']
+            name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(user_id)
+            plan = u['plan'] if u['plan'] else 'basic'
             kb.inline_keyboard.append([
                 InlineKeyboardButton(
-                    text=f"👤 {username} ({plan})",
+                    text=f"👤 {name} ({plan})",
                     callback_data=f"give_premium_{user_id}"
                 )
             ])
@@ -747,11 +774,11 @@ async def a_change_plan_cb(callback: types.CallbackQuery):
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        username = u['username'] if u['username'] else str(u['user_id'])
+        name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(u['user_id'])
         current_plan = u['plan'] if u['plan'] else 'basic'
         emoji = {'basic': '🔴', 'premium': '💎', 'premium_deluxe': '👑'}.get(current_plan, '🔴')
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"{emoji} {username} ({current_plan})", callback_data=f"change_plan_{u['user_id']}")
+            InlineKeyboardButton(text=f"{emoji} {name} ({current_plan})", callback_data=f"change_plan_{u['user_id']}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     await callback.message.edit_text(
@@ -822,7 +849,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
     text = "📩 **Обращения**\n\n"
     for msg in messages:
         status = "🆕" if msg['status'] == "new" else "✅"
-        name = msg['username'] if msg['username'] else f"User_{msg['user_id']}"
+        name = msg['username'] if msg['username'] and msg['username'] != str(msg['user_id']) else str(msg['user_id'])
         text += f"{status} {msg['user_id']} — {name}\n"
         text += f"📝 {msg['text'][:50]}{'...' if len(msg['text']) > 50 else ''}\n"
         text += f"🕐 {msg['date'][:16]}\n\n"
@@ -876,16 +903,21 @@ async def a_block_cb(callback: types.CallbackQuery):
         cursor = conn.cursor()
         cursor.execute("SELECT user_id, username, is_blocked FROM users ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
+    if not users:
+        await callback.answer("❌ Нет пользователей", show_alert=True)
+        return
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        username = u['username'] if u['username'] else str(u['user_id'])
-        status = "🔓" if u['is_blocked'] == 0 else "🔒"
+        name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(u['user_id'])
+        status = "✅ Активен" if u['is_blocked'] == 0 else "⛔ Заблокирован"
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"{status} {username}", callback_data=f"block_user_{u['user_id']}")
+            InlineKeyboardButton(text=f"{status} {name}", callback_data=f"block_user_{u['user_id']}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     await callback.message.edit_text(
-        "🚫 **Блокировка**\n\nНажмите на пользователя:",
+        "🚫 **Блокировка**
+
+Нажмите на пользователя:",
         reply_markup=kb
     )
     await callback.answer()
@@ -902,10 +934,10 @@ async def block_user_action(callback: types.CallbackQuery):
     is_blocked = user['is_blocked'] if user['is_blocked'] else 0
     if is_blocked == 1:
         unblock_user(user_id)
-        await callback.answer("✅ Разблокирован", show_alert=True)
+        await callback.answer("✅ Пользователь разблокирован", show_alert=True)
     else:
         block_user(user_id)
-        await callback.answer("🚫 Заблокирован", show_alert=True)
+        await callback.answer("⛔ Пользователь заблокирован", show_alert=True)
     do_backup()
     await a_block_cb(callback)
 
@@ -986,7 +1018,8 @@ async def email_inbox_cb(callback: types.CallbackQuery):
     text = "📩 **Входящие**\n\n"
     for e in emails:
         status = "📨" if e['is_read'] == 0 else "📖"
-        text += f"{status} **{e['sender_name']}**\n"
+        name = e['sender_name'] if e['sender_name'] and e['sender_name'] != str(e['sender_id']) else str(e['sender_id'])
+        text += f"{status} **{name}**\n"
         text += f"📝 {e['subject'][:30]}{'...' if len(e['subject']) > 30 else ''}\n"
         text += f"🕐 {e['date'][:16]}\n"
         text += f"`/email_read_{e['id']}`\n\n"
@@ -994,7 +1027,13 @@ async def email_inbox_cb(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="email_inbox")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="a_email")]
     ])
-    await callback.message.edit_text(text[:4000], reply_markup=kb)
+    try:
+        await callback.message.edit_text(text[:4000], reply_markup=kb)
+    except Exception as e:
+        if "message is not modified" in str(e):
+            await callback.answer("🔄 Уже обновлено")
+        else:
+            raise
     await callback.answer()
 
 @router.message(Command("email_read"))
@@ -1017,7 +1056,8 @@ async def email_read_cmd(message: types.Message):
             if not email:
                 return await message.answer("❌ Письмо не найдено")
             cursor.execute("UPDATE emails SET is_read = 1 WHERE id = ?", (email_id,))
-        text = f"📩 **От:** {email['sender_name']}\n"
+        name = email['sender_name'] if email['sender_name'] and email['sender_name'] != str(email['sender_id']) else str(email['sender_id'])
+        text = f"📩 **От:** {name}\n"
         text += f"📝 **Тема:** {email['subject']}\n"
         text += f"🕐 {email['date']}\n\n"
         text += f"{email['text']}"
@@ -1053,35 +1093,27 @@ async def delete_message_cb(callback: types.CallbackQuery):
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
-    
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=main_menu() if not is_admin(user_id) else admin_kb())
         return
-    
     if state.get("state") == "waiting_email":
         from database.db import get_db
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM admins")
             admins = cursor.fetchall()
-        
         sent = 0
         for admin in admins:
             try:
-                await message.bot.send_message(
-                    admin['user_id'],
-                    f"📧 **Письмо от админа**\n\n{message.text}"
-                )
+                await message.bot.send_message(admin['user_id'], f"📧 **Письмо от админа**\n\n{message.text}")
                 sent += 1
                 await asyncio.sleep(0.05)
             except:
                 pass
-        
         await message.answer(f"✅ Письмо отправлено {sent} админам!", reply_markup=admin_kb())
         user_pages.pop(user_id, None)
         return
-    
     if state.get("state") == "waiting_reply":
         msg_id = state.get("msg_id")
         reply_text = message.text
@@ -1105,7 +1137,6 @@ async def handle_admin_input(message: types.Message):
                 await message.answer("❌ Сообщение не найдено", reply_markup=admin_kb())
         user_pages.pop(user_id, None)
         return
-    
     if state.get("state") == "waiting_plan_edit":
         try:
             parts = message.text.split() if message.text else []
@@ -1125,8 +1156,11 @@ async def handle_admin_input(message: types.Message):
         except:
             await message.answer("❌ Ошибка! Введите число", reply_markup=admin_kb())
         return
-    
     if state.get("state") == "waiting_broadcast":
+        if not message.text or not message.text.strip():
+            await message.answer("❌ Текст рассылки не может быть пустым!", reply_markup=admin_kb())
+            user_pages.pop(user_id, None)
+            return
         await message.answer("📢 Рассылка...")
         from database.db import get_db
         with get_db() as conn:
@@ -1145,7 +1179,6 @@ async def handle_admin_input(message: types.Message):
         do_backup()
         user_pages.pop(user_id, None)
         return
-    
     if state.get("state") == "waiting_contact":
         from database.db import get_db
         with get_db() as conn:
@@ -1192,4 +1225,3 @@ async def set_plan_cmd(message: types.Message):
 async def cancel_cmd(message: types.Message):
     user_pages.pop(message.from_user.id, None)
     await message.answer("✅ Отменено", reply_markup=main_menu())
-
