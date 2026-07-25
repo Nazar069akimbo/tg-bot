@@ -596,7 +596,8 @@ async def start_cmd(message: types.Message):
     if not user['username'] or user['username'] == str(user_id):
         user_pages[user_id] = {"state": "waiting_name"}
         await message.answer("👋 Привет! Как мне тебя называть?\nНапиши своё имя:")
-        args = message.text.split() if message.text else []
+        return
+    args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
         if referrer_id != user_id:
@@ -614,7 +615,6 @@ async def start_cmd(message: types.Message):
         "✏️ Просто напиши свой вопрос!"
     )
     await message.answer(text, reply_markup=main_menu())
-
 @router.message(Command("daily"))
 async def daily_cmd(message: types.Message):
     user_id = message.from_user.id
