@@ -20,6 +20,7 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
+shutdown_event = asyncio.Event()
 
 @app.route('/')
 @app.route('/healthz')
@@ -28,15 +29,17 @@ def health():
 
 def run_flask():
     try:
-        app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)), debug=False, use_reloader=False)
+        port = int(os.getenv('PORT', 8080))
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
-        logger.warning(f"⚠️ Flask: {e}")
+        logger.error(f"❌ Flask ошибка: {e}")
 
-async def shutdown():
-    logger.info("🛑 Получен сигнал завершения...")
+async def shutdown(signum=None, frame=None):
+    logger.info("🛑 Получен SIGTERM, останавливаю бота...")
     await bot.delete_webhook()
     await dp.stop_polling()
     await bot.session.close()
+    shutdown_event.set()
     logger.info("✅ Бот остановлен")
 
 def handle_sigterm(signum, frame):
@@ -45,7 +48,7 @@ def handle_sigterm(signum, frame):
 async def main():
     logger.info("🚀 Запуск...")
     
-    # Настройка Flask
+    # Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     logger.info("✅ Flask запущен")
@@ -67,7 +70,7 @@ async def main():
     
     # Бэкап-цикл
     def backup_loop():
-        while True:
+        while not shutdown_event.is_set():
             time.sleep(3600)
             try:
                 GitHubBackup().backup_db()
@@ -108,6 +111,7 @@ async def main():
         logger.info("⏹️ Polling отменён")
     finally:
         await bot.session.close()
+        logger.info("✅ Сессия закрыта")
 
 if __name__ == "__main__":
     try:
