@@ -6,7 +6,7 @@ from flask import Flask
 from database.db import init_db, is_admin, add_admin
 from handlers import router
 from backup import GitHubBackup
-import fcntl
+import signal
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -16,14 +16,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
-
-# Блокировка для одного экземпляра
-try:
-    lock_file = open("/tmp/bot.lock", "w")
-    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except:
-    logger.error("❌ Бот уже запущен!")
-    sys.exit(0)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -35,13 +27,34 @@ def health():
     return "OK", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
+    try:
+        app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)), debug=False, use_reloader=False)
+    except Exception as e:
+        logger.warning(f"⚠️ Flask: {e}")
+
+async def shutdown():
+    logger.info("🛑 Получен сигнал завершения...")
+    await bot.delete_webhook()
+    await dp.stop_polling()
+    await bot.session.close()
+    logger.info("✅ Бот остановлен")
+
+def handle_sigterm(signum, frame):
+    asyncio.create_task(shutdown())
 
 async def main():
     logger.info("🚀 Запуск...")
-    init_db()
-    threading.Thread(target=run_flask, daemon=True).start()
     
+    # Настройка Flask
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info("✅ Flask запущен")
+    
+    # База данных
+    init_db()
+    logger.info("✅ База данных готова")
+    
+    # Восстановление бэкапа
     try:
         backup = GitHubBackup()
         backup.restore_latest_backup()
@@ -52,18 +65,25 @@ async def main():
     init_db()
     logger.info("✅ Миграция БД выполнена")
     
+    # Бэкап-цикл
     def backup_loop():
         while True:
             time.sleep(3600)
             try:
                 GitHubBackup().backup_db()
-            except:
-                pass
-    threading.Thread(target=backup_loop, daemon=True).start()
+                logger.info("✅ Бэкап создан")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка бэкапа: {e}")
+    backup_thread = threading.Thread(target=backup_loop, daemon=True)
+    backup_thread.start()
     
-    if not is_admin(int(os.getenv("ADMIN_ID", 6957852385))):
-        add_admin(int(os.getenv("ADMIN_ID", 6957852385)))
+    # Админ
+    admin_id = int(os.getenv("ADMIN_ID", 6957852385))
+    if not is_admin(admin_id):
+        add_admin(admin_id)
+        logger.info(f"✅ Админ {admin_id} добавлен")
     
+    # Регистрация команд
     dp.include_router(router)
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
@@ -72,13 +92,25 @@ async def main():
         types.BotCommand(command="subscribe", description="💎 Premium"),
         types.BotCommand(command="referral", description="👥 Рефералы")
     ])
+    
+    # Удаляем вебхук
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     logger.info("✅ Бот готов!")
+    logger.info("🚀 Запуск polling...")
     
-    # Удаляем старые вебхуки
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Обработка SIGTERM
+    signal.signal(signal.SIGTERM, handle_sigterm)
     
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot, skip_updates=True)
+    try:
+        await dp.start_polling(bot, skip_updates=True)
+    except asyncio.CancelledError:
+        logger.info("⏹️ Polling отменён")
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("⏹️ Бот остановлен пользователем")
