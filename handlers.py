@@ -1,8 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, BufferedInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from database.db import *
-from ai.client import solve_problem
 from backup import GitHubBackup
 import logging, secrets, os, requests, asyncio
 from datetime import datetime
@@ -67,20 +66,14 @@ def main_menu():
 def admin_kb():
     new_messages = get_messages_count()
     badge = f" ({new_messages})" if new_messages > 0 else ""
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM emails WHERE receiver_id = ? AND is_read = 0", (6957852385,))
-        new_emails = cursor.fetchone()[0] or 0
-    email_badge = f" ({new_emails})" if new_emails > 0 else ""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
         [InlineKeyboardButton(text="🔄 Сменить тариф", callback_data="a_change_plan")],
         [InlineKeyboardButton(text=f"📩 Обращения{badge}", callback_data="a_messages")],
-        [InlineKeyboardButton(text="📧 Почта{email_badge}", callback_data="a_email"), InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans")],
-        [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"), InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="⚙️ Тарифы", callback_data="a_plans"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 @router.message(Command("start"))
@@ -284,6 +277,37 @@ async def cancel_cmd(message: types.Message):
     user_pages.pop(message.from_user.id, None)
     await message.answer("✅ Отменено", reply_markup=main_menu())
 
+@router.message(Command("set_plan"))
+async def set_plan_cmd(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+    try:
+        parts = message.text.split() if message.text else []
+        if len(parts) < 3:
+            await message.answer("❌ Использование: /set_plan ID premium|premium_deluxe|basic")
+            return
+        user_id = int(parts[1])
+        plan = parts[2].lower()
+        if plan not in ['premium', 'premium_deluxe', 'basic']:
+            await message.answer("❌ План: premium, premium_deluxe или basic")
+            return
+        if plan == 'basic':
+            remove_premium(user_id)
+            await message.answer(f"✅ Basic восстановлен для {user_id}")
+        else:
+            success = add_premium(user_id, 30, plan, paid=True)
+            if success:
+                plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+                await message.answer(f"✅ {plan_names.get(plan, plan)} на 30 дней выдан {user_id}")
+            else:
+                await message.answer(f"❌ Ошибка выдачи Premium пользователю {user_id}")
+        do_backup()
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
 @router.message(F.text)
 async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
@@ -299,7 +323,7 @@ async def handle_message(message: types.Message):
         await message.answer(f"✅ Отлично, {message.text}! Теперь я запомнил тебя.")
         await start_cmd(message)
         return
-    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply", "waiting_change_plan", "waiting_email"]:
+    if state.get("state") in ["waiting_plan_edit", "waiting_premium_user", "waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_reply", "waiting_change_plan"]:
         await handle_admin_input(message)
         return
     user = force_create_user(user_id, message.from_user.username or "")
@@ -320,6 +344,7 @@ async def generate_text(message: types.Message):
     prem = is_premium(user_id)
     status_msg = await message.answer("🤔 Думаю...")
     try:
+        from ai.client import solve_problem
         answer = solve_problem(message.text, "chat", prem)
         add_request(user_id)
         do_backup()
@@ -505,6 +530,65 @@ async def back_main_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
     await callback.message.edit_text("🤖 **Vertex AI**\n\n✏️ Просто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
+
+@router.callback_query(F.data.startswith("pay_"))
+async def pay_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    force_create_user(user_id, callback.from_user.username or "")
+    try:
+        plan_type = callback.data.replace("pay_", "")
+        plans = {
+            "premium_1m": (49, 30, "premium", "💎 Premium 1 мес"),
+            "premium_3m": (129, 90, "premium", "💎 Premium 3 мес"),
+            "premium_6m": (249, 180, "premium", "💎 Premium 6 мес"),
+            "premium_12m": (449, 365, "premium", "💎 Premium 12 мес"),
+            "deluxe_1m": (99, 30, "premium_deluxe", "👑 Premium Deluxe 1 мес"),
+            "deluxe_3m": (269, 90, "premium_deluxe", "👑 Premium Deluxe 3 мес"),
+            "deluxe_6m": (499, 180, "premium_deluxe", "👑 Premium Deluxe 6 мес"),
+            "deluxe_12m": (899, 365, "premium_deluxe", "👑 Premium Deluxe 12 мес"),
+        }
+        if plan_type not in plans:
+            return await callback.answer("❌ Неверный тариф", show_alert=True)
+        stars, days, plan, title = plans[plan_type]
+        payload = secrets.token_hex(16)
+        from database.db import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
+                        (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
+        await callback.bot.send_invoice(
+            chat_id=user_id, title=title, description=f"{days} дней Premium",
+            payload=payload, provider_token="", currency="XTR",
+            prices=[LabeledPrice(label=title, amount=stars)], start_parameter="premium_sub"
+        )
+        await callback.answer()
+    except Exception as e:
+        await callback.answer("❌ Ошибка платежа", show_alert=True)
+
+@router.pre_checkout_query()
+async def pre_checkout(query: types.PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@router.message(F.successful_payment)
+async def payment_success(message: types.Message):
+    payload = message.successful_payment.invoice_payload
+    from database.db import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
+        row = cursor.fetchone()
+    if row:
+        stars, plan = row
+        add_premium(message.from_user.id, 30, plan, paid=True)
+        mark_paid_premium(message.from_user.id)
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
+        do_backup()
+        plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
+        await message.answer(f"✅ {plan_names.get(plan, 'Premium')} на 30 дней активирован!")
+    else:
+        await message.answer("❌ Ошибка активации")
 
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
@@ -929,101 +1013,6 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]))
     await callback.answer()
 
-@router.callback_query(F.data == "a_email")
-async def a_email_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Входящие", callback_data="email_inbox")],
-        [InlineKeyboardButton(text="📤 Написать", callback_data="email_send")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-    ])
-    await callback.message.edit_text("📧 **Почта**\n\nВыберите действие:", reply_markup=kb)
-    await callback.answer()
-
-@router.callback_query(F.data == "email_inbox")
-async def email_inbox_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    from database.db import get_db
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, sender_id, sender_name, receiver_id, subject, text, date, is_read
-            FROM emails
-            WHERE receiver_id = ? OR receiver_id = 0
-            ORDER BY date DESC LIMIT 20
-        """, (callback.from_user.id,))
-        emails = cursor.fetchall()
-    if not emails:
-        await callback.message.edit_text("📭 Нет писем.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_email")]
-        ]))
-        await callback.answer()
-        return
-    text = "📩 **Входящие**\n\n"
-    for e in emails:
-        status = "📨" if e['is_read'] == 0 else "📖"
-        name = e['sender_name'] if e['sender_name'] and e['sender_name'] != str(e['sender_id']) else str(e['sender_id'])
-        text += f"{status} **{name}**\n"
-        text += f"📝 {e['subject'][:30]}{'...' if len(e['subject']) > 30 else ''}\n"
-        text += f"🕐 {e['date'][:16]}\n"
-        text += f"`/email_read_{e['id']}`\n\n"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="email_inbox")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="a_email")]
-    ])
-    try:
-        await callback.message.edit_text(text[:4000], reply_markup=kb)
-    except:
-        await callback.message.answer(text[:4000], reply_markup=kb)
-    await callback.answer()
-
-@router.message(Command("email_read"))
-async def email_read_cmd(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return await message.answer("⛔ Нет доступа")
-    try:
-        parts = message.text.split() if message.text else []
-        if len(parts) < 2:
-            return await message.answer("❌ Использование: /email_read ID")
-        email_id = int(parts[1])
-        from database.db import get_db
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT sender_name, subject, text, date, receiver_id
-                FROM emails WHERE id = ?
-            """, (email_id,))
-            email = cursor.fetchone()
-            if not email:
-                return await message.answer("❌ Письмо не найдено")
-            cursor.execute("UPDATE emails SET is_read = 1 WHERE id = ?", (email_id,))
-        name = email['sender_name'] if email['sender_name'] and email['sender_name'] != str(email['sender_id']) else str(email['sender_id'])
-        text = f"📩 **От:** {name}\n"
-        text += f"📝 **Тема:** {email['subject']}\n"
-        text += f"🕐 {email['date']}\n\n"
-        text += f"{email['text']}"
-        await message.answer(text, reply_markup=admin_kb())
-    except:
-        await message.answer("❌ Использование: /email_read ID")
-
-@router.callback_query(F.data == "email_send")
-async def email_send_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    user_pages[callback.from_user.id] = {"state": "waiting_email"}
-    await callback.message.edit_text(
-        "📧 **Новое письмо**\n\n"
-        "Введите текст письма.\n"
-        "Оно будет отправлено ВСЕМ админам.\n\n"
-        "⏹ /cancel",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_email")]
-        ])
-    )
-    await callback.answer()
-
 @router.callback_query(F.data.startswith("delete_msg_"))
 async def delete_message_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -1039,23 +1028,6 @@ async def handle_admin_input(message: types.Message):
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=main_menu() if not is_admin(user_id) else admin_kb())
-        return
-    if state.get("state") == "waiting_email":
-        from database.db import get_db
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM admins")
-            admins = cursor.fetchall()
-        sent = 0
-        for admin in admins:
-            try:
-                await message.bot.send_message(admin['user_id'], f"📧 **Письмо от админа**\n\n{message.text}")
-                sent += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await message.answer(f"✅ Письмо отправлено {sent} админам!", reply_markup=admin_kb())
-        user_pages.pop(user_id, None)
         return
     if state.get("state") == "waiting_reply":
         msg_id = state.get("msg_id")
@@ -1132,35 +1104,3 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отправлено!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
-
-@router.message(Command("set_plan"))
-async def set_plan_cmd(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Нет доступа")
-        return
-    try:
-        parts = message.text.split() if message.text else []
-        if len(parts) < 3:
-            await message.answer("❌ Использование: /set_plan ID premium|premium_deluxe|basic")
-            return
-        user_id = int(parts[1])
-        plan = parts[2].lower()
-        if plan not in ['premium', 'premium_deluxe', 'basic']:
-            await message.answer("❌ План: premium, premium_deluxe или basic")
-            return
-        if plan == 'basic':
-            remove_premium(user_id)
-            await message.answer(f"✅ Basic восстановлен для {user_id}")
-        else:
-            success = add_premium(user_id, 30, plan, paid=True)
-            if success:
-                plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-                await message.answer(f"✅ {plan_names.get(plan, plan)} на 30 дней выдан {user_id}")
-            else:
-                await message.answer(f"❌ Ошибка выдачи Premium пользователю {user_id}")
-        do_backup()
-    except ValueError:
-        await message.answer("❌ ID должен быть числом")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
-
