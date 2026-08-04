@@ -870,3 +870,87 @@ def log_admin_action(admin_id, action, target_id=None, details=None):
             INSERT INTO admin_log (admin_id, action, target_id, details, timestamp)
             VALUES (?, ?, ?, ?, ?)
         """, (admin_id, action, target_id, details, datetime.now().isoformat()))
+
+# ===== НОВЫЕ ФУНКЦИИ ДЛЯ ТОКЕНОВ И РАЗОВЫХ УСЛУГ =====
+
+def add_token_pack(user_id, pack_type):
+    """Добавляет пакет токенов пользователю"""
+    packs = {
+        'small': 10,   # 10 картинок
+        'medium': 50,  # 50 картинок
+        'large': 200   # 200 картинок
+    }
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET bonus_images = bonus_images + ? WHERE user_id = ?", (packs[pack_type], user_id))
+        return True
+
+def set_trial(user_id):
+    """Активирует пробный период на 3 дня"""
+    from datetime import datetime, timedelta
+    with get_db() as conn:
+        cursor = conn.cursor()
+        trial_until = (datetime.now() + timedelta(days=3)).isoformat()
+        cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1 WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET premium_until = ? WHERE user_id = ?", (trial_until, user_id))
+        return True
+
+def remove_watermark(user_id):
+    """Отключает водяные знаки для пользователя (разовая услуга)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET bonus_images = bonus_images + 1 WHERE user_id = ?", (user_id,))
+        return True
+
+def is_trial_active(user_id):
+    """Проверяет, активен ли пробный период"""
+    from datetime import datetime
+    user = get_user(user_id)
+    if not user:
+        return False
+    premium_until = user['premium_until'] if user['premium_until'] else None
+    if not premium_until:
+        return False
+    return datetime.now().isoformat() < premium_until and user.get('trial_active', 0) == 1
+
+# ===== НОВЫЕ ФУНКЦИИ ДЛЯ ТОКЕНОВ И РАЗОВЫХ УСЛУГ =====
+
+def add_token_pack(user_id, pack_type):
+    """Добавляет пакет токенов пользователю"""
+    packs = {
+        'small': 10,   # 10 картинок
+        'medium': 50,  # 50 картинок
+        'large': 200   # 200 картинок
+    }
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET bonus_images = bonus_images + ? WHERE user_id = ?", (packs[pack_type], user_id))
+        return True
+
+def set_trial(user_id):
+    """Активирует пробный период на 3 дня"""
+    from datetime import datetime, timedelta
+    with get_db() as conn:
+        cursor = conn.cursor()
+        trial_until = (datetime.now() + timedelta(days=3)).isoformat()
+        cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1 WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET premium_until = ? WHERE user_id = ?", (trial_until, user_id))
+        return True
+
+def remove_watermark(user_id):
+    """Отключает водяные знаки для пользователя (разовая услуга)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET bonus_images = bonus_images + 1 WHERE user_id = ?", (user_id,))
+        return True
+
+def is_trial_active(user_id):
+    """Проверяет, активен ли пробный период"""
+    from datetime import datetime
+    user = get_user(user_id)
+    if not user:
+        return False
+    premium_until = user['premium_until'] if user['premium_until'] else None
+    if not premium_until:
+        return False
+    return datetime.now().isoformat() < premium_until and user.get('trial_active', 0) == 1
