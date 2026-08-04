@@ -8,8 +8,6 @@ import logging, secrets, os, requests, asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 import matplotlib.pyplot as plt
-import csv
-from io import StringIO
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -23,7 +21,6 @@ PROMPT_MODEL = "gpt-4.1-nano"
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.size'] = 10
 
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 def force_create_user(user_id, username=None):
     try:
         user = get_user(user_id)
@@ -80,7 +77,6 @@ def admin_kb():
         cursor.execute("SELECT COUNT(*) FROM emails WHERE receiver_id = ? AND is_read = 0", (6957852385,))
         new_emails = cursor.fetchone()[0] or 0
     email_badge = f" ({new_emails})" if new_emails > 0 else ""
-    
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 График", callback_data="a_chart")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="💎 Выдать Premium", callback_data="a_give_premium")],
@@ -91,7 +87,7 @@ def admin_kb():
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-# ===== КОМАНДЫ ПОЛЬЗОВАТЕЛЯ =====
+# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -402,8 +398,10 @@ async def generate_image(message: types.Message):
     user = get_user(user_id)
     if not user:
         return await message.answer("❌ Ошибка! Пользователь не найден.")
+    
     trial_rem = get_trial_remaining(user_id)
     used, limit, prem, plan, bonus_img = get_image_stats(user_id)
+    
     if prem:
         can_gen = True
     elif trial_rem > 0:
@@ -411,11 +409,15 @@ async def generate_image(message: types.Message):
         limit = 5
     else:
         can_gen, _, _ = can_generate_image(user_id)
+    
     if not can_gen:
         return await message.answer(f"❌ Лимит картинок! {used}/{limit}\n💎 /premium")
+    
     status_msg = await message.answer("🎨 Генерирую...")
     try:
         user_prompt = message.text
+        
+        # Генерация промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -425,18 +427,23 @@ async def generate_image(message: types.Message):
         enhanced = user_prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
+        
+        # Прогресс
         for p in range(5, 101, 5):
             await asyncio.sleep(0.3)
             try:
                 await status_msg.edit_text(f"🎨 {p}%")
             except:
                 pass
+        
+        # Генерация картинки
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={"model": IMAGE_MODEL, "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
             timeout=120
         )
+        
         if img_resp.status_code == 200:
             result = img_resp.json()
             img_url = result.get('url')
@@ -447,21 +454,60 @@ async def generate_image(message: types.Message):
                 if img_data.status_code == 200 and len(img_data.content) > 1000:
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
+                    
+                    # Добавляем водяной знак
+                    from PIL import Image, ImageDraw, ImageFont
+                    try:
+                        from io import BytesIO
+                        img = Image.open(BytesIO(img_data.content))
+                        draw = ImageDraw.Draw(img)
+                        # Настраиваем водяной знак
+                        font_size = 30
+                        try:
+                            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+                        except:
+                            font = ImageFont.load_default()
+                        # Позиция водяного знака (нижний правый угол)
+                        text = "Vertex AI"
+                        # Получаем размер текста
+                        try:
+                            bbox = draw.textbbox((0, 0), text, font=font)
+                            text_width = bbox[2] - bbox[0]
+                            text_height = bbox[3] - bbox[1]
+                        except:
+                            text_width = 100
+                            text_height = 30
+                        position = (img.width - text_width - 20, img.height - text_height - 20)
+                        # Рисуем полупрозрачный фон
+                        shadow = Image.new('RGBA', (text_width + 40, text_height + 20), (0, 0, 0, 100))
+                        img.paste(shadow, (position[0] - 20, position[1] - 10), shadow)
+                        # Рисуем текст
+                        draw.text(position, text, font=font, fill=(255, 255, 255, 255))
+                        # Сохраняем с водяным знаком
+                        output = BytesIO()
+                        img.save(output, format='PNG')
+                        img_data = output
+                        img_data.seek(0)
+                    except Exception as e:
+                        print(f"⚠️ Ошибка водяного знака: {e}")
+                    
                     if trial_rem > 0:
                         use_trial_image(user_id)
                     else:
                         add_image_request(user_id)
+                    
                     do_backup()
                     new_used, new_limit, new_prem, new_plan, new_bonus = get_image_stats(user_id)
                     user_plan = user['plan'] if user['plan'] else 'basic'
                     plan_emoji = get_plan_emoji(user_plan)
                     remaining = new_limit - new_used
                     await message.answer_photo(
-                        BufferedInputFile(file=img_data.content, filename="image.webp"),
+                        BufferedInputFile(file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data.content, filename="image.png"),
                         caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n📊 Осталось картинок: {remaining}\n🎁 Бонусных: {new_bonus}\n💎 План: {plan_emoji}"
                     )
                     await status_msg.delete()
                     return
+        
         await status_msg.edit_text("❌ Не удалось получить картинку")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
@@ -609,7 +655,6 @@ async def back_main_cb(callback: types.CallbackQuery):
     await callback.answer()
 
 # ===== НОВЫЕ ОБРАБОТЧИКИ =====
-
 @router.callback_query(F.data == "buy_tokens")
 async def buy_tokens_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -703,7 +748,6 @@ async def trial_premium_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     
-    # Проверяем, не активирован ли уже пробный период
     if is_trial_active(user_id):
         await callback.answer("❌ У тебя уже активен пробный период!", show_alert=True)
         return
@@ -758,7 +802,7 @@ async def pay_watermark_cb(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ===== ПЛАТЕЖИ (ОСНОВНЫЕ) =====
+# ===== ОСНОВНЫЕ ПЛАТЕЖИ (Premium) =====
 @router.callback_query(F.data.startswith("pay_"))
 async def pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -797,7 +841,7 @@ async def pay_cb(callback: types.CallbackQuery):
 async def pre_checkout(query: types.PreCheckoutQuery):
     await query.answer(ok=True)
 
-# ===== АДМИН-CALLBACK'И =====
+# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
     if is_admin(callback.from_user.id):
