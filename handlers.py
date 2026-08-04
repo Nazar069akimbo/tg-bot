@@ -753,7 +753,12 @@ async def token_pay_cb(callback: types.CallbackQuery):
         provider_token="",
         currency="XTR",
         prices=[LabeledPrice(label=f"{images} картинок", amount=stars)],
-        start_parameter="token_pack"
+        start_parameter="token_pack",
+        need_name=False,
+        need_phone_number=False,
+        need_email=False,
+        need_shipping_address=False,
+        is_flexible=False
     )
     await callback.answer()
 
@@ -854,7 +859,12 @@ async def pay_watermark_cb(callback: types.CallbackQuery):
         provider_token="",
         currency="XTR",
         prices=[LabeledPrice(label="Без водяных знаков", amount=20)],
-        start_parameter="no_watermark"
+        start_parameter="no_watermark",
+        need_name=False,
+        need_phone_number=False,
+        need_email=False,
+        need_shipping_address=False,
+        is_flexible=False
     )
     await callback.answer()
 
@@ -885,9 +895,19 @@ async def pay_cb(callback: types.CallbackQuery):
             cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
                         (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
         await callback.bot.send_invoice(
-            chat_id=user_id, title=title, description=f"{days} дней Premium",
-            payload=payload, provider_token="", currency="XTR",
-            prices=[LabeledPrice(label=title, amount=stars)], start_parameter="premium_sub"
+            chat_id=user_id,
+            title=title,
+            description=f"{days} дней Premium",
+            payload=payload,
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label=title, amount=stars)],
+            start_parameter="premium_sub",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
         )
         await callback.answer()
     except Exception as e:
