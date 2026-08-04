@@ -8,6 +8,9 @@ import logging, secrets, os, requests, asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 import matplotlib.pyplot as plt
+import csv
+from io import StringIO
+from PIL import Image, ImageDraw, ImageFont
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -55,7 +58,6 @@ def get_plan_emoji(plan):
     else:
         return "🔴 Бесплатный"
 
-# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -86,6 +88,90 @@ def admin_kb():
         [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"), InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
+
+# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ТОКЕНОВ И ВОДЯНЫХ ЗНАКОВ =====
+def add_token_pack(user_id, pack_type):
+    packs = {'small': 10, 'medium': 50, 'large': 200}
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET bonus_images = bonus_images + ? WHERE user_id = ?", (packs[pack_type], user_id))
+        return True
+
+def set_trial(user_id):
+    from datetime import datetime, timedelta
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1 WHERE user_id = ?", (datetime.now().isoformat(), user_id))
+        return True
+
+def remove_watermark(user_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET watermark_off = 1 WHERE user_id = ?", (user_id,))
+        return True
+
+def is_trial_active(user_id):
+    from datetime import datetime
+    user = get_user(user_id)
+    if not user:
+        return False
+    return user.get('trial_active', 0) == 1 and user.get('premium_until') and datetime.now().isoformat() < user.get('premium_until')
+
+def log_admin_action(admin_id, action, target_id, details):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO admin_log (admin_id, action, target_id, details, timestamp) VALUES (?, ?, ?, ?, ?)",
+                      (admin_id, action, target_id, details, datetime.now().isoformat()))
+
+def use_promocode(code, user_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, bonus_images, bonus_requests, max_uses, used FROM promocodes WHERE code = ? AND expires_at > datetime('now')", (code,))
+        promo = cursor.fetchone()
+        if not promo:
+            return False, "❌ Промокод не найден или истёк"
+        if promo['used'] >= promo['max_uses']:
+            return False, "❌ Промокод уже использован"
+        cursor.execute("SELECT id FROM promocode_uses WHERE promocode_id = ? AND user_id = ?", (promo['id'], user_id))
+        if cursor.fetchone():
+            return False, "❌ Вы уже использовали этот промокод"
+        cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)", 
+                      (promo['id'], user_id, datetime.now().isoformat()))
+        cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
+        if promo['bonus_images'] > 0:
+            cursor.execute("UPDATE users SET bonus_images = bonus_images + ? WHERE user_id = ?", (promo['bonus_images'], user_id))
+        if promo['bonus_requests'] > 0:
+            cursor.execute("UPDATE users SET bonus_requests = bonus_requests + ? WHERE user_id = ?", (promo['bonus_requests'], user_id))
+        return True, f"✅ Промокод активирован! +{promo['bonus_images']} карт, +{promo['bonus_requests']} запросов"
+
+def add_watermark(image_data):
+    try:
+        img = Image.open(BytesIO(image_data))
+        draw = ImageDraw.Draw(img)
+        font_size = 30
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+        text = "Vertex AI"
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+        except:
+            text_width = 100
+            text_height = 30
+        position = (img.width - text_width - 20, img.height - text_height - 20)
+        shadow = Image.new('RGBA', (text_width + 40, text_height + 20), (0, 0, 0, 100))
+        img.paste(shadow, (position[0] - 20, position[1] - 10), shadow)
+        draw.text(position, text, font=font, fill=(255, 255, 255, 255))
+        output = BytesIO()
+        img.save(output, format='PNG')
+        output.seek(0)
+        return output
+    except Exception as e:
+        print(f"⚠️ Ошибка водяного знака: {e}")
+        return None
 
 # ===== КОМАНДЫ =====
 @router.message(Command("start"))
@@ -417,7 +503,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерация промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -428,7 +513,6 @@ async def generate_image(message: types.Message):
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
         
-        # Прогресс
         for p in range(5, 101, 5):
             await asyncio.sleep(0.3)
             try:
@@ -436,7 +520,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # Генерация картинки
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -455,41 +538,11 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    # Добавляем водяной знак
-                    from PIL import Image, ImageDraw, ImageFont
-                    try:
-                        from io import BytesIO
-                        img = Image.open(BytesIO(img_data.content))
-                        draw = ImageDraw.Draw(img)
-                        # Настраиваем водяной знак
-                        font_size = 30
-                        try:
-                            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-                        except:
-                            font = ImageFont.load_default()
-                        # Позиция водяного знака (нижний правый угол)
-                        text = "Vertex AI"
-                        # Получаем размер текста
-                        try:
-                            bbox = draw.textbbox((0, 0), text, font=font)
-                            text_width = bbox[2] - bbox[0]
-                            text_height = bbox[3] - bbox[1]
-                        except:
-                            text_width = 100
-                            text_height = 30
-                        position = (img.width - text_width - 20, img.height - text_height - 20)
-                        # Рисуем полупрозрачный фон
-                        shadow = Image.new('RGBA', (text_width + 40, text_height + 20), (0, 0, 0, 100))
-                        img.paste(shadow, (position[0] - 20, position[1] - 10), shadow)
-                        # Рисуем текст
-                        draw.text(position, text, font=font, fill=(255, 255, 255, 255))
-                        # Сохраняем с водяным знаком
-                        output = BytesIO()
-                        img.save(output, format='PNG')
-                        img_data = output
-                        img_data.seek(0)
-                    except Exception as e:
-                        print(f"⚠️ Ошибка водяного знака: {e}")
+                    # Проверяем, нужно ли добавлять водяной знак
+                    if user.get('watermark_off', 0) == 0:
+                        watermarked = add_watermark(img_data.content)
+                        if watermarked:
+                            img_data = watermarked
                     
                     if trial_rem > 0:
                         use_trial_image(user_id)
@@ -654,7 +707,7 @@ async def back_main_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("🤖 **Vertex AI**\n\n✏️ Просто напиши вопрос!", reply_markup=main_menu())
     await callback.answer()
 
-# ===== НОВЫЕ ОБРАБОТЧИКИ =====
+# ===== НОВЫЕ ОБРАБОТЧИКИ (ТОКЕНЫ, ПРОБНЫЙ ПЕРИОД, ВОДЯНЫЕ ЗНАКИ) =====
 @router.callback_query(F.data == "buy_tokens")
 async def buy_tokens_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -753,6 +806,9 @@ async def trial_premium_cb(callback: types.CallbackQuery):
         return
     
     set_trial(user_id)
+    # Активируем Premium на 3 дня
+    add_premium(user_id, 3, "premium", paid=False)
+    
     await callback.message.edit_text(
         "🔥 **Пробный Premium активирован!**\n\n"
         "Ты получил 3 дня Premium бесплатно:\n"
