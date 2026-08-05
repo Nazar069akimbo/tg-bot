@@ -216,7 +216,7 @@ async def start_cmd(message: types.Message):
         f"🖼️ 10 токенов = 1 картинка\n\n"
         f"✨ Покупай токены и генерируй картинки!\n"
         f"{trial_text}\n\n"
-        f"Просто нажми «Сгенерировать»!"
+        f"📌 Нажми «Сгенерировать» или просто напиши описание!"
     )
     await message.answer(text, reply_markup=main_menu())
 
