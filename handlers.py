@@ -7,7 +7,6 @@ from backup import GitHubBackup
 import logging, secrets, os, requests, asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
-import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 
 router = Router()
@@ -20,26 +19,18 @@ PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
-plt.rcParams['font.family'] = 'DejaVu Sans'
-plt.rcParams['font.size'] = 10
-
-# ===== ФУНКЦИИ РАБОТЫ С ТОКЕНАМИ =====
 def get_tokens(user_id):
-    """Получить баланс токенов пользователя"""
     user = get_user(user_id)
     if not user:
         return 0
-    return user.get('tokens', 0)
+    return user['tokens'] if user['tokens'] else 0
 
 def add_tokens(user_id, amount):
-    """Добавить токены пользователю"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
-        return True
 
 def spend_tokens(user_id, amount):
-    """Списать токены (возвращает True если достаточно)"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
@@ -50,11 +41,10 @@ def spend_tokens(user_id, amount):
         return False
 
 def has_trial(user_id):
-    """Проверить, активен ли пробный период"""
     user = get_user(user_id)
     if not user:
         return False
-    trial_start = user.get('trial_start')
+    trial_start = user['trial_start'] if user['trial_start'] else None
     if not trial_start:
         return False
     try:
@@ -64,19 +54,16 @@ def has_trial(user_id):
         return False
 
 def activate_trial(user_id):
-    """Активировать пробный период (20 токенов)"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET trial_start = ?, tokens = tokens + 20 WHERE user_id = ?", 
                       (datetime.now().isoformat(), user_id))
-        return True
 
 def get_trial_remaining(user_id):
-    """Сколько осталось дней пробного периода"""
     user = get_user(user_id)
     if not user:
         return 0
-    trial_start = user.get('trial_start')
+    trial_start = user['trial_start'] if user['trial_start'] else None
     if not trial_start:
         return 0
     try:
@@ -111,8 +98,7 @@ def add_watermark(image_data):
         img.save(output, format='PNG')
         output.seek(0)
         return output
-    except Exception as e:
-        print(f"⚠️ Ошибка водяного знака: {e}")
+    except:
         return None
 
 def force_create_user(user_id, username=None):
@@ -122,9 +108,7 @@ def force_create_user(user_id, username=None):
             return user
         result = create_user(user_id, username or str(user_id))
         if result:
-            user = get_user(user_id)
-            if user:
-                return user
+            return get_user(user_id)
         return None
     except:
         return None
@@ -134,12 +118,6 @@ def do_backup():
         GitHubBackup().backup_db()
     except:
         pass
-
-def log_admin_action(admin_id, action, target_id, details):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO admin_log (admin_id, action, target_id, details, timestamp) VALUES (?, ?, ?, ?, ?)",
-                      (admin_id, action, target_id, details, datetime.now().isoformat()))
 
 def use_promocode(code, user_id):
     with get_db() as conn:
@@ -160,7 +138,6 @@ def use_promocode(code, user_id):
             cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         return True, f"✅ Промокод активирован! +{promo['bonus_tokens']} токенов!"
 
-# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🖼️ Сгенерировать", callback_data="generate_image")],
@@ -171,8 +148,6 @@ def main_menu():
     ])
 
 def admin_kb():
-    new_messages = get_messages_count()
-    badge = f" ({new_messages})" if new_messages > 0 else ""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
@@ -180,7 +155,6 @@ def admin_kb():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -202,8 +176,7 @@ async def start_cmd(message: types.Message):
             if success:
                 await message.answer(msg)
     
-    # Активируем пробный период, если ещё не активирован
-    if not has_trial(user_id) and not get_tokens(user_id):
+    if not has_trial(user_id) and get_tokens(user_id) == 0:
         activate_trial(user_id)
         trial_text = "🎁 Тебе подарок! 20 токенов (2 картинки) бесплатно на 3 дня!"
     else:
@@ -297,7 +270,6 @@ async def handle_message(message: types.Message):
     state = user_pages.get(user_id, {})
     
     if state.get("state") == "waiting_name":
-        from database.db import get_db
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (message.text, user_id))
@@ -316,17 +288,15 @@ async def handle_message(message: types.Message):
         await handle_admin_input(message)
         return
     
-    # Любой текст = генерация картинки
     await generate_image(message)
 
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
-        await message.answer("❌ Ошибка! Попробуйте позже.", reply_markup=main_menu())
+        await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
-    # Проверяем токены
     tokens = get_tokens(user_id)
     if tokens < 10:
         trial = get_trial_remaining(user_id)
@@ -354,7 +324,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерация промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -365,7 +334,6 @@ async def generate_image(message: types.Message):
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
         
-        # Прогресс
         for p in range(5, 101, 5):
             await asyncio.sleep(0.3)
             try:
@@ -373,7 +341,6 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # Генерация картинки
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -392,15 +359,11 @@ async def generate_image(message: types.Message):
                     await status_msg.edit_text("🎨 100% ✅")
                     await asyncio.sleep(0.2)
                     
-                    # Добавляем водяной знак
                     watermarked = add_watermark(img_data.content)
                     if watermarked:
                         img_data = watermarked
                     
-                    # Списываем токены
                     spend_tokens(user_id, 10)
-                    
-                    # Сохраняем статистику
                     do_backup()
                     
                     new_tokens = get_tokens(user_id)
@@ -415,7 +378,6 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ===== CALLBACK'И =====
 @router.callback_query(F.data == "generate_image")
 async def generate_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -579,15 +541,6 @@ async def payment_success(message: types.Message):
                 await message.answer(f"✅ Оплачено! Ты получил +{tokens} токенов!", reply_markup=main_menu())
             else:
                 await message.answer("❌ Ошибка активации")
-        elif plan in ['premium', 'premium_deluxe']:
-            add_premium(message.from_user.id, 30, plan, paid=True)
-            mark_paid_premium(message.from_user.id)
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
-            do_backup()
-            plan_names = {'premium': '💎 Premium', 'premium_deluxe': '👑 Premium Deluxe'}
-            await message.answer(f"✅ {plan_names.get(plan, 'Premium')} на 30 дней активирован!")
         else:
             await message.answer("❌ Ошибка активации")
     else:
@@ -628,7 +581,6 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
-# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
