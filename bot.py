@@ -57,13 +57,13 @@ async def main():
     init_db()
     logger.info("✅ База данных готова")
     
-    # Восстановление бэкапа
-    try:
-        backup = GitHubBackup()
-        backup.restore_latest_backup()
-        logger.info("✅ Бекап восстановлен")
-    except Exception as e:
-        logger.warning(f"⚠️ Не удалось восстановить бекап: {e}")
+    # ❌ ВОССТАНОВЛЕНИЕ БЭКАПА ОТКЛЮЧЕНО
+    # try:
+    #     backup = GitHubBackup()
+    #     backup.restore_latest_backup()
+    #     logger.info("✅ Бекап восстановлен")
+    # except Exception as e:
+    #     logger.warning(f"⚠️ Не удалось восстановить бекап: {e}")
     
     init_db()
     logger.info("✅ Миграция БД выполнена")
@@ -90,19 +90,18 @@ async def main():
     dp.include_router(router)
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
-        types.BotCommand(command="stats", description="📊 Статистика"),
+        types.BotCommand(command="balance", description="💰 Баланс"),
         types.BotCommand(command="profile", description="👤 Профиль"),
-        types.BotCommand(command="subscribe", description="💎 Premium"),
-        types.BotCommand(command="referral", description="👥 Рефералы")
+        types.BotCommand(command="help", description="❓ Помощь")
     ])
     
     # Удаляем вебхук
     await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("✅ Вебхук удалён")
     
     logger.info("✅ Бот готов!")
     logger.info("🚀 Запуск polling...")
     
-    # Обработка SIGTERM
     signal.signal(signal.SIGTERM, handle_sigterm)
     
     try:
