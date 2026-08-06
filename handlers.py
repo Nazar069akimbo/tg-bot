@@ -228,7 +228,7 @@ async def start_cmd(message: types.Message):
                 await message.answer("👤 Реферал +20 токенов!")
     
     if not has_trial(user_id) and get_tokens(user_id) == 0:
-        activate_trial(user_id)
+    # activate_trial временно отключена
         trial_text = "🎁 Тебе подарок! 20 токенов (2 картинки) бесплатно на 3 дня!"
     else:
         trial_text = ""
