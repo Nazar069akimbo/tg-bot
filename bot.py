@@ -53,17 +53,13 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
     
+    # ПРИМЕНЯЕМ МИГРАЦИЮ ПРЯМО ЗДЕСЬ!
+    import fix_db_once
+    fix_db_once  # просто импортируем, чтобы скрипт выполнился
+    
     # База данных
     init_db()
     logger.info("✅ База данных готова")
-    
-    # ❌ ВОССТАНОВЛЕНИЕ БЭКАПА ОТКЛЮЧЕНО
-    # try:
-    #     backup = GitHubBackup()
-    #     backup.restore_latest_backup()
-    #     logger.info("✅ Бекап восстановлен")
-    # except Exception as e:
-    #     logger.warning(f"⚠️ Не удалось восстановить бекап: {e}")
     
     init_db()
     logger.info("✅ Миграция БД выполнена")
