@@ -679,7 +679,7 @@ async def a_users_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users ORDER BY tokens DESC LIMIT 20")
+        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 20")
         users = cursor.fetchall()
     if not users:
         text = "👥 Нет пользователей"
