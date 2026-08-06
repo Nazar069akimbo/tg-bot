@@ -84,6 +84,9 @@ async def shutdown(signum=None, frame=None):
     shutdown_event.set()
     logger.info("✅ Бот остановлен")
 
+def handle_sigterm(signum, frame):
+    asyncio.create_task(shutdown())
+
 async def main():
     logger.info("🚀 Запуск...")
     
