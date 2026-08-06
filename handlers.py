@@ -77,7 +77,6 @@ def get_trial_remaining(user_id):
     except:
         return 0
 
-# ===== ФУНКЦИИ ТЕКСТОВЫХ ЗАПРОСОВ =====
 def get_text_requests(user_id):
     user = get_user(user_id)
     if not user:
@@ -120,7 +119,6 @@ def can_request_text(user_id):
     used, max_req = get_text_requests(user_id)
     return used < max_req, max_req - used
 
-# ===== ВОДЯНОЙ ЗНАК =====
 def add_watermark(image_data):
     try:
         img = Image.open(BytesIO(image_data))
@@ -186,7 +184,6 @@ def use_promocode(code, user_id):
             cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         return True, f"✅ Промокод активирован! +{promo['bonus_tokens']} токенов!"
 
-# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -204,7 +201,6 @@ def admin_kb():
         [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -228,17 +224,18 @@ async def start_cmd(message: types.Message):
                 await message.answer("👤 Реферал +20 токенов!")
     
     if not has_trial(user_id) and get_tokens(user_id) == 0:
-    # activate_trial временно отключена
+        activate_trial(user_id)
         trial_text = "🎁 Тебе подарок! 20 токенов (2 картинки) бесплатно на 3 дня!"
     else:
         trial_text = ""
     
     tokens = get_tokens(user_id)
+    used, max_req = get_text_requests(user_id)
     text = (
         f"🤖 **Vertex AI**\n\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ 10 токенов = 1 картинка\n"
-        f"📝 10 текстовых запросов/день\n\n"
+        f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
         f"✨ Покупай токены или просто напиши вопрос!\n"
         f"{trial_text}\n\n"
         f"📌 Нажми «Текст» или «Картинка»!"
@@ -273,8 +270,8 @@ async def profile_cmd(message: types.Message):
     tokens = get_tokens(user_id)
     text = (
         f"👤 **Мой профиль**\n\n"
-        f"🆔 ID: {user['user_id']}\n"
-        f"👤 Имя: {user['username'] or 'без имени'}\n"
+        f"🆔 ID: {user_id}\n"
+        f"👤 Имя: {message.from_user.username or 'без имени'}\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ Картинок: {tokens // 10}\n"
     )
@@ -343,14 +340,12 @@ async def handle_message(message: types.Message):
         await handle_admin_input(message)
         return
     
-    # Если режим картинки — генерируем картинку, иначе — текст
     mode = user_modes.get(user_id, "text")
     if mode == "image":
         await generate_image(message)
     else:
         await generate_text(message)
 
-# ===== ГЕНЕРАЦИЯ ТЕКСТА =====
 async def generate_text(message: types.Message):
     user_id = message.from_user.id
     if not can_request_text(user_id):
@@ -359,8 +354,7 @@ async def generate_text(message: types.Message):
     
     status_msg = await message.answer("🤔 Думаю...")
     try:
-        prem = False
-        answer = solve_problem(message.text, "chat", prem)
+        answer = solve_problem(message.text, "chat", False)
         add_text_request(user_id)
         do_backup()
         used, max_req = get_text_requests(user_id)
@@ -368,7 +362,6 @@ async def generate_text(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ =====
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
@@ -457,7 +450,6 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ===== CALLBACK'И =====
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -479,7 +471,24 @@ async def balance_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
-    await profile_cmd(callback.message)
+    user_id = callback.from_user.id
+    user = force_create_user(user_id, callback.from_user.username or "")
+    if not user:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    tokens = get_tokens(user_id)
+    username = callback.from_user.username or "без имени"
+    text = (
+        f"👤 **Мой профиль**\n\n"
+        f"🆔 ID: {user_id}\n"
+        f"👤 Имя: {username}\n"
+        f"💰 Токенов: {tokens}\n"
+        f"🖼️ Картинок: {tokens // 10}\n"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=main_menu())
+    except:
+        await callback.message.answer(text, reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data == "referral")
@@ -628,11 +637,12 @@ async def back_main_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     tokens = get_tokens(user_id)
+    used, max_req = get_text_requests(user_id)
     text = (
         f"🤖 **Vertex AI**\n\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ 10 токенов = 1 картинка\n"
-        f"📝 10 текстовых запросов/день\n\n"
+        f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
         f"Напиши вопрос или выбери режим!"
     )
     await callback.message.edit_text(text, reply_markup=main_menu())
@@ -651,7 +661,6 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
-# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -660,11 +669,11 @@ async def a_stats_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT SUM(tokens) FROM users")
+        cursor.execute("SELECT SUM(tokens) FROM users WHERE user_id != 8676871187")
         total_tokens = cursor.fetchone()[0] or 0
     await callback.message.edit_text(
         f"📊 **СТАТИСТИКА**\n\n"
-        f"👥 Всего: {total}\n"
+        f"👥 Всего: {total - 1}\n"
         f"💰 Всего токенов: {total_tokens}\n"
         f"📝 Запросов: {req}\n"
         f"🖼️ Картинок: {images}",
@@ -724,7 +733,7 @@ async def a_block_cb(callback: types.CallbackQuery):
     from database.db import get_db
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
     if not users:
         await callback.answer("❌ Нет пользователей", show_alert=True)
@@ -811,7 +820,7 @@ async def handle_admin_input(message: types.Message):
                 from database.db import get_db
                 with get_db() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+                    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0 AND user_id != 8676871187")
                     users = cursor.fetchall()
                 count = 0
                 for u in users:
@@ -825,6 +834,9 @@ async def handle_admin_input(message: types.Message):
                     return
                 target_id = int(parts[0].strip())
                 amount = int(parts[1].strip())
+                if target_id == 8676871187:
+                    await message.answer("❌ Нельзя выдавать токены боту!", reply_markup=admin_kb())
+                    return
                 add_tokens(target_id, amount)
                 await message.answer(f"✅ Пользователю {target_id} начислено {amount} токенов!", reply_markup=admin_kb())
         except Exception as e:
@@ -841,7 +853,7 @@ async def handle_admin_input(message: types.Message):
         from database.db import get_db
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0 AND user_id != 8676871187")
             users = cursor.fetchall()
         sent = 0
         for u in users:
