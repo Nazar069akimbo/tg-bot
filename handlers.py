@@ -19,12 +19,6 @@ PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
-def get_tokens(user_id):
-    user = get_user(user_id)
-    if not user:
-        return 0
-    return user['tokens'] if user['tokens'] else 0
-
 def add_tokens(user_id, amount):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -39,39 +33,6 @@ def spend_tokens(user_id, amount):
             cursor.execute("UPDATE users SET tokens = tokens - ? WHERE user_id = ?", (amount, user_id))
             return True
         return False
-
-def has_trial(user_id):
-    user = get_user(user_id)
-    if not user:
-        return False
-    trial_start = user['trial_start'] if user['trial_start'] else None
-    if not trial_start:
-        return False
-    try:
-        start_date = datetime.fromisoformat(trial_start)
-        return (datetime.now() - start_date).days < 3
-    except:
-        return False
-
-def activate_trial(user_id):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET trial_start = ?, tokens = tokens + 20 WHERE user_id = ?", 
-                      (datetime.now().isoformat(), user_id))
-
-def get_trial_remaining(user_id):
-    user = get_user(user_id)
-    if not user:
-        return 0
-    trial_start = user['trial_start'] if user['trial_start'] else None
-    if not trial_start:
-        return 0
-    try:
-        start_date = datetime.fromisoformat(trial_start)
-        days_passed = (datetime.now() - start_date).days
-        return max(0, 3 - days_passed)
-    except:
-        return 0
 
 def add_watermark(image_data):
     try:
@@ -747,3 +708,49 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
+
+
+def get_tokens(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0
+    try:
+        return user['tokens'] if user['tokens'] else 0
+    except:
+        return 0
+
+def has_trial(user_id):
+    user = get_user(user_id)
+    if not user:
+        return False
+    try:
+        trial_start = user['trial_start'] if user['trial_start'] else None
+        if not trial_start:
+            return False
+        start_date = datetime.fromisoformat(trial_start)
+        return (datetime.now() - start_date).days < 3
+    except:
+        return False
+
+def activate_trial(user_id):
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET trial_start = ?, tokens = tokens + 20 WHERE user_id = ?", 
+                          (datetime.now().isoformat(), user_id))
+    except:
+        pass
+
+def get_trial_remaining(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0
+    try:
+        trial_start = user['trial_start'] if user['trial_start'] else None
+        if not trial_start:
+            return 0
+        start_date = datetime.fromisoformat(trial_start)
+        days_passed = (datetime.now() - start_date).days
+        return max(0, 3 - days_passed)
+    except:
+        return 0
