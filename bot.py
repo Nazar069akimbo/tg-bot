@@ -7,6 +7,7 @@ from database.db import init_db, is_admin, add_admin
 from handlers import router
 from backup import GitHubBackup
 import signal
+import sqlite3
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,47 @@ def run_flask():
     except Exception as e:
         logger.error(f"❌ Flask ошибка: {e}")
 
+def migrate_db():
+    """Добавляет колонки в базу данных при запуске"""
+    try:
+        DB_PATH = 'data/repsolver.db'
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("PRAGMA table_info(users)")
+        cols = [row[1] for row in cursor.fetchall()]
+        
+        new_cols = {
+            'tokens': 'INTEGER DEFAULT 0',
+            'trial_start': 'TEXT',
+            'text_requests': 'INTEGER DEFAULT 0',
+            'max_text_requests': 'INTEGER DEFAULT 10',
+            'text_requests_reset': 'TEXT'
+        }
+        
+        for col, dtype in new_cols.items():
+            if col not in cols:
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {dtype}")
+                    logger.info(f"✅ Добавлена колонка {col}")
+                except:
+                    pass
+        
+        cursor.execute("PRAGMA table_info(payments)")
+        payment_cols = [row[1] for row in cursor.fetchall()]
+        if 'plan' not in payment_cols:
+            try:
+                cursor.execute("ALTER TABLE payments ADD COLUMN plan TEXT")
+                logger.info("✅ Добавлена колонка plan в payments")
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ Миграция БД выполнена")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка миграции БД: {e}")
+
 async def shutdown(signum=None, frame=None):
     logger.info("🛑 Получен SIGTERM, останавливаю бота...")
     await bot.delete_webhook()
@@ -41,9 +83,6 @@ async def shutdown(signum=None, frame=None):
     await bot.session.close()
     shutdown_event.set()
     logger.info("✅ Бот остановлен")
-
-def handle_sigterm(signum, frame):
-    asyncio.create_task(shutdown())
 
 async def main():
     logger.info("🚀 Запуск...")
@@ -53,16 +92,10 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
     
-    # ПРИМЕНЯЕМ МИГРАЦИЮ ПРЯМО ЗДЕСЬ!
-    import fix_db_once
-    fix_db_once  # просто импортируем, чтобы скрипт выполнился
-    
-    # База данных
+    # База данных + миграция
     init_db()
+    migrate_db()
     logger.info("✅ База данных готова")
-    
-    init_db()
-    logger.info("✅ Миграция БД выполнена")
     
     # Бэкап-цикл
     def backup_loop():
