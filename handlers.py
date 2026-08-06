@@ -19,6 +19,16 @@ PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
 
+# ===== ФУНКЦИИ ТОКЕНОВ =====
+def get_tokens(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0
+    try:
+        return user['tokens'] if user['tokens'] else 0
+    except:
+        return 0
+
 def add_tokens(user_id, amount):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -34,6 +44,83 @@ def spend_tokens(user_id, amount):
             return True
         return False
 
+def has_trial(user_id):
+    user = get_user(user_id)
+    if not user:
+        return False
+    try:
+        trial_start = user['trial_start'] if user['trial_start'] else None
+        if not trial_start:
+            return False
+        start_date = datetime.fromisoformat(trial_start)
+        return (datetime.now() - start_date).days < 3
+    except:
+        return False
+
+def activate_trial(user_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET trial_start = ?, tokens = tokens + 20 WHERE user_id = ?", 
+                      (datetime.now().isoformat(), user_id))
+
+def get_trial_remaining(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0
+    try:
+        trial_start = user['trial_start'] if user['trial_start'] else None
+        if not trial_start:
+            return 0
+        start_date = datetime.fromisoformat(trial_start)
+        days_passed = (datetime.now() - start_date).days
+        return max(0, 3 - days_passed)
+    except:
+        return 0
+
+# ===== ФУНКЦИИ ТЕКСТОВЫХ ЗАПРОСОВ =====
+def get_text_requests(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0, 10
+    try:
+        used = user['text_requests'] if user['text_requests'] else 0
+        max_req = user['max_text_requests'] if user['max_text_requests'] else 10
+        return used, max_req
+    except:
+        return 0, 10
+
+def reset_text_requests_if_needed(user_id):
+    user = get_user(user_id)
+    if not user:
+        return
+    try:
+        last_reset = user['text_requests_reset'] if user['text_requests_reset'] else None
+        if not last_reset:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?", 
+                              (datetime.now().isoformat(), user_id))
+            return
+        last_date = datetime.fromisoformat(last_reset)
+        if last_date.date() < datetime.now().date():
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?", 
+                              (datetime.now().isoformat(), user_id))
+    except:
+        pass
+
+def add_text_request(user_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET text_requests = text_requests + 1 WHERE user_id = ?", (user_id,))
+
+def can_request_text(user_id):
+    reset_text_requests_if_needed(user_id)
+    used, max_req = get_text_requests(user_id)
+    return used < max_req, max_req - used
+
+# ===== ВОДЯНОЙ ЗНАК =====
 def add_watermark(image_data):
     try:
         img = Image.open(BytesIO(image_data))
@@ -99,9 +186,10 @@ def use_promocode(code, user_id):
             cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         return True, f"✅ Промокод активирован! +{promo['bonus_tokens']} токенов!"
 
+# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🖼️ Сгенерировать", callback_data="generate_image")],
+        [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"), InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"), InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin")],
@@ -111,11 +199,12 @@ def main_menu():
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens"), InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
+        [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
+# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -134,8 +223,9 @@ async def start_cmd(message: types.Message):
         referrer_id = int(args[1])
         if referrer_id != user_id:
             success, msg = add_referral(referrer_id, user_id)
-            if success:
-                await message.answer(msg)
+            if success and "вы получили" in msg:
+                add_tokens(referrer_id, 20)
+                await message.answer("👤 Реферал +20 токенов!")
     
     if not has_trial(user_id) and get_tokens(user_id) == 0:
         activate_trial(user_id)
@@ -147,10 +237,11 @@ async def start_cmd(message: types.Message):
     text = (
         f"🤖 **Vertex AI**\n\n"
         f"💰 Токенов: {tokens}\n"
-        f"🖼️ 10 токенов = 1 картинка\n\n"
-        f"✨ Покупай токены и генерируй картинки!\n"
+        f"🖼️ 10 токенов = 1 картинка\n"
+        f"📝 10 текстовых запросов/день\n\n"
+        f"✨ Покупай токены или просто напиши вопрос!\n"
         f"{trial_text}\n\n"
-        f"📌 Нажми «Сгенерировать» или просто напиши описание!"
+        f"📌 Нажми «Текст» или «Картинка»!"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -162,10 +253,12 @@ async def balance_cmd(message: types.Message):
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     tokens = get_tokens(user_id)
+    used, max_req = get_text_requests(user_id)
     trial = get_trial_remaining(user_id)
-    text = f"💰 **Баланс токенов**\n\n"
+    text = f"💰 **Баланс**\n\n"
     text += f"🪙 Токенов: {tokens}\n"
     text += f"🖼️ Хватит на: {tokens // 10} картинок\n"
+    text += f"📝 Текст: {used}/{max_req} запросов сегодня\n"
     if trial > 0:
         text += f"🎁 Пробный период: {trial} дней\n"
     await message.answer(text, reply_markup=main_menu())
@@ -191,11 +284,12 @@ async def profile_cmd(message: types.Message):
 async def help_cmd(message: types.Message):
     text = (
         "❓ **Помощь**\n\n"
-        "🖼️ Сгенерировать — создать картинку (10 токенов)\n"
+        "🧠 Текст — просто напиши вопрос (10/день)\n"
+        "🖼️ Картинка — 10 токенов\n"
         "✨ Купить токены — пополнить баланс\n"
         "📊 Баланс — проверить токены\n"
         "🎁 Промокод — активировать бонус\n"
-        "👥 Рефералы — приглашай друзей\n\n"
+        "👥 Рефералы — приглашай друзей (+20 токенов)\n\n"
         "📌 Команды:\n"
         "/start — меню\n"
         "/balance — баланс\n"
@@ -245,12 +339,36 @@ async def handle_message(message: types.Message):
         user_pages.pop(user_id, None)
         return
     
-    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact"]:
+    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_give_tokens"]:
         await handle_admin_input(message)
         return
     
-    await generate_image(message)
+    # Если режим картинки — генерируем картинку, иначе — текст
+    mode = user_modes.get(user_id, "text")
+    if mode == "image":
+        await generate_image(message)
+    else:
+        await generate_text(message)
 
+# ===== ГЕНЕРАЦИЯ ТЕКСТА =====
+async def generate_text(message: types.Message):
+    user_id = message.from_user.id
+    if not can_request_text(user_id):
+        await message.answer("🔒 Лимит текстовых запросов исчерпан! Завтра будет новый день.", reply_markup=main_menu())
+        return
+    
+    status_msg = await message.answer("🤔 Думаю...")
+    try:
+        prem = False
+        answer = solve_problem(message.text, "chat", prem)
+        add_text_request(user_id)
+        do_backup()
+        used, max_req = get_text_requests(user_id)
+        await status_msg.edit_text(f"🧠 {answer}\n\n📝 Осталось запросов: {max_req - used}/{max_req}")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ =====
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
@@ -339,29 +457,20 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-@router.callback_query(F.data == "generate_image")
-async def generate_cb(callback: types.CallbackQuery):
+# ===== CALLBACK'И =====
+@router.callback_query(F.data.in_(["mode_text", "mode_image"]))
+async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user = force_create_user(user_id, callback.from_user.username or "")
-    if not user:
-        await callback.answer("❌ Ошибка!", show_alert=True)
-        return
-    tokens = get_tokens(user_id)
-    if tokens < 10:
-        trial = get_trial_remaining(user_id)
-        await callback.answer(f"❌ Нужно 10 токенов. У тебя: {tokens}" + (f"\n🎁 Пробный период: {trial} дней" if trial > 0 else ""), show_alert=True)
-        return
+    force_create_user(user_id, callback.from_user.username or "")
+    mode = callback.data.replace("mode_", "")
+    user_modes[user_id] = mode
+    mode_name = "🧠 Текст" if mode == "text" else "🖼️ Картинка"
+    await callback.answer(f"✅ Режим: {mode_name}", show_alert=True)
     await callback.message.edit_text(
-        "✏️ **Напиши описание картинки**\n\n"
-        "Просто напиши что хочешь увидеть.\n"
-        "Например: «кот в космосе»\n\n"
-        f"💰 У тебя: {tokens} токенов\n"
-        f"🖼️ 1 картинка = 10 токенов",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-        ])
+        f"✅ Режим **{mode_name}**\n\n"
+        "Просто напиши свой запрос!",
+        reply_markup=main_menu()
     )
-    await callback.answer()
 
 @router.callback_query(F.data == "balance")
 async def balance_cb(callback: types.CallbackQuery):
@@ -381,12 +490,11 @@ async def referral_cb(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка!", show_alert=True)
         return
     count = get_referral_count(user_id)
-    bonus_images, bonus_requests = get_referral_bonuses(user_id)
     link = f"https://t.me/Vertex1bot?start={user_id}"
     text = (
         "👥 **Рефералы**\n\n"
         f"👤 Приглашено: {count}\n"
-        f"🎁 Бонус: +10 токенов за друга\n\n"
+        f"🎁 Бонус: +20 токенов за друга\n\n"
         f"🔗 Твоя ссылка:\n{link}"
     )
     await callback.message.edit_text(
@@ -523,8 +631,9 @@ async def back_main_cb(callback: types.CallbackQuery):
     text = (
         f"🤖 **Vertex AI**\n\n"
         f"💰 Токенов: {tokens}\n"
-        f"🖼️ 10 токенов = 1 картинка\n\n"
-        f"Напиши описание или нажми «Сгенерировать»!"
+        f"🖼️ 10 токенов = 1 картинка\n"
+        f"📝 10 текстовых запросов/день\n\n"
+        f"Напиши вопрос или выбери режим!"
     )
     await callback.message.edit_text(text, reply_markup=main_menu())
     await callback.answer()
@@ -542,6 +651,7 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
+# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -581,6 +691,22 @@ async def a_users_cb(callback: types.CallbackQuery):
             text += f"{status_text} **{name}** (ID: {u['user_id']})\n"
             text += f"   🪙 {u['tokens']} токенов\n\n"
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
+    await callback.answer()
+
+@router.callback_query(F.data == "a_give_tokens")
+async def a_give_tokens_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    user_pages[callback.from_user.id] = {"state": "waiting_give_tokens"}
+    await callback.message.edit_text(
+        "⭐ **Раздать токены**\n\n"
+        "Введите в формате:\n"
+        "`ID пользователя | количество токенов`\n\n"
+        "Пример: `123456789 | 50`\n\n"
+        "Или напиши `всем | 10` чтобы раздать всем по 10 токенов\n\n"
+        "⏹ /cancel",
+        reply_markup=admin_kb()
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "a_broadcast")
@@ -673,6 +799,39 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отменено", reply_markup=admin_kb())
         return
     
+    if state.get("state") == "waiting_give_tokens":
+        try:
+            text = message.text.strip()
+            if text.startswith("всем"):
+                parts = text.split("|")
+                if len(parts) < 2:
+                    await message.answer("❌ Формат: всем | количество")
+                    return
+                amount = int(parts[1].strip())
+                from database.db import get_db
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+                    users = cursor.fetchall()
+                count = 0
+                for u in users:
+                    add_tokens(u['user_id'], amount)
+                    count += 1
+                await message.answer(f"✅ Раздано {amount} токенов {count} пользователям!", reply_markup=admin_kb())
+            else:
+                parts = text.split("|")
+                if len(parts) < 2:
+                    await message.answer("❌ Формат: ID | количество")
+                    return
+                target_id = int(parts[0].strip())
+                amount = int(parts[1].strip())
+                add_tokens(target_id, amount)
+                await message.answer(f"✅ Пользователю {target_id} начислено {amount} токенов!", reply_markup=admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
+        user_pages.pop(user_id, None)
+        return
+    
     if state.get("state") == "waiting_broadcast":
         if not message.text or not message.text.strip():
             await message.answer("❌ Текст не может быть пустым!", reply_markup=admin_kb())
@@ -708,49 +867,3 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
-
-
-def get_tokens(user_id):
-    user = get_user(user_id)
-    if not user:
-        return 0
-    try:
-        return user['tokens'] if user['tokens'] else 0
-    except:
-        return 0
-
-def has_trial(user_id):
-    user = get_user(user_id)
-    if not user:
-        return False
-    try:
-        trial_start = user['trial_start'] if user['trial_start'] else None
-        if not trial_start:
-            return False
-        start_date = datetime.fromisoformat(trial_start)
-        return (datetime.now() - start_date).days < 3
-    except:
-        return False
-
-def activate_trial(user_id):
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET trial_start = ?, tokens = tokens + 20 WHERE user_id = ?", 
-                          (datetime.now().isoformat(), user_id))
-    except:
-        pass
-
-def get_trial_remaining(user_id):
-    user = get_user(user_id)
-    if not user:
-        return 0
-    try:
-        trial_start = user['trial_start'] if user['trial_start'] else None
-        if not trial_start:
-            return 0
-        start_date = datetime.fromisoformat(trial_start)
-        days_passed = (datetime.now() - start_date).days
-        return max(0, 3 - days_passed)
-    except:
-        return 0
