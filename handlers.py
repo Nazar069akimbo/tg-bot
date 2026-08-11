@@ -463,11 +463,22 @@ async def generate_image(message: types.Message):
                     'size': '1024x1024',
                 }
                 req = client.images.generate(**params)
-                image_url = json.loads(req.model_dump_json())['data'][0]['url']
-                if image_url:
-                    img_data_response = requests.get(image_url, timeout=30)
-                    if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
-                        img_data = img_data_response.content
+                # Получаем URL из ответа
+                if hasattr(req, 'data') and len(req.data) > 0:
+                    image_url = req.data[0].url
+                    if image_url:
+                        img_data_response = requests.get(image_url, timeout=30)
+                        if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
+                            img_data = img_data_response.content
+                else:
+                    # fallback: через json
+                    resp_json = json.loads(req.model_dump_json())
+                    if 'data' in resp_json and len(resp_json['data']) > 0:
+                        image_url = resp_json['data'][0]['url']
+                        if image_url:
+                            img_data_response = requests.get(image_url, timeout=30)
+                            if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
+                                img_data = img_data_response.content
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
                 await status_msg.edit_text(f"❌ Ошибка генерации: {str(e)[:100]}")
