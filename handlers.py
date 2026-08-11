@@ -35,7 +35,7 @@ IMAGE_MODELS = {
     },
     "flux_2_max": {
         "name": "🔥 Flux-2-Max",
-        "price": 60,
+        "price": 100,
         "api_model": "flux-2-max",
         "type": "replicate",
         "description": "⭐ ТОПОВОЕ КАЧЕСТВО"
@@ -230,7 +230,7 @@ def admin_kb():
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
         [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"), InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"), InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 @router.message(Command("start"))
@@ -1070,12 +1070,82 @@ async def restore_backup_cb(callback: types.CallbackQuery):
         )
     await callback.answer()
 
+
+
+# ===== УПРАВЛЕНИЕ ЦЕНАМИ =====
+@router.callback_query(F.data == "a_edit_prices")
+async def a_edit_prices_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for key, model in IMAGE_MODELS.items():
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{model['name']} — {model['price']} токенов",
+                callback_data=f"edit_price_{key}"
+            )
+        ])
+    kb.inline_keyboard.append([
+        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")
+    ])
+    
+    await callback.message.edit_text(
+        "💰 **Управление ценами**\n\n"
+        "Выбери модель для изменения цены:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("edit_price_"))
+async def edit_price_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    model_key = callback.data.replace("edit_price_", "")
+    model = IMAGE_MODELS[model_key]
+    user_pages[callback.from_user.id] = {"state": "waiting_price", "model": model_key}
+    
+    await callback.message.edit_text(
+        f"💰 **Изменение цены**\n\n"
+        f"Модель: {model['name']}\n"
+        f"Текущая цена: {model['price']} токенов\n\n"
+        f"Введи **новую цену** в токенах:\n"
+        f"(например: `15`)\n\n"
+        f"⏹ /cancel",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_edit_prices")]
+        ])
+    )
+    await callback.answer()
+
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=admin_kb())
+        return
+    
+    if state.get("state") == "waiting_price":
+        try:
+            new_price = int(message.text.strip())
+            if new_price < 1:
+                await message.answer("❌ Цена должна быть больше 0!", reply_markup=admin_kb())
+                return
+            model_key = state.get("model")
+            if model_key and model_key in IMAGE_MODELS:
+                IMAGE_MODELS[model_key]["price"] = new_price
+                await message.answer(
+                    f"✅ Цена для {IMAGE_MODELS[model_key]['name']} обновлена!\n"
+                    f"💰 Новая цена: {new_price} токенов",
+                    reply_markup=admin_kb()
+                )
+            else:
+                await message.answer("❌ Модель не найдена", reply_markup=admin_kb())
+        except ValueError:
+            await message.answer("❌ Введите число!", reply_markup=admin_kb())
+        user_pages.pop(user_id, None)
         return
     
     if state.get("state") == "waiting_give_tokens":
