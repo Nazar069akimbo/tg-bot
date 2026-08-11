@@ -19,19 +19,12 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 PROMPT_MODEL = "gpt-4.1-nano"
 
-# Инициализируем OpenAI клиент
 client = OpenAI(
     api_key=API_KEY,
     base_url='https://openai.bothub.chat/v1'
 )
 
-# ===== СТАТИСТИКА МОДЕЛЕЙ =====
-model_stats = {
-    "flux": 0,
-    "flux_2_max": 0
-}
-
-# ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
+# ===== МОДЕЛИ ДЛЯ КАРТИНОК (ТОЛЬКО 2) =====
 IMAGE_MODELS = {
     "flux": {
         "name": "🖼️ Flux Schnell",
@@ -47,22 +40,15 @@ IMAGE_MODELS = {
         "type": "openai",
         "description": "⭐ ТОПОВОЕ КАЧЕСТВО"
     }
-},
-    "nano_banana": {
-        "name": "🌌 Nano Banana",
-        "price": 50,
-        "api_model": "nano-banana",
-        "type": "openai",
-        "description": "⭐ КАЧЕСТВО 4K (Google)"
-    }
 }
 
-user_model = {}  # user_id → выбранная модель
+model_stats = {
+    "flux": 0,
+    "flux_2_max": 0
+}
 
-def get_model_stats():
-    return model_stats
+user_model = {}
 
-# ===== ФУНКЦИИ ТОКЕНОВ =====
 def get_tokens(user_id):
     user = get_user(user_id)
     if not user:
@@ -227,7 +213,6 @@ def use_promocode(code, user_id):
             cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         return True, f"✅ Промокод активирован! +{promo['bonus_tokens']} токенов!"
 
-# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
@@ -248,7 +233,6 @@ def admin_kb():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -411,7 +395,6 @@ async def generate_text(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ===== ГЕНЕРАЦИЯ КАРТИНКИ =====
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
@@ -419,11 +402,9 @@ async def generate_image(message: types.Message):
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
-    # Получаем выбранную модель
     model_key = user_model.get(user_id, "flux")
     model_config = IMAGE_MODELS.get(model_key, IMAGE_MODELS["flux"])
     
-    # Проверяем токены
     tokens = get_tokens(user_id)
     if tokens < model_config["price"]:
         trial = get_trial_remaining(user_id)
@@ -447,7 +428,6 @@ async def generate_image(message: types.Message):
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
     
-    # Обновляем статистику модели
     if model_key in model_stats:
         model_stats[model_key] += 1
     
@@ -455,7 +435,6 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерируем промпт
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -466,7 +445,6 @@ async def generate_image(message: types.Message):
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
         
-        # Прогресс
         for p in range(5, 101, 5):
             await asyncio.sleep(0.3)
             try:
@@ -476,9 +454,7 @@ async def generate_image(message: types.Message):
         
         img_data = None
         
-        # === ГЕНЕРАЦИЯ КАРТИНКИ ===
         if model_config["type"] == "openai":
-            # Для Nano Banana используем OpenAI API
             try:
                 params = {
                     'model': model_config["api_model"],
@@ -493,11 +469,10 @@ async def generate_image(message: types.Message):
                     if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
                         img_data = img_data_response.content
             except Exception as e:
-                logger.error(f"Nano Banana ошибка: {e}")
+                logger.error(f"Ошибка: {e}")
                 await status_msg.edit_text(f"❌ Ошибка генерации: {str(e)[:100]}")
                 return
         else:
-            # Для Flux Schnell используем Replicate API
             img_resp = requests.post(
                 "https://bothub.chat/api/v2/replicate/v1/images/generations",
                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -541,7 +516,6 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-# ===== CALLBACK'И ПОЛЬЗОВАТЕЛЕЙ =====
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -801,7 +775,6 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
-# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
