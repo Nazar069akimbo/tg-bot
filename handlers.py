@@ -28,7 +28,7 @@ client = OpenAI(
 # ===== СТАТИСТИКА МОДЕЛЕЙ =====
 model_stats = {
     "flux": 0,
-    "nano_banana": 0
+    "flux_2_max": 0
 }
 
 # ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
@@ -38,8 +38,16 @@ IMAGE_MODELS = {
         "price": 10,
         "api_model": "flux-schnell",
         "type": "replicate",
-        "description": "✅ БЫСТРАЯ И ДЕШЁВАЯ"
+        "description": "Быстрая, базовая"
     },
+    "flux_2_max": {
+        "name": "🔥 Flux-2-Max",
+        "price": 60,
+        "api_model": "flux-2-max",
+        "type": "openai",
+        "description": "⭐ ТОПОВОЕ КАЧЕСТВО"
+    }
+},
     "nano_banana": {
         "name": "🌌 Nano Banana",
         "price": 50,
