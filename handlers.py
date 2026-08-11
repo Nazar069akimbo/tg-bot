@@ -37,7 +37,7 @@ IMAGE_MODELS = {
         "name": "🔥 Flux-2-Max",
         "price": 60,
         "api_model": "flux-2-max",
-        "type": "openai",
+        "type": "replicate",
         "description": "⭐ ТОПОВОЕ КАЧЕСТВО"
     }
 }
@@ -455,6 +455,9 @@ async def generate_image(message: types.Message):
         img_data = None
         
         if model_config["type"] == "openai":
+            # OpenAI модели (пока не используются)
+            await status_msg.edit_text("❌ OpenAI модели временно отключены")
+            return
             try:
                 params = {
                     'model': model_config["api_model"],
