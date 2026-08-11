@@ -8,7 +8,7 @@ import logging, secrets, os, requests, asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-import json
+from openai import OpenAI
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -18,6 +18,12 @@ ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 PROMPT_MODEL = "gpt-4.1-nano"
+
+# Инициализируем OpenAI клиент
+client = OpenAI(
+    api_key=API_KEY,
+    base_url='https://openai.bothub.chat/v1'
+)
 
 # ===== СТАТИСТИКА МОДЕЛЕЙ =====
 model_stats = {
@@ -35,36 +41,42 @@ IMAGE_MODELS = {
         "name": "🖼️ Flux Schnell",
         "price": 10,
         "api_model": "flux-schnell",
+        "type": "replicate",
         "description": "Быстрая, базовая"
     },
     "gpt_4_1_nano": {
         "name": "⚡ GPT-4.1 Nano",
         "price": 10,
         "api_model": "gpt-4.1-nano",
+        "type": "openai",
         "description": "🔥 Массовая генерация"
     },
     "gpt_5_4_mini": {
         "name": "🚀 GPT-5.4 Mini",
-        "price": 15,
+        "price": 12,
         "api_model": "gpt-5.4-mini",
+        "type": "openai",
         "description": "Быстрая и дешёвая"
     },
     "gpt_4_1_mini": {
         "name": "🌟 GPT-4.1 Mini",
-        "price": 20,
+        "price": 15,
         "api_model": "gpt-4.1-mini",
+        "type": "openai",
         "description": "Баланс цены и качества"
     },
     "gpt_4o": {
         "name": "🎨 GPT-4o",
-        "price": 30,
+        "price": 20,
         "api_model": "gpt-4o",
+        "type": "openai",
         "description": "Качество"
     },
     "gpt_5_5": {
         "name": "👑 GPT-5.5",
-        "price": 50,
+        "price": 25,
         "api_model": "gpt-5.5",
+        "type": "openai",
         "description": "Максимальное качество"
     }
 }
@@ -423,6 +435,7 @@ async def generate_text(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
+# ===== ГЕНЕРАЦИЯ КАРТИНКИ =====
 async def generate_image(message: types.Message):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
@@ -466,11 +479,11 @@ async def generate_image(message: types.Message):
     try:
         user_prompt = message.text
         
-        # Генерация промпта
+        # Генерируем промпт
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json={"model": PROMPT_MODEL, "messages": [{"role": "system", "content": "Create detailed English prompt for Flux. Only the prompt!"}, {"role": "user", "content": f"Prompt for: {user_prompt}"}], "max_tokens": 200},
+            json={"model": PROMPT_MODEL, "messages": [{"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"}, {"role": "user", "content": f"Prompt for: {user_prompt}"}], "max_tokens": 200},
             timeout=30
         )
         enhanced = user_prompt
@@ -485,43 +498,74 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
-        # Генерация картинки с выбранной модельой
-        img_resp = requests.post(
-            "https://bothub.chat/api/v2/replicate/v1/images/generations",
-            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json={"model": model_config["api_model"], "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
-            timeout=120
-        )
+        img_data = None
         
-        if img_resp.status_code == 200:
-            result = img_resp.json()
-            img_url = result.get('url')
-            if isinstance(img_url, list):
-                img_url = img_url[0]
-            if img_url:
-                img_data = requests.get(img_url, timeout=30)
-                if img_data.status_code == 200 and len(img_data.content) > 1000:
-                    await status_msg.edit_text("🎨 100% ✅")
-                    await asyncio.sleep(0.2)
-                    
-                    watermarked = add_watermark(img_data.content)
-                    if watermarked:
-                        img_data = watermarked
-                    
-                    spend_tokens(user_id, model_config["price"])
-                    do_backup()
-                    
-                    new_tokens = get_tokens(user_id)
-                    await message.answer_photo(
-                        BufferedInputFile(file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data.content, filename="image.png"),
-                        caption=f"🖼️ **Твоя картинка**\n"
-                                f"📝 {user_prompt[:50]}...\n"
-                                f"🤖 Модель: {model_config['name']}\n"
-                                f"💰 Потрачено: {model_config['price']} токенов\n"
-                                f"🪙 Осталось: {new_tokens} токенов"
-                    )
-                    await status_msg.delete()
-                    return
+        # === ГЕНЕРАЦИЯ КАРТИНКИ ===
+        if model_config["type"] == "openai":
+            # Для GPT-моделей используем OpenAI API
+            try:
+                response = client.chat.completions.create(
+                    model=model_config["api_model"],
+                    messages=[
+                        {"role": "system", "content": "You are an image generator. Generate an image based on the user's description. Return only the image URL."},
+                        {"role": "user", "content": f"Generate an image: {enhanced}"}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+                img_url = response.choices[0].message.content.strip()
+                # Извлекаем URL из ответа
+                import re
+                url_match = re.search(r'https?://[^\s]+', img_url)
+                if url_match:
+                    img_url = url_match.group(0)
+                    img_data_response = requests.get(img_url, timeout=30)
+                    if img_data_response.status_code == 200:
+                        img_data = img_data_response.content
+            except Exception as e:
+                logger.error(f"GPT ошибка: {e}")
+                await status_msg.edit_text(f"❌ Ошибка генерации: {str(e)[:100]}")
+                return
+        else:
+            # Для Flux используем Replicate API
+            img_resp = requests.post(
+                "https://bothub.chat/api/v2/replicate/v1/images/generations",
+                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                json={"model": model_config["api_model"], "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
+                timeout=120
+            )
+            if img_resp.status_code == 200:
+                result = img_resp.json()
+                img_url = result.get('url')
+                if isinstance(img_url, list):
+                    img_url = img_url[0]
+                if img_url:
+                    img_data_response = requests.get(img_url, timeout=30)
+                    if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
+                        img_data = img_data_response.content
+        
+        if img_data:
+            await status_msg.edit_text("🎨 100% ✅")
+            await asyncio.sleep(0.2)
+            
+            watermarked = add_watermark(img_data)
+            if watermarked:
+                img_data = watermarked
+            
+            spend_tokens(user_id, model_config["price"])
+            do_backup()
+            
+            new_tokens = get_tokens(user_id)
+            await message.answer_photo(
+                BufferedInputFile(file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data, filename="image.png"),
+                caption=f"🖼️ **Твоя картинка**\n"
+                        f"📝 {user_prompt[:50]}...\n"
+                        f"🤖 Модель: {model_config['name']}\n"
+                        f"💰 Потрачено: {model_config['price']} токенов\n"
+                        f"🪙 Осталось: {new_tokens} токенов"
+            )
+            await status_msg.delete()
+            return
         
         await status_msg.edit_text("❌ Не удалось получить картинку")
     except Exception as e:
@@ -817,7 +861,6 @@ async def a_model_stats_cb(callback: types.CallbackQuery):
     text = "📈 **СТАТИСТИКА МОДЕЛЕЙ**\n\n"
     text += f"Всего генераций: {total}\n\n"
     
-    # Сортируем по популярности
     sorted_stats = sorted(model_stats.items(), key=lambda x: x[1], reverse=True)
     
     for key, count in sorted_stats:
