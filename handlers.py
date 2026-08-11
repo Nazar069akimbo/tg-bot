@@ -4,7 +4,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 from database.db import *
 from ai.client import solve_problem
 from backup import GitHubBackup
-import logging, secrets, os, requests, asyncio
+import logging, secrets, os, requests, asyncio, json
 from datetime import datetime, timedelta
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -28,11 +28,7 @@ client = OpenAI(
 # ===== СТАТИСТИКА МОДЕЛЕЙ =====
 model_stats = {
     "flux": 0,
-    "gpt_4_1_nano": 0,
-    "gpt_5_4_mini": 0,
-    "gpt_4_1_mini": 0,
-    "gpt_4o": 0,
-    "gpt_5_5": 0
+    "nano_banana": 0
 }
 
 # ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
@@ -42,42 +38,14 @@ IMAGE_MODELS = {
         "price": 10,
         "api_model": "flux-schnell",
         "type": "replicate",
-        "description": "Быстрая, базовая"
+        "description": "✅ БЫСТРАЯ И ДЕШЁВАЯ"
     },
-    "gpt_4_1_nano": {
-        "name": "⚡ GPT-4.1 Nano",
-        "price": 10,
-        "api_model": "gpt-4.1-nano",
+    "nano_banana": {
+        "name": "🌌 Nano Banana",
+        "price": 50,
+        "api_model": "nano-banana",
         "type": "openai",
-        "description": "🔥 Массовая генерация"
-    },
-    "gpt_5_4_mini": {
-        "name": "🚀 GPT-5.4 Mini",
-        "price": 12,
-        "api_model": "gpt-5.4-mini",
-        "type": "openai",
-        "description": "Быстрая и дешёвая"
-    },
-    "gpt_4_1_mini": {
-        "name": "🌟 GPT-4.1 Mini",
-        "price": 15,
-        "api_model": "gpt-4.1-mini",
-        "type": "openai",
-        "description": "Баланс цены и качества"
-    },
-    "gpt_4o": {
-        "name": "🎨 GPT-4o",
-        "price": 20,
-        "api_model": "gpt-4o",
-        "type": "openai",
-        "description": "Качество"
-    },
-    "gpt_5_5": {
-        "name": "👑 GPT-5.5",
-        "price": 25,
-        "api_model": "gpt-5.5",
-        "type": "openai",
-        "description": "Максимальное качество"
+        "description": "⭐ КАЧЕСТВО 4K (Google)"
     }
 }
 
@@ -502,32 +470,26 @@ async def generate_image(message: types.Message):
         
         # === ГЕНЕРАЦИЯ КАРТИНКИ ===
         if model_config["type"] == "openai":
-            # Для GPT-моделей используем OpenAI API
+            # Для Nano Banana используем OpenAI API
             try:
-                response = client.chat.completions.create(
-                    model=model_config["api_model"],
-                    messages=[
-                        {"role": "system", "content": "You are an image generator. Generate an image based on the user's description. Return only the image URL."},
-                        {"role": "user", "content": f"Generate an image: {enhanced}"}
-                    ],
-                    max_tokens=1000,
-                    temperature=0.7
-                )
-                img_url = response.choices[0].message.content.strip()
-                # Извлекаем URL из ответа
-                import re
-                url_match = re.search(r'https?://[^\s]+', img_url)
-                if url_match:
-                    img_url = url_match.group(0)
-                    img_data_response = requests.get(img_url, timeout=30)
-                    if img_data_response.status_code == 200:
+                params = {
+                    'model': model_config["api_model"],
+                    'prompt': enhanced,
+                    'n': 1,
+                    'size': '1024x1024',
+                }
+                req = client.images.generate(**params)
+                image_url = json.loads(req.model_dump_json())['data'][0]['url']
+                if image_url:
+                    img_data_response = requests.get(image_url, timeout=30)
+                    if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
                         img_data = img_data_response.content
             except Exception as e:
-                logger.error(f"GPT ошибка: {e}")
+                logger.error(f"Nano Banana ошибка: {e}")
                 await status_msg.edit_text(f"❌ Ошибка генерации: {str(e)[:100]}")
                 return
         else:
-            # Для Flux используем Replicate API
+            # Для Flux Schnell используем Replicate API
             img_resp = requests.post(
                 "https://bothub.chat/api/v2/replicate/v1/images/generations",
                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
