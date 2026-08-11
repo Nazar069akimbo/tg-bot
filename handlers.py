@@ -8,6 +8,7 @@ import logging, secrets, os, requests, asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
+import json
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -16,8 +17,62 @@ user_pages = {}
 ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
-IMAGE_MODEL = "flux-schnell"
 PROMPT_MODEL = "gpt-4.1-nano"
+
+# ===== СТАТИСТИКА МОДЕЛЕЙ =====
+model_stats = {
+    "flux": 0,
+    "gpt_4_1_nano": 0,
+    "gpt_5_4_mini": 0,
+    "gpt_4_1_mini": 0,
+    "gpt_4o": 0,
+    "gpt_5_5": 0
+}
+
+# ===== МОДЕЛИ ДЛЯ ГЕНЕРАЦИИ КАРТИНОК =====
+IMAGE_MODELS = {
+    "flux": {
+        "name": "🖼️ Flux Schnell",
+        "price": 10,
+        "api_model": "flux-schnell",
+        "description": "Быстрая, базовая"
+    },
+    "gpt_4_1_nano": {
+        "name": "⚡ GPT-4.1 Nano",
+        "price": 10,
+        "api_model": "gpt-4.1-nano",
+        "description": "🔥 Массовая генерация"
+    },
+    "gpt_5_4_mini": {
+        "name": "🚀 GPT-5.4 Mini",
+        "price": 15,
+        "api_model": "gpt-5.4-mini",
+        "description": "Быстрая и дешёвая"
+    },
+    "gpt_4_1_mini": {
+        "name": "🌟 GPT-4.1 Mini",
+        "price": 20,
+        "api_model": "gpt-4.1-mini",
+        "description": "Баланс цены и качества"
+    },
+    "gpt_4o": {
+        "name": "🎨 GPT-4o",
+        "price": 30,
+        "api_model": "gpt-4o",
+        "description": "Качество"
+    },
+    "gpt_5_5": {
+        "name": "👑 GPT-5.5",
+        "price": 50,
+        "api_model": "gpt-5.5",
+        "description": "Максимальное качество"
+    }
+}
+
+user_model = {}  # user_id → выбранная модель
+
+def get_model_stats():
+    return model_stats
 
 # ===== ФУНКЦИИ ТОКЕНОВ =====
 def get_tokens(user_id):
@@ -184,9 +239,11 @@ def use_promocode(code, user_id):
             cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         return True, f"✅ Промокод активирован! +{promo['bonus_tokens']} токенов!"
 
+# ===== МЕНЮ =====
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
+        [InlineKeyboardButton(text="🎨 Выбрать модель", callback_data="select_model")],
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"), InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"), InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin")],
@@ -195,14 +252,15 @@ def main_menu():
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
-        [InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens"), InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
-        [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"), InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
-        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"), InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
-        [InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 Модели", callback_data="a_model_stats")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
+        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
+        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"), InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
+# ===== КОМАНДЫ =====
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -284,7 +342,8 @@ async def help_cmd(message: types.Message):
     text = (
         "❓ **Помощь**\n\n"
         "🧠 Текст — просто напиши вопрос (10/день)\n"
-        "🖼️ Картинка — 10 токенов\n"
+        "🖼️ Картинка — от 10 токенов (выбери модель)\n"
+        "🎨 Выбрать модель — измени модель для картинок\n"
         "✨ Купить токены — пополнить баланс\n"
         "📊 Баланс — проверить токены\n"
         "🎁 Промокод — активировать бонус\n"
@@ -371,22 +430,27 @@ async def generate_image(message: types.Message):
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
     
+    # Получаем выбранную модель
+    model_key = user_model.get(user_id, "flux")
+    model_config = IMAGE_MODELS.get(model_key, IMAGE_MODELS["flux"])
+    
+    # Проверяем токены
     tokens = get_tokens(user_id)
-    if tokens < 10:
+    if tokens < model_config["price"]:
         trial = get_trial_remaining(user_id)
         if trial > 0:
             await message.answer(
                 f"⚠️ У тебя осталось {tokens} токенов.\n"
                 f"🎁 Пробный период: {trial} дней\n"
-                f"Пополни баланс или используй пробные токены.",
+                f"Для этой модели нужно {model_config['price']} токенов.",
                 reply_markup=main_menu()
             )
             return
         await message.answer(
-            "❌ Недостаточно токенов!\n"
-            f"Нужно: 10 токенов\n"
+            f"❌ Недостаточно токенов!\n"
+            f"Нужно: {model_config['price']} токенов\n"
             f"У тебя: {tokens}\n\n"
-            "✨ Купи токены или активируй промокод.",
+            "✨ Купи токены или выбери более дешёвую модель.",
             reply_markup=main_menu()
         )
         return
@@ -394,10 +458,15 @@ async def generate_image(message: types.Message):
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
     
-    status_msg = await message.answer("🎨 Генерирую картинку...")
+    # Обновляем статистику модели
+    if model_key in model_stats:
+        model_stats[model_key] += 1
+    
+    status_msg = await message.answer(f"🎨 Генерирую картинку ({model_config['name']})...")
     try:
         user_prompt = message.text
         
+        # Генерация промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -408,6 +477,7 @@ async def generate_image(message: types.Message):
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
         
+        # Прогресс
         for p in range(5, 101, 5):
             await asyncio.sleep(0.3)
             try:
@@ -415,10 +485,11 @@ async def generate_image(message: types.Message):
             except:
                 pass
         
+        # Генерация картинки с выбранной модельой
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json={"model": IMAGE_MODEL, "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
+            json={"model": model_config["api_model"], "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"}, "bothub": {"include_usage": True, "return_base64": False}},
             timeout=120
         )
         
@@ -437,13 +508,17 @@ async def generate_image(message: types.Message):
                     if watermarked:
                         img_data = watermarked
                     
-                    spend_tokens(user_id, 10)
+                    spend_tokens(user_id, model_config["price"])
                     do_backup()
                     
                     new_tokens = get_tokens(user_id)
                     await message.answer_photo(
                         BufferedInputFile(file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data.content, filename="image.png"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {user_prompt[:50]}...\n\n💰 Осталось токенов: {new_tokens}\n🖼️ Ещё картинок: {new_tokens // 10}"
+                        caption=f"🖼️ **Твоя картинка**\n"
+                                f"📝 {user_prompt[:50]}...\n"
+                                f"🤖 Модель: {model_config['name']}\n"
+                                f"💰 Потрачено: {model_config['price']} токенов\n"
+                                f"🪙 Осталось: {new_tokens} токенов"
                     )
                     await status_msg.delete()
                     return
@@ -452,6 +527,7 @@ async def generate_image(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
+# ===== CALLBACK'И ПОЛЬЗОВАТЕЛЕЙ =====
 @router.callback_query(F.data.in_(["mode_text", "mode_image"]))
 async def set_mode(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -466,26 +542,57 @@ async def set_mode(callback: types.CallbackQuery):
         reply_markup=main_menu()
     )
 
+@router.callback_query(F.data == "select_model")
+async def select_model_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    force_create_user(user_id, callback.from_user.username or "")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for key, model in IMAGE_MODELS.items():
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{model['name']} — {model['price']} токенов",
+                callback_data=f"model_{key}"
+            )
+        ])
+    kb.inline_keyboard.append([
+        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")
+    ])
+    
+    text = "🧠 **Выбери модель для генерации картинок:**\n\n"
+    for key, model in IMAGE_MODELS.items():
+        text += f"{model['name']} — {model['price']} токенов\n"
+        text += f"   {model['description']}\n\n"
+    text += "Выбери модель ниже 👇"
+    
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("model_"))
+async def set_model_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    model_key = callback.data.replace("model_", "")
+    
+    if model_key not in IMAGE_MODELS:
+        await callback.answer("❌ Модель не найдена", show_alert=True)
+        return
+    
+    user_model[user_id] = model_key
+    model = IMAGE_MODELS[model_key]
+    
+    await callback.answer(f"✅ Выбрана модель: {model['name']}", show_alert=True)
+    await callback.message.edit_text(
+        f"✅ **Выбрана модель:** {model['name']}\n"
+        f"💰 Стоимость: {model['price']} токенов за картинку\n"
+        f"📝 {model['description']}\n\n"
+        "Теперь все картинки будут генерироваться через эту модель.\n"
+        "Напиши описание и получи результат!",
+        reply_markup=main_menu()
+    )
+
 @router.callback_query(F.data == "balance")
 async def balance_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = force_create_user(user_id, callback.from_user.username or "")
-    if not user:
-        await callback.answer("❌ Ошибка!", show_alert=True)
-        return
-    tokens = get_tokens(user_id)
-    used, max_req = get_text_requests(user_id)
-    trial = get_trial_remaining(user_id)
-    text = f"💰 **Баланс**\n\n"
-    text += f"🪙 Токенов: {tokens}\n"
-    text += f"🖼️ Хватит на: {tokens // 10} картинок\n"
-    text += f"📝 Текст: {used}/{max_req} запросов сегодня\n"
-    if trial > 0:
-        text += f"🎁 Пробный период: {trial} дней\n"
-    try:
-        await callback.message.edit_text(text, reply_markup=main_menu())
-    except:
-        await callback.message.answer(text, reply_markup=main_menu())
+    await balance_cmd(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data == "profile")
@@ -680,6 +787,7 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await callback.answer("⛔ Нет доступа", show_alert=True)
 
+# ===== АДМИН-ОБРАБОТЧИКИ =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -698,6 +806,32 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"🖼️ Картинок: {images}",
         reply_markup=admin_kb()
     )
+    await callback.answer()
+
+@router.callback_query(F.data == "a_model_stats")
+async def a_model_stats_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    
+    total = sum(model_stats.values())
+    text = "📈 **СТАТИСТИКА МОДЕЛЕЙ**\n\n"
+    text += f"Всего генераций: {total}\n\n"
+    
+    # Сортируем по популярности
+    sorted_stats = sorted(model_stats.items(), key=lambda x: x[1], reverse=True)
+    
+    for key, count in sorted_stats:
+        if count > 0:
+            model = IMAGE_MODELS[key]
+            percent = round(count / total * 100, 1) if total > 0 else 0
+            text += f"{model['name']}\n"
+            text += f"   🔹 {count} генераций ({percent}%)\n\n"
+    
+    if total == 0:
+        text += "❌ Пока нет статистики.\n"
+        text += "Пользователи ещё не генерировали картинки."
+    
+    await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
 @router.callback_query(F.data == "a_users")
@@ -819,6 +953,123 @@ async def a_backup_cb(callback: types.CallbackQuery):
     await callback.message.edit_text("✅ Бэкап создан!" if result else "❌ Ошибка", reply_markup=admin_kb())
     await callback.answer()
 
+@router.callback_query(F.data == "a_export_db")
+async def export_db_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    import os
+    db_path = "data/repsolver.db"
+    if not os.path.exists(db_path):
+        await callback.message.edit_text("❌ Файл базы данных не найден!", reply_markup=admin_kb())
+        await callback.answer()
+        return
+    try:
+        await callback.message.delete()
+        await callback.message.answer_document(
+            BufferedInputFile(open(db_path, "rb").read(), filename="repsolver.db"),
+            caption="📁 **База данных**\n\nСкачана в формате SQLite",
+            reply_markup=admin_kb()
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {str(e)[:100]}", reply_markup=admin_kb())
+    await callback.answer()
+
+def get_backup_list():
+    import requests
+    token = os.getenv('GITHUB_TOKEN')
+    repo = os.getenv('GITHUB_BACKUP_REPO')
+    if not token or not repo:
+        return []
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    url = f'https://api.github.com/repos/{repo}/contents/backups'
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        return []
+    files = [f for f in resp.json() if f['name'].endswith('.db')]
+    files.sort(key=lambda x: x['name'], reverse=True)
+    return files
+
+def restore_backup_from_github(filename):
+    import requests
+    import os
+    token = os.getenv('GITHUB_TOKEN')
+    repo = os.getenv('GITHUB_BACKUP_REPO')
+    if not token or not repo:
+        return False
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    url = f'https://api.github.com/repos/{repo}/contents/backups/{filename}'
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        return False
+    file_url = resp.json()['download_url']
+    resp = requests.get(file_url)
+    if resp.status_code != 200:
+        return False
+    os.makedirs('data', exist_ok=True)
+    with open('data/repsolver.db', 'wb') as f:
+        f.write(resp.content)
+    return True
+
+@router.callback_query(F.data == "a_restore_github")
+async def restore_github_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    files = get_backup_list()
+    if not files:
+        await callback.message.edit_text(
+            "❌ Нет бэкапов на GitHub!\n\n"
+            "Сначала создайте бэкап в админке (кнопка 💾 Бэкап).",
+            reply_markup=admin_kb()
+        )
+        await callback.answer()
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for f in files[:20]:
+        name = f['name']
+        size_kb = round(f['size'] / 1024, 1)
+        label = f"📄 {name[:20]}... ({size_kb} KB)" if len(name) > 20 else f"📄 {name} ({size_kb} KB)"
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=label, callback_data=f"restore_backup_{name}")
+        ])
+    kb.inline_keyboard.append([
+        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")
+    ])
+    await callback.message.edit_text(
+        "📥 **Восстановление из GitHub**\n\n"
+        "Выберите бэкап для восстановления:\n"
+        f"📦 Всего: {len(files)} бэкапов",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("restore_backup_"))
+async def restore_backup_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔ Нет доступа")
+    filename = callback.data.replace("restore_backup_", "")
+    await callback.message.edit_text(
+        f"⏳ Восстанавливаю бэкап: `{filename}`...",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Отмена", callback_data="a_restore_github")]
+        ])
+    )
+    success = restore_backup_from_github(filename)
+    if success:
+        await callback.message.edit_text(
+            f"✅ **Бэкап восстановлен!**\n\n"
+            f"📄 Файл: `{filename}`\n"
+            f"🔄 Бот перезапущен.",
+            reply_markup=admin_kb()
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ **Ошибка восстановления!**\n\n"
+            f"📄 Файл: `{filename}`\n"
+            f"Попробуйте другой бэкап.",
+            reply_markup=admin_kb()
+        )
+    await callback.answer()
+
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
@@ -898,215 +1149,3 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
-
-@router.callback_query(F.data == "a_export_db")
-async def export_db_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    import os
-    db_path = "data/repsolver.db"
-    if not os.path.exists(db_path):
-        await callback.message.edit_text("❌ Файл базы данных не найден!", reply_markup=admin_kb())
-        await callback.answer()
-        return
-    
-    try:
-        await callback.message.delete()
-        await callback.message.answer_document(
-            BufferedInputFile(open(db_path, "rb").read(), filename="repsolver.db"),
-            caption="📁 **База данных**\n\nСкачана в формате SQLite",
-            reply_markup=admin_kb()
-        )
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)[:100]}", reply_markup=admin_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "a_restore_db")
-async def restore_db_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    await callback.message.edit_text(
-        "📥 **Восстановление БД**\n\n"
-        "Пришлите **файл .db** или **.sqlite** в ответ на это сообщение.\n\n"
-        "⚠️ Восстановление заменит текущую базу данных!\n"
-        "Рекомендую сначала сделать бэкап.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-        ])
-    )
-    await callback.answer()
-
-@router.message(F.document)
-async def restore_db_file(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return await message.answer("⛔ Нет доступа")
-    
-    # Проверяем, что пользователь находится в режиме восстановления
-    if user_pages.get(message.from_user.id, {}).get("state") != "waiting_restore_db":
-        return
-    
-    doc = message.document
-    if not doc.file_name.endswith(('.db', '.sqlite')):
-        return await message.answer("❌ Пожалуйста, отправьте файл .db или .sqlite")
-    
-    await message.answer("⏳ Восстанавливаю базу данных...")
-    
-    try:
-        # Скачиваем файл
-        file = await message.bot.get_file(doc.file_id)
-        file_content = await message.bot.download_file(file.file_path)
-        
-        # Сохраняем в data/repsolver.db
-        import os
-        os.makedirs("data", exist_ok=True)
-        with open("data/repsolver.db", "wb") as f:
-            f.write(file_content.read())
-        
-        # Проверяем, что БД валидна
-        import sqlite3
-        conn = sqlite3.connect("data/repsolver.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-        if not cursor.fetchone():
-            conn.close()
-            return await message.answer("❌ Невалидная база данных: таблица users не найдена")
-        conn.close()
-        
-        await message.answer("✅ База данных успешно восстановлена!", reply_markup=admin_kb())
-        user_pages.pop(message.from_user.id, None)
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка восстановления: {str(e)[:100]}", reply_markup=admin_kb())
-
-def get_backup_list():
-    """Получить список бэкапов из GitHub"""
-    import requests
-    token = os.getenv('GITHUB_TOKEN')
-    repo = os.getenv('GITHUB_BACKUP_REPO')
-    if not token or not repo:
-        return []
-    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-    url = f'https://api.github.com/repos/{repo}/contents/backups'
-    resp = requests.get(url, headers=headers)
-    if resp.status_code != 200:
-        return []
-    files = [f for f in resp.json() if f['name'].endswith('.db')]
-    files.sort(key=lambda x: x['name'], reverse=True)
-    return files
-
-def restore_backup_from_github(filename):
-    """Восстановить бэкап из GitHub по имени файла"""
-    import requests
-    import os
-    token = os.getenv('GITHUB_TOKEN')
-    repo = os.getenv('GITHUB_BACKUP_REPO')
-    if not token or not repo:
-        return False
-    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-    url = f'https://api.github.com/repos/{repo}/contents/backups/{filename}'
-    resp = requests.get(url, headers=headers)
-    if resp.status_code != 200:
-        return False
-    file_url = resp.json()['download_url']
-    resp = requests.get(file_url)
-    if resp.status_code != 200:
-        return False
-    os.makedirs('data', exist_ok=True)
-    with open('data/repsolver.db', 'wb') as f:
-        f.write(resp.content)
-    return True
-
-@router.callback_query(F.data == "a_export_db")
-async def export_db_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    import os
-    db_path = "data/repsolver.db"
-    if not os.path.exists(db_path):
-        await callback.message.edit_text("❌ Файл базы данных не найден!", reply_markup=admin_kb())
-        await callback.answer()
-        return
-    
-    try:
-        await callback.message.delete()
-        await callback.message.answer_document(
-            BufferedInputFile(open(db_path, "rb").read(), filename="repsolver.db"),
-            caption="📁 **База данных**\n\nСкачана в формате SQLite",
-            reply_markup=admin_kb()
-        )
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)[:100]}", reply_markup=admin_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "a_restore_github")
-async def restore_github_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    files = get_backup_list()
-    if not files:
-        await callback.message.edit_text(
-            "❌ Нет бэкапов на GitHub!\n\n"
-            "Сначала создайте бэкап в админке (кнопка 💾 Бэкап).",
-            reply_markup=admin_kb()
-        )
-        await callback.answer()
-        return
-    
-    # Создаём клавиатуру со списком бэкапов
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
-    for f in files[:20]:  # показываем максимум 20 бэкапов
-        # Форматируем дату из имени файла
-        name = f['name']
-        size_kb = round(f['size'] / 1024, 1)
-        label = f"📄 {name[:20]}... ({size_kb} KB)" if len(name) > 20 else f"📄 {name} ({size_kb} KB)"
-        kb.inline_keyboard.append([
-            InlineKeyboardButton(text=label, callback_data=f"restore_backup_{name}")
-        ])
-    
-    kb.inline_keyboard.append([
-        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")
-    ])
-    
-    await callback.message.edit_text(
-        "📥 **Восстановление из GitHub**\n\n"
-        "Выберите бэкап для восстановления:\n"
-        f"📦 Всего: {len(files)} бэкапов",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("restore_backup_"))
-async def restore_backup_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
-    
-    filename = callback.data.replace("restore_backup_", "")
-    
-    await callback.message.edit_text(
-        f"⏳ Восстанавливаю бэкап: `{filename}`...",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data="a_restore_github")]
-        ])
-    )
-    
-    success = restore_backup_from_github(filename)
-    
-    if success:
-        await callback.message.edit_text(
-            f"✅ **Бэкап восстановлен!**\n\n"
-            f"📄 Файл: `{filename}`\n"
-            f"🔄 Бот перезапущен.",
-            reply_markup=admin_kb()
-        )
-    else:
-        await callback.message.edit_text(
-            f"❌ **Ошибка восстановления!**\n\n"
-            f"📄 Файл: `{filename}`\n"
-            f"Попробуйте другой бэкап.",
-            reply_markup=admin_kb()
-        )
-    await callback.answer()
