@@ -50,6 +50,7 @@ client = OpenAI(
     base_url='https://openai.bothub.chat/v1'
 )
 
+
 # ============================================================================
 # =========================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
 # ============================================================================
@@ -112,7 +113,7 @@ def is_admin(user_id):
 def add_admin(user_id):
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
                       (user_id, datetime.now().isoformat()))
 
 def do_backup():
@@ -134,6 +135,63 @@ def force_create_user(user_id, username=None):
     except:
         return None
 
+def detect_edit_type(text):
+    text_lower = text.lower()
+    if any(w in text_lower for w in ['цвет', 'чёрн', 'бел', 'красн', 'син', 'зелён', 'жёлт', 'оранж', 'фиолет', 'розов', 'голуб']):
+        return 'color'
+    elif any(w in text_lower for w in ['добав', 'нарису', 'постав']):
+        return 'add'
+    elif any(w in text_lower for w in ['убери', 'удал', 'убр', 'убрат']):
+        return 'remove'
+    elif any(w in text_lower for w in ['фон', 'задн', 'обои']):
+        return 'background'
+    elif any(w in text_lower for w in ['стиль', 'в стиле', 'как']):
+        return 'style'
+    else:
+        return 'general'
+
+def build_edit_prompt(base_prompt, edit_text):
+    edit_type = detect_edit_type(edit_text)
+    if edit_type == 'color':
+        return f"{base_prompt}, {edit_text}"
+    elif edit_type == 'add':
+        return f"{base_prompt}, {edit_text}"
+    elif edit_type == 'remove':
+        cleaned = edit_text.replace('убери', '').replace('удал', '').strip()
+        return f"{base_prompt}, без {cleaned}"
+    elif edit_type == 'background':
+        cleaned = edit_text.replace('сделай фон', '').replace('фон', '').strip()
+        return f"{base_prompt}, фон {cleaned}"
+    else:
+        return f"{base_prompt}, {edit_text}"
+
+def get_edit_version(user_id, session_id):
+    chain = get_image_chain_by_session(user_id, session_id)
+    return len(chain)
+
+def get_trial_remaining_text(user_id):
+    days = get_trial_remaining(user_id)
+    if days == 0:
+        return "закончился"
+    elif days == 1:
+        return "1 день"
+    elif days <= 4:
+        return f"{days} дня"
+    else:
+        return f"{days} дней"
+
+def get_user_name(user_id):
+    memory = get_user_memory(user_id)
+    if memory and memory.get('name'):
+        return memory['name']
+    return None
+
+def get_user_style(user_id):
+    memory = get_user_memory(user_id)
+    if memory and memory.get('favorite_style'):
+        return memory['favorite_style']
+    return "Не выбран"
+
 
 # ============================================================================
 # ================================ КЛАВИАТУРЫ ================================
@@ -141,37 +199,36 @@ def force_create_user(user_id, username=None):
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), 
+        [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"),
          InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
         [InlineKeyboardButton(text="🎨 Выбрать модель", callback_data="select_model")],
-        [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"), 
+        [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
-        [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"), 
+        [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), 
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin")],
-        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"), 
+        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"),
          InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
     ])
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), 
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
          InlineKeyboardButton(text="📈 Модели", callback_data="a_model_stats")],
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), 
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
          InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), 
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
          InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), 
+        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
          InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
-        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"), 
+        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
          InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
-        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"), 
+        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 def image_action_buttons(image_id, session_id):
-    """Кнопки для управления картинкой (с правками)"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}"),
@@ -185,7 +242,6 @@ def image_action_buttons(image_id, session_id):
     ])
 
 def edit_in_progress_kb():
-    """Клавиатура во время режима правки"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏹ Отменить правку", callback_data="cancel_edit")]
     ])
@@ -203,15 +259,22 @@ async def start_cmd(message: types.Message):
     if not user:
         await message.answer("❌ Ошибка регистрации.")
         return
-    
-    # Запоминаем имя если его нет
+
     memory = get_user_memory(user_id)
     if not memory or not memory.get('name'):
         user_pages[user_id] = {"state": "waiting_name"}
-        await message.answer("👋 Привет! Как мне тебя называть?\nНапиши своё имя:")
+        await message.answer(
+            "👋 Привет! Я — **Vertex AI** — твой личный ассистент с памятью.\n\n"
+            "✨ Я умею:\n"
+            "• 🖼️ Создавать картинки\n"
+            "• 🧠 Отвечать на вопросы\n"
+            "• ✏️ Редактировать картинки по шагам\n"
+            "• 🧠 Запоминать твои предпочтения\n\n"
+            "Как мне тебя называть?\n"
+            "Напиши своё имя:"
+        )
         return
-    
-    # Реферальная ссылка
+
     args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
@@ -219,28 +282,28 @@ async def start_cmd(message: types.Message):
             success, msg = add_referral(referrer_id, user_id)
             if success:
                 await message.answer(msg)
-    
-    # Триал
+
     if not has_trial(user_id) and get_tokens(user_id) == 0:
         activate_trial(user_id)
         trial_text = "🎁 Тебе подарок! 20 токенов (2 картинки) бесплатно на 3 дня!"
     else:
         trial_text = ""
-    
+
     tokens = get_tokens(user_id)
     used, max_req = get_text_requests(user_id)
-    
-    # Приветствие с именем
-    name = memory.get('name', 'друг')
+    name = get_user_name(user_id) or "друг"
+    style = get_user_style(user_id)
+
     text = (
-        f"🤖 **Vertex AI**\n\n"
+        f"✨ **Vertex AI**\n\n"
         f"👋 Привет, {name}!\n"
+        f"🎨 Твой стиль: {style}\n\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ 10 токенов = 1 картинка\n"
+        f"✏️ 5 токенов = 1 правка\n"
         f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
-        f"✨ Покупай токены или просто напиши вопрос!\n"
         f"{trial_text}\n\n"
-        f"📌 Нажми «Текст» или «Картинка»!"
+        f"💬 Напиши вопрос или выбери режим ниже:"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -253,13 +316,15 @@ async def balance_cmd(message: types.Message):
         return
     tokens = get_tokens(user_id)
     used, max_req = get_text_requests(user_id)
-    trial = get_trial_remaining(user_id)
-    text = f"💰 **Баланс**\n\n"
-    text += f"🪙 Токенов: {tokens}\n"
-    text += f"🖼️ Хватит на: {tokens // 10} картинок\n"
-    text += f"📝 Текст: {used}/{max_req} запросов сегодня\n"
-    if trial > 0:
-        text += f"🎁 Пробный период: {trial} дней\n"
+    trial = get_trial_remaining_text(user_id)
+    text = (
+        f"💰 **Баланс**\n\n"
+        f"🪙 Токенов: {tokens}\n"
+        f"🖼️ Хватит на: {tokens // 10} картинок\n"
+        f"✏️ Хватит на: {tokens // 5} правок\n"
+        f"📝 Текст: {used}/{max_req} запросов сегодня\n"
+        f"🎁 Пробный период: {trial}"
+    )
     await message.answer(text, reply_markup=main_menu())
 
 @router.message(Command("profile"))
@@ -269,19 +334,22 @@ async def profile_cmd(message: types.Message):
     if not user:
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
-    
+
     tokens = get_tokens(user_id)
+    name = get_user_name(user_id) or "Не указано"
+    style = get_user_style(user_id)
     memory = get_user_memory(user_id)
-    name = memory.get('name', 'Без имени') if memory else 'Без имени'
-    style = memory.get('favorite_style', 'Не указан') if memory else 'Не указан'
-    
+    context_count = len(json.loads(memory.get('context_history', '[]'))) if memory else 0
+
     text = (
         f"👤 **Мой профиль**\n\n"
         f"🆔 ID: {user_id}\n"
         f"👤 Имя: {name}\n"
         f"🎨 Любимый стиль: {style}\n"
+        f"📝 История: {context_count} запросов\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ Картинок: {tokens // 10}\n"
+        f"✏️ Правок: {tokens // 5}"
     )
     await message.answer(text, reply_markup=main_menu())
 
@@ -301,9 +369,20 @@ async def help_cmd(message: types.Message):
         "/start — меню\n"
         "/balance — баланс\n"
         "/profile — профиль\n"
-        "/help — помощь"
+        "/help — помощь\n"
+        "/clear — очистить память"
     )
     await message.answer(text, reply_markup=main_menu())
+
+@router.message(Command("clear"))
+async def clear_memory_cmd(message: types.Message):
+    user_id = message.from_user.id
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_memory WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM images_history WHERE user_id = ?", (user_id,))
+    init_user_memory(user_id)
+    await message.answer("🧹 Память очищена! Я ничего не помню о тебе.", reply_markup=main_menu())
 
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
@@ -333,38 +412,33 @@ async def cancel_cmd(message: types.Message):
 async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
-    
+
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
-    
-    # === СОСТОЯНИЕ: ОЖИДАНИЕ ИМЕНИ ===
+
     if state.get("state") == "waiting_name":
         name = message.text.strip()
         set_user_name(user_id, name)
         user_pages.pop(user_id, None)
-        await message.answer(f"✅ Отлично, {name}! Теперь я запомнил тебя.")
+        await message.answer(f"✅ Отлично, {name}! Я запомнил тебя.")
         await start_cmd(message)
         return
-    
-    # === СОСТОЯНИЕ: ОЖИДАНИЕ ПРОМОКОДА ===
+
     if state.get("state") == "waiting_promo_use":
         success, msg = use_promocode(message.text.upper(), user_id)
         await message.answer(msg, reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
-    
-    # === СОСТОЯНИЕ: АДМИНСКИЕ ДЕЙСТВИЯ ===
-    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact", 
+
+    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price"]:
         await handle_admin_input(message)
         return
-    
-    # === ✏️ СОСТОЯНИЕ: РЕДАКТИРОВАНИЕ КАРТИНКИ (НОВОЕ!) ===
+
     if state.get("state") == "waiting_edit":
         await handle_edit(message)
         return
-    
-    # === ОБЫЧНЫЙ РЕЖИМ ===
+
     mode = user_modes.get(user_id, "text")
     if mode == "image":
         await generate_image(message)
@@ -381,17 +455,31 @@ async def generate_text(message: types.Message):
     if not can_request_text(user_id):
         await message.answer("🔒 Лимит текстовых запросов исчерпан! Завтра будет новый день.", reply_markup=main_menu())
         return
-    
+
     status_msg = await message.answer("🤔 Думаю...")
     try:
-        answer = solve_problem(message.text, "chat", False)
+        # Получаем контекстную память
+        memory = get_user_memory(user_id)
+        context = []
+        if memory and memory.get('context_history'):
+            try:
+                history = json.loads(memory['context_history'])
+                context = [h['prompt'] for h in history[-5:]]  # Последние 5 запросов
+            except:
+                pass
+
+        # Строим промпт с контекстом
+        full_prompt = message.text
+        if context:
+            full_prompt = f"Контекст: {' | '.join(context)}\nВопрос: {message.text}"
+
+        answer = solve_problem(full_prompt, "chat", False)
         add_text_request(user_id)
         do_backup()
         used, max_req = get_text_requests(user_id)
-        
-        # Добавляем в контекстную память
+
         add_to_context(user_id, message.text)
-        
+
         await status_msg.edit_text(f"🧠 {answer}\n\n📝 Осталось запросов: {max_req - used}/{max_req}")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
@@ -407,13 +495,12 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
     if not user:
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
-    
+
     model_key = user_model.get(user_id, "flux")
     model_config = IMAGE_MODELS.get(model_key, IMAGE_MODELS["flux"])
-    
-    # Цена: если правка — 5 токенов, если обычная — полная
-    price = model_config["price"] if not is_edit else max(5, model_config["price"] // 2)
-    
+
+    price = model_config["price"] if not is_edit else 5
+
     tokens = get_tokens(user_id)
     if tokens < price:
         trial = get_trial_remaining(user_id)
@@ -421,7 +508,7 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
             await message.answer(
                 f"⚠️ У тебя осталось {tokens} токенов.\n"
                 f"🎁 Пробный период: {trial} дней\n"
-                f"Для этого действия нужно {price} токенов.",
+                f"Нужно: {price} токенов.",
                 reply_markup=main_menu()
             )
             return
@@ -433,34 +520,38 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
             reply_markup=main_menu()
         )
         return
-    
+
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
-    
+
     if model_key in model_stats:
         model_stats[model_key] += 1
-    
+
     status_msg = await message.answer(f"🎨 {'Редактирую' if is_edit else 'Генерирую'} картинку ({model_config['name']})...")
-    
+
     try:
         user_prompt = message.text
-        
-        # Если правка — используем контекст
+
         if is_edit and edit_context:
-            full_prompt = edit_context
+            full_prompt = edit_context.get('full_prompt', user_prompt)
         else:
             full_prompt = user_prompt
-        
-        # Улучшаем промпт через нейросеть
+
+        # Улучшаем промпт с учётом памяти
+        memory = get_user_memory(user_id)
+        style = memory.get('favorite_style') if memory else None
+        if style and not is_edit:
+            full_prompt = f"{full_prompt}, в стиле {style}"
+
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": PROMPT_MODEL, 
+                "model": PROMPT_MODEL,
                 "messages": [
-                    {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"}, 
+                    {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
                     {"role": "user", "content": f"Prompt for: {full_prompt}"}
-                ], 
+                ],
                 "max_tokens": 200
             },
             timeout=30
@@ -468,33 +559,31 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
         enhanced = user_prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
-        
-        # Прогресс
+
         for p in range(5, 101, 5):
             await asyncio.sleep(0.2)
             try:
                 await status_msg.edit_text(f"🎨 {p}%")
             except:
                 pass
-        
+
         img_data = None
-        
-        # Генерация через Replicate
+
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": model_config["api_model"], 
+                "model": model_config["api_model"],
                 "input": {
-                    "prompt": enhanced, 
-                    "aspect_ratio": "1:1", 
+                    "prompt": enhanced,
+                    "aspect_ratio": "1:1",
                     "output_format": "webp"
-                }, 
+                },
                 "bothub": {"include_usage": True, "return_base64": False}
             },
             timeout=120
         )
-        
+
         if img_resp.status_code == 200:
             result = img_resp.json()
             img_url = result.get('url')
@@ -504,18 +593,15 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
                 img_data_response = requests.get(img_url, timeout=30)
                 if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
                     img_data = img_data_response.content
-        
+
         if img_data:
-            # Водяной знак
             watermarked = add_watermark(img_data)
             if watermarked:
                 img_data = watermarked
-            
-            # Списание токенов
+
             spend_tokens(user_id, price)
             do_backup()
-            
-            # ===== СОХРАНЯЕМ В ИСТОРИЮ (НОВОЕ!) =====
+
             image_id, session_id = save_image_to_history(
                 user_id=user_id,
                 prompt=user_prompt,
@@ -527,25 +613,22 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
                 edit_type=edit_context.get('edit_type') if edit_context else None,
                 edit_text=user_prompt if is_edit else None
             )
-            
-            # Добавляем в контекстную память
+
             add_to_context(user_id, user_prompt, image_id, edit_context.get('edit_type') if edit_context else None)
-            
-            # Отправляем результат с кнопками для правок
+
             new_tokens = get_tokens(user_id)
             caption = (
                 f"🖼️ **Твоя картинка**\n"
-                f"📝 Запрос: {user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}\n"
-                f"🤖 Модель: {model_config['name']}\n"
-                f"💰 Потрачено: {price} токенов\n"
-                f"🪙 Осталось: {new_tokens} токенов\n"
+                f"📝 {user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}\n"
+                f"🤖 {model_config['name']}\n"
+                f"💰 -{price} токенов | 🪙 {new_tokens} осталось\n"
             )
             if is_edit:
-                caption += f"✏️ Версия: {get_edit_version(user_id, session_id)}\n"
-            
+                caption += f"✏️ Версия: {get_edit_version(user_id, session_id)}"
+
             await message.answer_photo(
                 BufferedInputFile(
-                    file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data, 
+                    file=img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data,
                     filename="image.png"
                 ),
                 caption=caption,
@@ -553,34 +636,30 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
             )
             await status_msg.delete()
             return
-        
+
         await status_msg.edit_text("❌ Не удалось получить картинку")
-        
+
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 
 # ============================================================================
-# ============================ ✏️ ПРАВКИ КАРТИНОК (НОВОЕ!) ===================
+# ============================ ✏️ ПРАВКИ КАРТИНОК ===========================
 # ============================================================================
 
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_image_callback(callback: types.CallbackQuery):
-    """Начало правки картинки"""
     user_id = callback.from_user.id
     image_id = int(callback.data.replace("edit_", ""))
-    
-    # Получаем картинку
+
     image = get_image_by_id(image_id)
     if not image:
         await callback.answer("❌ Картинка не найдена", show_alert=True)
         return
-    
-    # Получаем всю цепочку
+
     chain = get_image_chain(user_id, image_id)
     full_prompt = " + ".join([img['prompt'] for img in chain])
-    
-    # Сохраняем состояние
+
     user_pages[user_id] = {
         "state": "waiting_edit",
         "image_id": image_id,
@@ -588,7 +667,7 @@ async def edit_image_callback(callback: types.CallbackQuery):
         "original_prompt": image['prompt'],
         "full_prompt": full_prompt
     }
-    
+
     await callback.message.answer(
         f"✏️ **Редактирование картинки**\n\n"
         f"📝 Текущий запрос: `{full_prompt[:100]}{'...' if len(full_prompt) > 100 else ''}`\n\n"
@@ -604,35 +683,29 @@ async def edit_image_callback(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "cancel_edit")
 async def cancel_edit_callback(callback: types.CallbackQuery):
-    """Отмена правки"""
     user_pages.pop(callback.from_user.id, None)
     await callback.message.edit_text("✅ Правка отменена", reply_markup=main_menu())
     await callback.answer()
 
 async def handle_edit(message: types.Message):
-    """Обработка правки картинки"""
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
-    
+
     edit_text = message.text.strip()
     image_id = state.get("image_id")
     session_id = state.get("session_id")
     full_prompt = state.get("full_prompt", "")
-    
+
     if not image_id or not session_id:
         await message.answer("❌ Ошибка: нет картинки для редактирования")
         return
-    
-    # Определяем тип правки
+
     edit_type = detect_edit_type(edit_text)
-    
-    # Строим новый промпт
     new_prompt = build_edit_prompt(full_prompt, edit_text)
-    
-    # Генерируем новую картинку с контекстом
+
     await generate_image(
-        message, 
-        is_edit=True, 
+        message,
+        is_edit=True,
         edit_context={
             'image_id': image_id,
             'session_id': session_id,
@@ -640,45 +713,8 @@ async def handle_edit(message: types.Message):
             'full_prompt': new_prompt
         }
     )
-    
-    # Очищаем состояние
+
     user_pages.pop(user_id, None)
-
-def detect_edit_type(text):
-    """Определяет тип правки по тексту"""
-    text_lower = text.lower()
-    if any(word in text_lower for word in ['цвет', 'чёрн', 'бел', 'красн', 'син', 'зелён', 'жёлт', 'оранж', 'фиолет']):
-        return 'color'
-    elif any(word in text_lower for word in ['добав', 'нарису', 'постав']):
-        return 'add'
-    elif any(word in text_lower for word in ['убери', 'удал', 'убр']):
-        return 'remove'
-    elif any(word in text_lower for word in ['фон', 'задн']):
-        return 'background'
-    elif any(word in text_lower for word in ['стиль', 'в стиле', 'как']):
-        return 'style'
-    else:
-        return 'general'
-
-def build_edit_prompt(base_prompt, edit_text):
-    """Умно применяет правку к промпту"""
-    edit_type = detect_edit_type(edit_text)
-    
-    if edit_type == 'color':
-        # Заменяем цвет объекта
-        # Пример: "белый кот" + "сделай чёрным" → "чёрный кот"
-        return f"{base_prompt}, {edit_text}"
-    elif edit_type == 'add':
-        # Добавляем объект
-        return f"{base_prompt}, {edit_text}"
-    elif edit_type == 'remove':
-        # Убираем объект
-        return f"{base_prompt}, без {edit_text.replace('убери', '').strip()}"
-    elif edit_type == 'background':
-        # Меняем фон
-        return f"{base_prompt}, фон {edit_text.replace('сделай фон', '').strip()}"
-    else:
-        return f"{base_prompt}, {edit_text}"
 
 
 # ============================================================================
@@ -687,52 +723,46 @@ def build_edit_prompt(base_prompt, edit_text):
 
 @router.callback_query(F.data.startswith("variation_"))
 async def variation_callback(callback: types.CallbackQuery):
-    """Создать вариацию картинки"""
     user_id = callback.from_user.id
     image_id = int(callback.data.replace("variation_", ""))
-    
     image = get_image_by_id(image_id)
     if not image:
         await callback.answer("❌ Картинка не найдена", show_alert=True)
         return
-    
-    # Генерируем новый вариант
+
     await callback.message.answer("🔄 Генерирую новый вариант...")
-    # Здесь можно добавить логику вариаций
-    
+    # Создаём новую сессию с тем же промптом
+    await generate_image(
+        callback.message,
+        is_edit=False,
+        edit_context={'full_prompt': image['prompt']}
+    )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("history_"))
 async def history_callback(callback: types.CallbackQuery):
-    """Показать историю правок"""
     user_id = callback.from_user.id
     session_id = callback.data.replace("history_", "")
-    
+
     chain = get_image_chain_by_session(user_id, session_id)
     if not chain:
         await callback.answer("❌ Нет истории", show_alert=True)
         return
-    
+
     text = "📊 **История правок**\n\n"
     for i, img in enumerate(chain, 1):
         text += f"{i}. {img['prompt'][:50]}\n"
         text += f"   ✏️ Версия: {i}\n\n"
-    
+
     await callback.message.edit_text(text[:4000], reply_markup=main_menu())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("close_"))
 async def close_session_callback(callback: types.CallbackQuery):
-    """Закрыть сессию правок"""
     session_id = callback.data.replace("close_", "")
     close_edit_session(session_id)
     await callback.message.edit_text("✅ Сессия правок закрыта", reply_markup=main_menu())
     await callback.answer()
-
-
-# ============================================================================
-# ============================ ОСТАЛЬНЫЕ КОЛБЭКИ ===========================
-# ============================================================================
 
 @router.callback_query(F.data == "mode_text")
 async def set_text_mode(callback: types.CallbackQuery):
@@ -750,7 +780,7 @@ async def set_image_mode(callback: types.CallbackQuery):
 async def select_model_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for key, model in IMAGE_MODELS.items():
         kb.inline_keyboard.append([
@@ -760,12 +790,12 @@ async def select_model_cb(callback: types.CallbackQuery):
             )
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
-    
+
     text = "🎨 **Выбери модель для генерации картинок:**\n\n"
     for key, model in IMAGE_MODELS.items():
         text += f"{model['name']} — {model['price']} токенов\n"
         text += f"   {model['description']}\n\n"
-    
+
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
@@ -773,14 +803,15 @@ async def select_model_cb(callback: types.CallbackQuery):
 async def set_model_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     model_key = callback.data.replace("model_", "")
-    
+
     if model_key not in IMAGE_MODELS:
         await callback.answer("❌ Модель не найдена", show_alert=True)
         return
-    
+
     user_model[user_id] = model_key
     model = IMAGE_MODELS[model_key]
-    
+    update_user_memory(user_id, {'preferred_model': model_key})
+
     await callback.answer(f"✅ Выбрана модель: {model['name']}", show_alert=True)
     await callback.message.edit_text(
         f"✅ **Выбрана модель:** {model['name']}\n"
@@ -865,7 +896,7 @@ async def buy_tokens_cb(callback: types.CallbackQuery):
 async def token_pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
-    
+
     packs = {
         '100': (10, 100),
         '500': (40, 500),
@@ -876,11 +907,11 @@ async def token_pay_cb(callback: types.CallbackQuery):
     pack_type = callback.data.replace("token_", "")
     if pack_type not in packs:
         return await callback.answer("❌ Неверный пакет", show_alert=True)
-    
+
     stars, tokens = packs[pack_type]
     payload = secrets.token_hex(16)
     create_payment(user_id, stars, payload, "tokens")
-    
+
     await callback.bot.send_invoice(
         chat_id=user_id,
         title=f"📦 {tokens} токенов",
@@ -897,7 +928,7 @@ async def token_pay_cb(callback: types.CallbackQuery):
 async def payment_success(message: types.Message):
     payload = message.successful_payment.invoice_payload
     payment = complete_payment(payload)
-    
+
     if payment:
         stars, plan = payment['stars_amount'], payment['plan']
         if plan == "tokens":
@@ -927,15 +958,14 @@ async def back_main_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
     tokens = get_tokens(user_id)
     used, max_req = get_text_requests(user_id)
-    
-    memory = get_user_memory(user_id)
-    name = memory.get('name', 'друг') if memory else 'друг'
-    
+    name = get_user_name(user_id) or "друг"
+
     text = (
-        f"🤖 **Vertex AI**\n\n"
+        f"✨ **Vertex AI**\n\n"
         f"👋 Привет, {name}!\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ 10 токенов = 1 картинка\n"
+        f"✏️ 5 токенов = 1 правка\n"
         f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
         f"Напиши вопрос или выбери режим!"
     )
@@ -964,16 +994,16 @@ async def admin_panel_cb(callback: types.CallbackQuery):
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     total, total_tokens, total_requests, total_images, premium_users = get_stats()
-    
+
     text = (
         f"📊 **СТАТИСТИКА**\n\n"
-        f"👥 Всего пользователей: {total}\n"
+        f"👥 Всего: {total}\n"
         f"💎 Премиум: {premium_users}\n"
         f"💰 Всего токенов: {total_tokens}\n"
-        f"📝 Всего запросов: {total_requests}\n"
-        f"🖼️ Всего картинок: {total_images}\n"
+        f"📝 Запросов: {total_requests}\n"
+        f"🖼️ Картинок: {total_images}\n"
     )
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
@@ -982,20 +1012,20 @@ async def a_stats_cb(callback: types.CallbackQuery):
 async def a_model_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     total = sum(model_stats.values())
     text = "📈 **СТАТИСТИКА МОДЕЛЕЙ**\n\n"
     text += f"Всего генераций: {total}\n\n"
-    
+
     for key, count in model_stats.items():
         if count > 0:
             model = IMAGE_MODELS[key]
             percent = round(count / total * 100, 1) if total > 0 else 0
             text += f"{model['name']}\n   🔹 {count} ({percent}%)\n\n"
-    
+
     if total == 0:
         text += "❌ Пока нет статистики."
-    
+
     await callback.message.edit_text(text, reply_markup=admin_kb())
     await callback.answer()
 
@@ -1003,12 +1033,12 @@ async def a_model_stats_cb(callback: types.CallbackQuery):
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users ORDER BY tokens DESC LIMIT 20")
+        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 20")
         users = cursor.fetchall()
-    
+
     if not users:
         text = "👥 Нет пользователей"
     else:
@@ -1017,7 +1047,7 @@ async def a_users_cb(callback: types.CallbackQuery):
             status = "⛔" if u['is_blocked'] == 1 else "✅"
             name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else "Без имени"
             text += f"{status} **{name}** (ID: {u['user_id']})\n   🪙 {u['tokens']} токенов\n\n"
-    
+
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
     await callback.answer()
 
@@ -1027,11 +1057,7 @@ async def a_give_tokens_cb(callback: types.CallbackQuery):
         return await callback.answer("⛔ Нет доступа")
     user_pages[callback.from_user.id] = {"state": "waiting_give_tokens"}
     await callback.message.edit_text(
-        "⭐ **Раздать токены**\n\n"
-        "Формат: `ID | количество`\n"
-        "Пример: `123456789 | 50`\n\n"
-        "Или: `всем | 10`\n\n"
-        "⏹ /cancel",
+        "⭐ **Раздать токены**\n\nФормат: `ID | количество`\nПример: `123456789 | 50`\n\nИли: `всем | 10`\n\n⏹ /cancel",
         reply_markup=admin_kb()
     )
     await callback.answer()
@@ -1048,16 +1074,16 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
 async def a_block_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, is_blocked FROM users ORDER BY user_id LIMIT 20")
+        cursor.execute("SELECT user_id, username, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY user_id LIMIT 20")
         users = cursor.fetchall()
-    
+
     if not users:
         await callback.answer("❌ Нет пользователей", show_alert=True)
         return
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
         name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(u['user_id'])
@@ -1066,7 +1092,7 @@ async def a_block_cb(callback: types.CallbackQuery):
             InlineKeyboardButton(text=f"{status} {name}", callback_data=f"block_user_{u['user_id']}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    
+
     await callback.message.edit_text("🚫 **Блокировка**\n\nНажмите на пользователя:", reply_markup=kb)
     await callback.answer()
 
@@ -1074,20 +1100,20 @@ async def a_block_cb(callback: types.CallbackQuery):
 async def block_user_action(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     user_id = int(callback.data.replace("block_user_", ""))
     user = get_user(user_id)
     if not user:
         await callback.answer("❌ Пользователь не найден", show_alert=True)
         return
-    
+
     if user['is_blocked'] == 1:
         unblock_user(user_id)
         await callback.answer("✅ Разблокирован", show_alert=True)
     else:
         block_user(user_id)
         await callback.answer("⛔ Заблокирован", show_alert=True)
-    
+
     do_backup()
     await a_block_cb(callback)
 
@@ -1095,17 +1121,17 @@ async def block_user_action(callback: types.CallbackQuery):
 async def a_messages_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, user_id, username, text, date, status FROM messages_to_admin ORDER BY date DESC LIMIT 20")
         messages = cursor.fetchall()
-    
+
     if not messages:
         await callback.message.edit_text("📭 Нет обращений.", reply_markup=admin_kb())
         await callback.answer()
         return
-    
+
     text = "📩 **Обращения**\n\n"
     for msg in messages:
         status = "🆕" if msg['status'] == "new" else "✅"
@@ -1113,7 +1139,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
         text += f"{status} {msg['user_id']} — {name}\n"
         text += f"📝 {msg['text'][:50]}{'...' if len(msg['text']) > 50 else ''}\n"
         text += f"🕐 {msg['date'][:16]}\n\n"
-    
+
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
     await callback.answer()
 
@@ -1130,13 +1156,13 @@ async def a_backup_cb(callback: types.CallbackQuery):
 async def export_db_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     db_path = "data/repsolver.db"
     if not os.path.exists(db_path):
         await callback.message.edit_text("❌ Файл базы данных не найден!", reply_markup=admin_kb())
         await callback.answer()
         return
-    
+
     try:
         await callback.message.delete()
         await callback.message.answer_document(
@@ -1152,7 +1178,7 @@ async def export_db_cb(callback: types.CallbackQuery):
 async def restore_github_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     files = get_backup_list()
     if not files:
         await callback.message.edit_text(
@@ -1161,7 +1187,7 @@ async def restore_github_cb(callback: types.CallbackQuery):
         )
         await callback.answer()
         return
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for f in files[:20]:
         name = f['name']
@@ -1169,7 +1195,7 @@ async def restore_github_cb(callback: types.CallbackQuery):
             InlineKeyboardButton(text=f"📄 {name[:30]}", callback_data=f"restore_backup_{name}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    
+
     await callback.message.edit_text(
         "📥 **Восстановление из GitHub**\n\nВыберите бэкап:",
         reply_markup=kb
@@ -1180,10 +1206,10 @@ async def restore_github_cb(callback: types.CallbackQuery):
 async def restore_backup_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     filename = callback.data.replace("restore_backup_", "")
     await callback.message.edit_text(f"⏳ Восстанавливаю: `{filename}`...")
-    
+
     success = restore_backup_from_github(filename)
     if success:
         await callback.message.edit_text("✅ **Бэкап восстановлен!**", reply_markup=admin_kb())
@@ -1195,7 +1221,7 @@ async def restore_backup_cb(callback: types.CallbackQuery):
 async def a_edit_prices_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for key, model in IMAGE_MODELS.items():
         kb.inline_keyboard.append([
@@ -1205,7 +1231,7 @@ async def a_edit_prices_cb(callback: types.CallbackQuery):
             )
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    
+
     await callback.message.edit_text("💰 **Управление ценами**\n\nВыбери модель:", reply_markup=kb)
     await callback.answer()
 
@@ -1213,11 +1239,11 @@ async def a_edit_prices_cb(callback: types.CallbackQuery):
 async def edit_price_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         return await callback.answer("⛔ Нет доступа")
-    
+
     model_key = callback.data.replace("edit_price_", "")
     model = IMAGE_MODELS[model_key]
     user_pages[callback.from_user.id] = {"state": "waiting_price", "model": model_key}
-    
+
     await callback.message.edit_text(
         f"💰 **Изменение цены**\n\n"
         f"Модель: {model['name']}\n"
@@ -1238,13 +1264,12 @@ async def edit_price_cb(callback: types.CallbackQuery):
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
-    
+
     if message.text == "/cancel":
         user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=admin_kb())
         return
-    
-    # === ЦЕНЫ ===
+
     if state.get("state") == "waiting_price":
         try:
             new_price = int(message.text.strip())
@@ -1265,8 +1290,7 @@ async def handle_admin_input(message: types.Message):
             await message.answer("❌ Введите число!", reply_markup=admin_kb())
         user_pages.pop(user_id, None)
         return
-    
-    # === РАЗДАЧА ТОКЕНОВ ===
+
     if state.get("state") == "waiting_give_tokens":
         try:
             text = message.text.strip()
@@ -1298,20 +1322,19 @@ async def handle_admin_input(message: types.Message):
             await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
         user_pages.pop(user_id, None)
         return
-    
-    # === РАССЫЛКА ===
+
     if state.get("state") == "waiting_broadcast":
         if not message.text or not message.text.strip():
             await message.answer("❌ Текст не может быть пустым!", reply_markup=admin_kb())
             user_pages.pop(user_id, None)
             return
-        
+
         await message.answer("📢 Рассылка...")
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
             users = cursor.fetchall()
-        
+
         sent = 0
         for u in users:
             try:
@@ -1320,13 +1343,12 @@ async def handle_admin_input(message: types.Message):
                 await asyncio.sleep(0.05)
             except:
                 pass
-        
+
         await message.answer(f"✅ Отправлено: {sent}", reply_markup=admin_kb())
         do_backup()
         user_pages.pop(user_id, None)
         return
-    
-    # === ОБРАЩЕНИЕ В ПОДДЕРЖКУ ===
+
     if state.get("state") == "waiting_contact":
         with get_db() as conn:
             cursor = conn.cursor()
