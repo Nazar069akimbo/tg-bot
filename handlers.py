@@ -1,6 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, BufferedInputFile
+from aiogram.exceptions import TelegramBadRequest
 from database.db import *
 from ai.client import solve_problem
 from backup import GitHubBackup
@@ -23,6 +24,8 @@ ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 PROMPT_MODEL = "gpt-4.1-nano"
+BOT_NAME = "✨ Vertex AI"
+ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
 
 # ===== МОДЕЛИ ДЛЯ КАРТИНОК =====
 IMAGE_MODELS = {
@@ -31,7 +34,7 @@ IMAGE_MODELS = {
         "price": 10,
         "api_model": "flux-schnell",
         "type": "replicate",
-        "description": "Быстрая, базовая"
+        "description": "⚡ Быстрая, базовая"
     },
     "flux_2_max": {
         "name": "🔥 Flux-2-Max",
@@ -52,7 +55,24 @@ client = OpenAI(
 
 
 # ============================================================================
-# =========================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
+# =========================== БЕЗОПАСНЫЕ ФУНКЦИИ ===========================
+# ============================================================================
+
+async def safe_answer(callback: types.CallbackQuery, text: str = None, show_alert: bool = False):
+    """Безопасный ответ на callback — никогда не падает"""
+    try:
+        if text:
+            await callback.answer(text, show_alert=show_alert)
+        else:
+            await callback.answer()
+    except TelegramBadRequest:
+        pass
+    except Exception:
+        pass
+
+
+# ============================================================================
+# =========================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =======================
 # ============================================================================
 
 def get_tokens(user_id):
@@ -225,7 +245,8 @@ def admin_kb():
         [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
          InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
-         InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+         InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
 def image_action_buttons(image_id, session_id):
@@ -431,7 +452,7 @@ async def handle_message(message: types.Message):
         return
 
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
-                              "waiting_give_tokens", "waiting_price"]:
+                              "waiting_give_tokens", "waiting_price", "waiting_promo_code"]:
         await handle_admin_input(message)
         return
 
@@ -458,17 +479,15 @@ async def generate_text(message: types.Message):
 
     status_msg = await message.answer("🤔 Думаю...")
     try:
-        # Получаем контекстную память
         memory = get_user_memory(user_id)
         context = []
         if memory and memory.get('context_history'):
             try:
                 history = json.loads(memory['context_history'])
-                context = [h['prompt'] for h in history[-5:]]  # Последние 5 запросов
+                context = [h['prompt'] for h in history[-5:]]
             except:
                 pass
 
-        # Строим промпт с контекстом
         full_prompt = message.text
         if context:
             full_prompt = f"Контекст: {' | '.join(context)}\nВопрос: {message.text}"
@@ -537,7 +556,6 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
         else:
             full_prompt = user_prompt
 
-        # Улучшаем промпт с учётом памяти
         memory = get_user_memory(user_id)
         style = memory.get('favorite_style') if memory else None
         if style and not is_edit:
@@ -654,7 +672,7 @@ async def edit_image_callback(callback: types.CallbackQuery):
 
     image = get_image_by_id(image_id)
     if not image:
-        await callback.answer("❌ Картинка не найдена", show_alert=True)
+        await safe_answer(callback, "❌ Картинка не найдена", show_alert=True)
         return
 
     chain = get_image_chain(user_id, image_id)
@@ -679,13 +697,13 @@ async def edit_image_callback(callback: types.CallbackQuery):
         f"⏹ /cancel",
         reply_markup=edit_in_progress_kb()
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "cancel_edit")
 async def cancel_edit_callback(callback: types.CallbackQuery):
     user_pages.pop(callback.from_user.id, None)
     await callback.message.edit_text("✅ Правка отменена", reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 async def handle_edit(message: types.Message):
     user_id = message.from_user.id
@@ -727,17 +745,16 @@ async def variation_callback(callback: types.CallbackQuery):
     image_id = int(callback.data.replace("variation_", ""))
     image = get_image_by_id(image_id)
     if not image:
-        await callback.answer("❌ Картинка не найдена", show_alert=True)
+        await safe_answer(callback, "❌ Картинка не найдена", show_alert=True)
         return
 
     await callback.message.answer("🔄 Генерирую новый вариант...")
-    # Создаём новую сессию с тем же промптом
     await generate_image(
         callback.message,
         is_edit=False,
         edit_context={'full_prompt': image['prompt']}
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("history_"))
 async def history_callback(callback: types.CallbackQuery):
@@ -746,7 +763,7 @@ async def history_callback(callback: types.CallbackQuery):
 
     chain = get_image_chain_by_session(user_id, session_id)
     if not chain:
-        await callback.answer("❌ Нет истории", show_alert=True)
+        await safe_answer(callback, "❌ Нет истории", show_alert=True)
         return
 
     text = "📊 **История правок**\n\n"
@@ -755,26 +772,26 @@ async def history_callback(callback: types.CallbackQuery):
         text += f"   ✏️ Версия: {i}\n\n"
 
     await callback.message.edit_text(text[:4000], reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("close_"))
 async def close_session_callback(callback: types.CallbackQuery):
     session_id = callback.data.replace("close_", "")
     close_edit_session(session_id)
     await callback.message.edit_text("✅ Сессия правок закрыта", reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "mode_text")
 async def set_text_mode(callback: types.CallbackQuery):
     user_modes[callback.from_user.id] = "text"
     await callback.message.edit_text("🧠 Режим **Текст**\nПросто напиши мне вопрос!", reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "mode_image")
 async def set_image_mode(callback: types.CallbackQuery):
     user_modes[callback.from_user.id] = "image"
     await callback.message.edit_text("🖼️ Режим **Картинка**\nНапиши запрос!", reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "select_model")
 async def select_model_cb(callback: types.CallbackQuery):
@@ -797,7 +814,7 @@ async def select_model_cb(callback: types.CallbackQuery):
         text += f"   {model['description']}\n\n"
 
     await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("model_"))
 async def set_model_cb(callback: types.CallbackQuery):
@@ -805,14 +822,14 @@ async def set_model_cb(callback: types.CallbackQuery):
     model_key = callback.data.replace("model_", "")
 
     if model_key not in IMAGE_MODELS:
-        await callback.answer("❌ Модель не найдена", show_alert=True)
+        await safe_answer(callback, "❌ Модель не найдена", show_alert=True)
         return
 
     user_model[user_id] = model_key
     model = IMAGE_MODELS[model_key]
     update_user_memory(user_id, {'preferred_model': model_key})
 
-    await callback.answer(f"✅ Выбрана модель: {model['name']}", show_alert=True)
+    await safe_answer(callback, f"✅ Выбрана модель: {model['name']}", show_alert=True)
     await callback.message.edit_text(
         f"✅ **Выбрана модель:** {model['name']}\n"
         f"💰 Стоимость: {model['price']} токенов\n"
@@ -824,19 +841,19 @@ async def set_model_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "balance")
 async def balance_cb(callback: types.CallbackQuery):
     await balance_cmd(callback.message)
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
     await profile_cmd(callback.message)
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = force_create_user(user_id, callback.from_user.username or "")
     if not user:
-        await callback.answer("❌ Ошибка!", show_alert=True)
+        await safe_answer(callback, "❌ Ошибка!", show_alert=True)
         return
     count = get_referral_count(user_id)
     link = f"https://t.me/Vertex1bot?start={user_id}"
@@ -853,7 +870,7 @@ async def referral_cb(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ])
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "promo_use")
 async def promo_use_cb(callback: types.CallbackQuery):
@@ -866,7 +883,7 @@ async def promo_use_cb(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
         ])
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "buy_tokens")
 async def buy_tokens_cb(callback: types.CallbackQuery):
@@ -890,7 +907,7 @@ async def buy_tokens_cb(callback: types.CallbackQuery):
         "Выберите пакет:",
         reply_markup=kb
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("token_"))
 async def token_pay_cb(callback: types.CallbackQuery):
@@ -906,7 +923,8 @@ async def token_pay_cb(callback: types.CallbackQuery):
     }
     pack_type = callback.data.replace("token_", "")
     if pack_type not in packs:
-        return await callback.answer("❌ Неверный пакет", show_alert=True)
+        await safe_answer(callback, "❌ Неверный пакет", show_alert=True)
+        return
 
     stars, tokens = packs[pack_type]
     payload = secrets.token_hex(16)
@@ -922,7 +940,7 @@ async def token_pay_cb(callback: types.CallbackQuery):
         prices=[LabeledPrice(label=f"{tokens} токенов", amount=stars)],
         start_parameter="buy_tokens"
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.message(F.successful_payment)
 async def payment_success(message: types.Message):
@@ -950,7 +968,7 @@ async def contact_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
     user_pages[user_id] = {"state": "waiting_contact"}
     await callback.message.edit_text("📩 Напишите сообщение админу.\n\n⏹ /cancel", reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
@@ -970,20 +988,20 @@ async def back_main_cb(callback: types.CallbackQuery):
         f"Напиши вопрос или выбери режим!"
     )
     await callback.message.edit_text(text, reply_markup=main_menu())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "help")
 async def help_cb(callback: types.CallbackQuery):
     await help_cmd(callback.message)
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
     if is_admin(callback.from_user.id):
         await callback.message.edit_text("🛡️ **АДМИН-ПАНЕЛЬ**", reply_markup=admin_kb())
-        await callback.answer()
+        await safe_answer(callback)
     else:
-        await callback.answer("⛔ Нет доступа", show_alert=True)
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
 
 
 # ============================================================================
@@ -993,7 +1011,8 @@ async def admin_panel_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     total, total_tokens, total_requests, total_images, premium_users = get_stats()
 
@@ -1006,12 +1025,13 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"🖼️ Картинок: {total_images}\n"
     )
     await callback.message.edit_text(text, reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_model_stats")
 async def a_model_stats_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     total = sum(model_stats.values())
     text = "📈 **СТАТИСТИКА МОДЕЛЕЙ**\n\n"
@@ -1027,12 +1047,13 @@ async def a_model_stats_cb(callback: types.CallbackQuery):
         text += "❌ Пока нет статистики."
 
     await callback.message.edit_text(text, reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1049,31 +1070,34 @@ async def a_users_cb(callback: types.CallbackQuery):
             text += f"{status} **{name}** (ID: {u['user_id']})\n   🪙 {u['tokens']} токенов\n\n"
 
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_give_tokens")
 async def a_give_tokens_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     user_pages[callback.from_user.id] = {"state": "waiting_give_tokens"}
     await callback.message.edit_text(
         "⭐ **Раздать токены**\n\nФормат: `ID | количество`\nПример: `123456789 | 50`\n\nИли: `всем | 10`\n\n⏹ /cancel",
         reply_markup=admin_kb()
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     await callback.message.edit_text("📢 **Рассылка**\n\nВведите текст.\n\n⏹ /cancel", reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_block")
 async def a_block_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1081,7 +1105,7 @@ async def a_block_cb(callback: types.CallbackQuery):
         users = cursor.fetchall()
 
     if not users:
-        await callback.answer("❌ Нет пользователей", show_alert=True)
+        await safe_answer(callback, "❌ Нет пользователей", show_alert=True)
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
@@ -1094,25 +1118,26 @@ async def a_block_cb(callback: types.CallbackQuery):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
 
     await callback.message.edit_text("🚫 **Блокировка**\n\nНажмите на пользователя:", reply_markup=kb)
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("block_user_"))
 async def block_user_action(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     user_id = int(callback.data.replace("block_user_", ""))
     user = get_user(user_id)
     if not user:
-        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        await safe_answer(callback, "❌ Пользователь не найден", show_alert=True)
         return
 
     if user['is_blocked'] == 1:
         unblock_user(user_id)
-        await callback.answer("✅ Разблокирован", show_alert=True)
+        await safe_answer(callback, "✅ Разблокирован", show_alert=True)
     else:
         block_user(user_id)
-        await callback.answer("⛔ Заблокирован", show_alert=True)
+        await safe_answer(callback, "⛔ Заблокирован", show_alert=True)
 
     do_backup()
     await a_block_cb(callback)
@@ -1120,7 +1145,8 @@ async def block_user_action(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_messages")
 async def a_messages_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1129,7 +1155,7 @@ async def a_messages_cb(callback: types.CallbackQuery):
 
     if not messages:
         await callback.message.edit_text("📭 Нет обращений.", reply_markup=admin_kb())
-        await callback.answer()
+        await safe_answer(callback)
         return
 
     text = "📩 **Обращения**\n\n"
@@ -1141,26 +1167,28 @@ async def a_messages_cb(callback: types.CallbackQuery):
         text += f"🕐 {msg['date'][:16]}\n\n"
 
     await callback.message.edit_text(text[:4000], reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     await callback.message.edit_text("⏳ Бэкап...")
     result = GitHubBackup().backup_db()
     await callback.message.edit_text("✅ Бэкап создан!" if result else "❌ Ошибка", reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_export_db")
 async def export_db_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     db_path = "data/repsolver.db"
     if not os.path.exists(db_path):
         await callback.message.edit_text("❌ Файл базы данных не найден!", reply_markup=admin_kb())
-        await callback.answer()
+        await safe_answer(callback)
         return
 
     try:
@@ -1172,12 +1200,13 @@ async def export_db_cb(callback: types.CallbackQuery):
         )
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка: {str(e)[:100]}", reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_restore_github")
 async def restore_github_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     files = get_backup_list()
     if not files:
@@ -1185,7 +1214,7 @@ async def restore_github_cb(callback: types.CallbackQuery):
             "❌ Нет бэкапов на GitHub!\n\nСначала создайте бэкап.",
             reply_markup=admin_kb()
         )
-        await callback.answer()
+        await safe_answer(callback)
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
@@ -1200,12 +1229,13 @@ async def restore_github_cb(callback: types.CallbackQuery):
         "📥 **Восстановление из GitHub**\n\nВыберите бэкап:",
         reply_markup=kb
     )
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data.startswith("restore_backup_"))
 async def restore_backup_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     filename = callback.data.replace("restore_backup_", "")
     await callback.message.edit_text(f"⏳ Восстанавливаю: `{filename}`...")
@@ -1215,12 +1245,13 @@ async def restore_backup_cb(callback: types.CallbackQuery):
         await callback.message.edit_text("✅ **Бэкап восстановлен!**", reply_markup=admin_kb())
     else:
         await callback.message.edit_text("❌ **Ошибка восстановления!**", reply_markup=admin_kb())
-    await callback.answer()
+    await safe_answer(callback)
 
 @router.callback_query(F.data == "a_edit_prices")
 async def a_edit_prices_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for key, model in IMAGE_MODELS.items():
@@ -1233,28 +1264,88 @@ async def a_edit_prices_cb(callback: types.CallbackQuery):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
 
     await callback.message.edit_text("💰 **Управление ценами**\n\nВыбери модель:", reply_markup=kb)
-    await callback.answer()
+    await safe_answer(callback)
 
-@router.callback_query(F.data.startswith("edit_price_"))
-async def edit_price_cb(callback: types.CallbackQuery):
+
+# ============================================================================
+# ============================ 🎫 ПРОМОКОДЫ (АДМИНКА) =======================
+# ============================================================================
+
+@router.callback_query(F.data == "a_promocodes")
+async def a_promocodes_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        return await callback.answer("⛔ Нет доступа")
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
 
-    model_key = callback.data.replace("edit_price_", "")
-    model = IMAGE_MODELS[model_key]
-    user_pages[callback.from_user.id] = {"state": "waiting_price", "model": model_key}
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Создать промокод", callback_data="a_create_promo")],
+        [InlineKeyboardButton(text="📋 Список промокодов", callback_data="a_list_promos")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
 
     await callback.message.edit_text(
-        f"💰 **Изменение цены**\n\n"
-        f"Модель: {model['name']}\n"
-        f"Текущая цена: {model['price']} токенов\n\n"
-        f"Введи новую цену:\n"
-        f"⏹ /cancel",
+        "🎫 **Управление промокодами**\n\n"
+        "Выберите действие:",
+        reply_markup=kb
+    )
+    await safe_answer(callback)
+
+@router.callback_query(F.data == "a_create_promo")
+async def a_create_promo_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    user_pages[callback.from_user.id] = {"state": "waiting_promo_code"}
+    await callback.message.edit_text(
+        "🎫 **Создание промокода**\n\n"
+        "Введите данные в формате:\n"
+        "`код | бонус_токены | срок_дней`\n\n"
+        "Пример: `WELCOME100 | 100 | 30`\n"
+        "Бонус: 100 токенов, срок: 30 дней\n\n"
+        "⏹ /cancel",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_edit_prices")]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_promocodes")]
         ])
     )
-    await callback.answer()
+    await safe_answer(callback)
+
+@router.callback_query(F.data == "a_list_promos")
+async def a_list_promos_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
+        promos = cursor.fetchall()
+
+    if not promos:
+        await callback.message.edit_text(
+            "📋 **Список промокодов**\n\n"
+            "❌ Нет созданных промокодов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="a_promocodes")]
+            ])
+        )
+        await safe_answer(callback)
+        return
+
+    text = "📋 **Список промокодов**\n\n"
+    for p in promos:
+        text += f"🔹 `{p['code']}`\n"
+        text += f"   🪙 +{p['bonus_tokens']} токенов\n"
+        text += f"   📊 Использован: {p['used']}/{p['max_uses']}\n"
+        text += f"   ⏳ До: {p['expires_at'][:10]}\n\n"
+
+    await callback.message.edit_text(
+        text[:4000],
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="a_promocodes")]
+        ])
+    )
+    await safe_answer(callback)
 
 
 # ============================================================================
@@ -1270,6 +1361,39 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отменено", reply_markup=admin_kb())
         return
 
+    # === ПРОМОКОДЫ (НОВОЕ!) ===
+    if state.get("state") == "waiting_promo_code":
+        try:
+            parts = message.text.strip().split("|")
+            if len(parts) < 2:
+                await message.answer("❌ Формат: код | токены | срок_дней")
+                return
+
+            code = parts[0].strip().upper()
+            bonus = int(parts[1].strip())
+            days = int(parts[2].strip()) if len(parts) > 2 else 30
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                expires = (datetime.now() + timedelta(days=days)).isoformat()
+                cursor.execute("""
+                    INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (code, bonus, 100, datetime.now().isoformat(), expires))
+
+            await message.answer(
+                f"✅ Промокод создан!\n\n"
+                f"📝 Код: `{code}`\n"
+                f"🪙 Бонус: {bonus} токенов\n"
+                f"⏳ Срок: {days} дней",
+                reply_markup=admin_kb()
+            )
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=admin_kb())
+        user_pages.pop(user_id, None)
+        return
+
+    # === ЦЕНЫ ===
     if state.get("state") == "waiting_price":
         try:
             new_price = int(message.text.strip())
@@ -1291,6 +1415,7 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
+    # === РАЗДАЧА ТОКЕНОВ ===
     if state.get("state") == "waiting_give_tokens":
         try:
             text = message.text.strip()
@@ -1323,6 +1448,7 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
+    # === РАССЫЛКА ===
     if state.get("state") == "waiting_broadcast":
         if not message.text or not message.text.strip():
             await message.answer("❌ Текст не может быть пустым!", reply_markup=admin_kb())
@@ -1349,12 +1475,13 @@ async def handle_admin_input(message: types.Message):
         user_pages.pop(user_id, None)
         return
 
+    # === ОБРАЩЕНИЕ В ПОДДЕРЖКУ ===
     if state.get("state") == "waiting_contact":
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
                           (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
-        await message.bot.send_message(int(os.getenv('ADMIN_ID', 6957852385)), f"📩 От {user_id}:\n{message.text}")
+        await message.bot.send_message(ADMIN_ID, f"📩 От {user_id}:\n{message.text}")
         await message.answer("✅ Отправлено!", reply_markup=main_menu())
         user_pages.pop(user_id, None)
         return
@@ -1397,4 +1524,46 @@ def restore_backup_from_github(filename):
     os.makedirs('data', exist_ok=True)
     with open('data/repsolver.db', 'wb') as f:
         f.write(resp.content)
+    return True
+
+
+# ============================================================================
+# ============================ ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК =================
+# ============================================================================
+
+@router.errors()
+async def global_error_handler(event: types.ErrorEvent):
+    """Ловит ВСЕ ошибки — пользователь ничего не видит"""
+    error = event.exception
+    logger.error(f"❌ Ошибка (обработана): {error}")
+    
+    try:
+        if hasattr(event, 'update') and event.update:
+            update = event.update
+            
+            if hasattr(update, 'callback_query') and update.callback_query:
+                callback = update.callback_query
+                try:
+                    await safe_answer(callback)
+                except:
+                    pass
+                try:
+                    await callback.message.answer(
+                        "⚠️ Произошла ошибка. Попробуйте ещё раз или напишите /start",
+                        reply_markup=main_menu()
+                    )
+                except:
+                    pass
+            
+            elif hasattr(update, 'message') and update.message:
+                try:
+                    await update.message.answer(
+                        "⚠️ Что-то пошло не так. Попробуйте ещё раз или напишите /start",
+                        reply_markup=main_menu()
+                    )
+                except:
+                    pass
+    except:
+        pass
+    
     return True
