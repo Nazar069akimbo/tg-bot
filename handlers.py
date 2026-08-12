@@ -369,7 +369,7 @@ async def handle_message(message: types.Message):
         user_pages.pop(user_id, None)
         return
     
-    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_give_tokens"]:
+    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact", "waiting_give_tokens", "waiting_price"]:
         await handle_admin_input(message)
         return
     
