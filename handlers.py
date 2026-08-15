@@ -465,13 +465,22 @@ async def generate_image(message: types.Message, prompt=None):
             }
             req = client.images.generate(**params)
             log_info(user_id, "generate_image", "OpenAI ответ получен")
-            image_url = json.loads(req.model_dump_json())['data'][0]['url']
-            log_info(user_id, "generate_image", f"Скачивание картинки...")
+            # Получаем URL картинки (безопасно)
+            if hasattr(req, 'data') and len(req.data) > 0:
+                image_url = req.data[0].url
+                log_info(user_id, "generate_image", f"URL получен: {image_url[:50]}...")
+            else:
+                log_error(user_id, "generate_image", "Нет data в ответе OpenAI")
+                image_url = None
+            
             if image_url:
+                log_info(user_id, "generate_image", f"Скачивание картинки...")
                 img_data_response = requests.get(image_url, timeout=30)
                 if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
                     img_data = img_data_response.content
                     log_info(user_id, "generate_image", f"Картинка скачана, размер: {len(img_data)} байт")
+                else:
+                    log_error(user_id, "generate_image", f"Ошибка скачивания: {img_data_response.status_code}, размер: {len(img_data_response.content)}")
         except Exception as e:
             log_error(user_id, "generate_image", f"OpenAI ошибка: {e}")
             log_info(user_id, "generate_image", "Попытка через Replicate API...")
