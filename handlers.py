@@ -24,7 +24,6 @@ ADMIN_CODE = "30121979"
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 PROMPT_MODEL = "gpt-4.1-nano"
-BOT_NAME = "✨ Vertex AI"
 ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
 
 # ===== МОДЕЛИ ДЛЯ КАРТИНОК =====
@@ -246,6 +245,7 @@ def admin_kb():
          InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
+        [InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
@@ -890,22 +890,86 @@ async def buy_tokens_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 100 токенов (10 карт) — 10⭐", callback_data="token_100")],
-        [InlineKeyboardButton(text="📦 500 токенов (50 карт) — 40⭐", callback_data="token_500")],
-        [InlineKeyboardButton(text="📦 1000 токенов (100 карт) — 70⭐", callback_data="token_1000")],
-        [InlineKeyboardButton(text="📦 5000 токенов (500 карт) — 300⭐", callback_data="token_5000")],
-        [InlineKeyboardButton(text="📦 10000 токенов (1000 карт) — 500⭐", callback_data="token_10000")],
+        [InlineKeyboardButton(text="📦 50 токенов (5 карт) — 10⭐", callback_data="token_50")],
+        [InlineKeyboardButton(text="📦 200 токенов (20 карт) — 30⭐", callback_data="token_200")],
+        [InlineKeyboardButton(text="📦 500 токенов (50 карт) — 60⭐", callback_data="token_500")],
+        [InlineKeyboardButton(text="📦 1000 токенов (100 карт) — 120⭐", callback_data="token_1000")],
+        [InlineKeyboardButton(text="📦 2500 токенов (250 карт) — 250⭐", callback_data="token_2500")],
+        [InlineKeyboardButton(text="👑 Подписка", callback_data="subscription")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
     await callback.message.edit_text(
         "✨ **Купить токены**\n\n"
-        "💰 100 токенов (10 карт) — 10⭐\n"
-        "💰 500 токенов (50 карт) — 40⭐\n"
-        "💰 1000 токенов (100 карт) — 70⭐\n"
-        "💰 5000 токенов (500 карт) — 300⭐\n"
-        "💰 10000 токенов (1000 карт) — 500⭐\n\n"
+        "📦 **Пакеты токенов:**\n"
+        "• 50 токенов (5 карт) — 10⭐\n"
+        "• 200 токенов (20 карт) — 30⭐\n"
+        "• 500 токенов (50 карт) — 60⭐\n"
+        "• 1000 токенов (100 карт) — 120⭐\n"
+        "• 2500 токенов (250 карт) — 250⭐\n\n"
+        "👑 **Подписки:**\n"
+        "• 💎 Премиум — 150⭐/мес (50 карт/день)\n"
+        "• 👑 Премиум+ — 300⭐/мес (200 карт/день)\n\n"
         "Выберите пакет:",
         reply_markup=kb
+    )
+    await safe_answer(callback)
+
+@router.callback_query(F.data == "subscription")
+async def subscription_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    force_create_user(user_id, callback.from_user.username or "")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💎 Премиум — 150⭐/мес", callback_data="sub_premium")],
+        [InlineKeyboardButton(text="👑 Премиум+ — 300⭐/мес", callback_data="sub_premium_plus")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="buy_tokens")]
+    ])
+    
+    await callback.message.edit_text(
+        "👑 **Подписки**\n\n"
+        "💎 **Премиум** — 150⭐/мес\n"
+        "• 50 картинок в день\n"
+        "• Безлимит текстовых запросов\n"
+        "• Без рекламы\n\n"
+        "👑 **Премиум+** — 300⭐/мес\n"
+        "• 200 картинок в день\n"
+        "• Безлимит текстовых запросов\n"
+        "• Приоритетная генерация\n"
+        "• Персональная поддержка\n\n"
+        "Выберите тариф:",
+        reply_markup=kb
+    )
+    await safe_answer(callback)
+
+@router.callback_query(F.data.startswith("sub_"))
+async def subscribe_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    plan = callback.data.replace("sub_", "")
+    
+    if plan == "premium":
+        stars = 150
+        plan_name = "💎 Премиум"
+        days = 30
+    elif plan == "premium_plus":
+        stars = 300
+        plan_name = "👑 Премиум+"
+        days = 30
+    else:
+        await safe_answer(callback, "❌ Неверный тариф", show_alert=True)
+        return
+    
+    payload = secrets.token_hex(16)
+    create_payment(user_id, stars, payload, f"subscription_{plan}")
+    
+    await callback.bot.send_invoice(
+        chat_id=user_id,
+        title=plan_name,
+        description=f"Подписка на {days} дней",
+        payload=payload,
+        provider_token=PROVIDER_TOKEN,
+        currency="XTR",
+        prices=[LabeledPrice(label=plan_name, amount=stars)],
+        start_parameter="subscribe"
     )
     await safe_answer(callback)
 
@@ -915,12 +979,13 @@ async def token_pay_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
 
     packs = {
-        '100': (10, 100),
-        '500': (40, 500),
-        '1000': (70, 1000),
-        '5000': (300, 5000),
-        '10000': (500, 10000)
+        '50': (10, 50),
+        '200': (30, 200),
+        '500': (60, 500),
+        '1000': (120, 1000),
+        '2500': (250, 2500)
     }
+    
     pack_type = callback.data.replace("token_", "")
     if pack_type not in packs:
         await safe_answer(callback, "❌ Неверный пакет", show_alert=True)
@@ -949,8 +1014,32 @@ async def payment_success(message: types.Message):
 
     if payment:
         stars, plan = payment['stars_amount'], payment['plan']
+        
+        # Обработка подписок
+        if plan.startswith("subscription_"):
+            plan_type = plan.replace("subscription_", "")
+            if plan_type == "premium":
+                days = 30
+                plan_name = "💎 Премиум"
+            elif plan_type == "premium_plus":
+                days = 30
+                plan_name = "👑 Премиум+"
+            else:
+                await message.answer("❌ Ошибка активации")
+                return
+            
+            add_premium(message.from_user.id, days, plan_type, True)
+            await message.answer(
+                f"✅ Подписка активирована!\n"
+                f"📦 План: {plan_name}\n"
+                f"⏳ Длительность: {days} дней",
+                reply_markup=main_menu()
+            )
+            return
+        
+        # Обработка токенов
         if plan == "tokens":
-            packs = {10: 100, 40: 500, 70: 1000, 300: 5000, 500: 10000}
+            packs = {10: 50, 30: 200, 60: 500, 120: 1000, 250: 2500}
             tokens = packs.get(stars, 0)
             if tokens > 0:
                 add_tokens(message.from_user.id, tokens)
@@ -1349,6 +1438,39 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
 
 
 # ============================================================================
+# ============================ ⭐ БАЛАНС STARS ============================
+# ============================================================================
+
+@router.callback_query(F.data == "a_stars_balance")
+async def a_stars_balance_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    try:
+        balance = await callback.bot.get_my_star_balance()
+        
+        # Примерный курс: 1 Star ≈ 0.013 BYN (может меняться)
+        byn_approx = balance * 0.013
+        rub_approx = balance * 0.45
+        
+        await callback.message.edit_text(
+            f"⭐ **Баланс Telegram Stars**\n\n"
+            f"На счету бота: **{balance}** Stars\n\n"
+            f"💵 Примерно:\n"
+            f"   • {byn_approx:.2f} BYN\n"
+            f"   • {rub_approx:.2f} ₽\n\n"
+            f"💡 Минимум для вывода: 1000 Stars\n"
+            f"⏳ Вывод доступен через 21 день после получения\n"
+            f"📊 1 Star ≈ 0.013 BYN (курс может меняться)",
+            reply_markup=admin_kb()
+        )
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=admin_kb())
+    await safe_answer(callback)
+
+
+# ============================================================================
 # ============================ АДМИН-ВВОД ==================================
 # ============================================================================
 
@@ -1361,7 +1483,7 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отменено", reply_markup=admin_kb())
         return
 
-    # === ПРОМОКОДЫ (НОВОЕ!) ===
+    # === ПРОМОКОДЫ ===
     if state.get("state") == "waiting_promo_code":
         try:
             parts = message.text.strip().split("|")
