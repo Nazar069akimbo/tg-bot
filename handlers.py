@@ -15,7 +15,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 # ===== СОСТОЯНИЯ =====
-user_modes = {}
 user_pages = {}
 user_model = {}
 
@@ -60,17 +59,75 @@ def get_user_name(user_id):
 
 
 # ============================================================================
+# =========================== УМНЫЙ АНАЛИЗ ЧЕРЕЗ ИИ =========================
+# ============================================================================
+
+async def ai_detect_intent(user_id, text):
+    """
+    Использует нейросеть, чтобы понять, что хочет пользователь.
+    Возвращает: action, params
+    """
+    if not API_KEY:
+        return 'text', {}
+
+    system_prompt = """Ты — ИИ-ассистент бота Vertex AI. Определи, что хочет пользователь.
+
+Верни ТОЛЬКО JSON (без пояснений):
+{"action": "действие", "params": {}}
+
+Действия:
+- generate_image: пользователь хочет создать картинку. Примеры: "нарисуй кота", "создай портрет", "покажи закат", "сгенерируй изображение"
+- edit_image: пользователь хочет изменить существующую картинку. Примеры: "сделай кота чёрным", "добавь шляпу", "убери фон"
+- show_prices: пользователь спрашивает о ценах. Примеры: "сколько стоит", "цена подписки", "премиум"
+- show_balance: пользователь спрашивает баланс. Примеры: "мой баланс", "сколько токенов"
+- show_referral: пользователь спрашивает о рефералах. Примеры: "рефералка", "пригласить друга"
+- chat: обычный разговор. Примеры: "привет", "как дела", "расскажи о себе"
+
+Важно: 
+- Если запрос содержит просьбу создать/нарисовать/показать что-то визуальное — это generate_image
+- Если запрос содержит изменение существующего — это edit_image
+- Если пользователь просто общается — chat"""
+
+    try:
+        resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": PROMPT_MODEL,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Запрос: {text}"}
+                ],
+                "max_tokens": 100,
+                "temperature": 0.1
+            },
+            timeout=10
+        )
+        if resp.status_code == 200:
+            result = resp.json().get('choices', [{}])[0].get('message', {}).get('content', '{}')
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                return data.get('action', 'chat'), data.get('params', {})
+    except Exception as e:
+        logger.error(f"Ошибка AI анализа: {e}")
+    
+    return 'chat', {}
+
+
+# ============================================================================
 # ================================ КЛАВИАТУРЫ ================================
 # ============================================================================
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧠 Текст", callback_data="mode_text"), InlineKeyboardButton(text="🖼️ Картинка", callback_data="mode_image")],
-        [InlineKeyboardButton(text="🎨 Выбрать модель", callback_data="select_model")],
-        [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"), InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
-        [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"), InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="📩 Поддержка", callback_data="contact_admin")],
-        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"), InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
+        [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
+         InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
+        [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"),
+         InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+         InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
     ])
 
 def admin_kb():
@@ -115,11 +172,12 @@ async def start_cmd(message: types.Message):
         user_pages[user_id] = {"state": "waiting_name"}
         await message.answer(
             "👋 Привет! Я — **Vertex AI** — твой умный ассистент.\n\n"
-            "✨ Я умею:\n"
-            "• 🖼️ Создавать картинки\n"
+            "✨ Я понимаю естественный язык и сам решаю, что делать:\n"
+            "• 🖼️ Генерировать картинки\n"
             "• ✏️ Редактировать картинки\n"
             "• 💰 Показывать цены\n"
             "• 🧠 Отвечать на вопросы\n\n"
+            "Просто напиши, что хочешь!\n\n"
             "Как мне тебя называть?"
         )
         return
@@ -156,10 +214,6 @@ async def start_cmd(message: types.Message):
 @router.message(Command("balance"))
 async def balance_cmd(message: types.Message):
     user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка!", reply_markup=main_menu())
-        return
     tokens = get_tokens(user_id)
     used, max_req = get_text_requests(user_id)
     await message.answer(
@@ -173,10 +227,6 @@ async def balance_cmd(message: types.Message):
 @router.message(Command("profile"))
 async def profile_cmd(message: types.Message):
     user_id = message.from_user.id
-    user = force_create_user(user_id, message.from_user.username or "")
-    if not user:
-        await message.answer("❌ Ошибка!", reply_markup=main_menu())
-        return
     tokens = get_tokens(user_id)
     name = get_user_name(user_id) or "Не указано"
     await message.answer(
@@ -234,6 +284,7 @@ async def handle_message(message: types.Message):
     state = user_pages.get(user_id, {})
     text = message.text.strip()
 
+    # === ОБРАБОТКА СОСТОЯНИЙ ===
     if state.get("state") == "waiting_name":
         set_user_name(user_id, text)
         user_pages.pop(user_id, None)
@@ -256,11 +307,42 @@ async def handle_message(message: types.Message):
         await handle_edit(message)
         return
 
-    # === ОБЫЧНЫЙ РЕЖИМ ===
-    mode = user_modes.get(user_id, "text")
-    if mode == "image":
-        await generate_image(message)
+    # === УМНЫЙ АНАЛИЗ ЧЕРЕЗ НЕЙРОСЕТЬ ===
+    # Получаем контекстную память
+    memory = get_user_memory(user_id)
+    history = []
+    if memory and memory.get('context_history'):
+        try:
+            history = json.loads(memory['context_history'])
+        except:
+            pass
+
+    action, params = await ai_detect_intent(user_id, text)
+    logger.info(f"🎯 Действие: {action}")
+
+    # === ВЫПОЛНЯЕМ ДЕЙСТВИЕ ===
+    if action == 'generate_image':
+        await generate_image(message, params.get('prompt', text))
+    
+    elif action == 'edit_image':
+        last_img = get_last_image(user_id)
+        if last_img:
+            await handle_edit_with_context(message, params.get('prompt', text))
+        else:
+            await message.answer("🤔 У тебя нет предыдущей картинки. Сначала сгенерируй!")
+            await generate_image(message, text)
+    
+    elif action == 'show_prices':
+        await send_price_info(message)
+    
+    elif action == 'show_balance':
+        await balance_cmd(message)
+    
+    elif action == 'show_referral':
+        await send_referral_info(message)
+    
     else:
+        # Обычный текстовый ответ
         await generate_text(message)
 
 
@@ -268,16 +350,19 @@ async def handle_message(message: types.Message):
 # =========================== ГЕНЕРАЦИЯ КАРТИНОК ===========================
 # ============================================================================
 
-async def generate_image(message: types.Message, is_edit=False, edit_context=None):
+async def generate_image(message: types.Message, prompt=None):
     user_id = message.from_user.id
     user = force_create_user(user_id, message.from_user.username or "")
     if not user:
         await message.answer("❌ Ошибка!", reply_markup=main_menu())
         return
 
+    if not prompt:
+        prompt = message.text
+
     model_key = user_model.get(user_id, "flux")
     model_config = IMAGE_MODELS.get(model_key, IMAGE_MODELS["flux"])
-    price = model_config["price"] if not is_edit else 5
+    price = model_config["price"]
 
     tokens = get_tokens(user_id)
     if tokens < price:
@@ -294,12 +379,6 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
     status_msg = await message.answer(f"🎨 Генерирую картинку...")
 
     try:
-        user_prompt = message.text
-        if is_edit and edit_context:
-            full_prompt = edit_context.get('full_prompt', user_prompt)
-        else:
-            full_prompt = user_prompt
-
         # Улучшаем промпт
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
@@ -308,15 +387,15 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
                 "model": PROMPT_MODEL,
                 "messages": [
                     {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
-                    {"role": "user", "content": f"Prompt for: {full_prompt}"}
+                    {"role": "user", "content": f"Prompt for: {prompt}"}
                 ],
                 "max_tokens": 200
             },
             timeout=30
         )
-        enhanced = user_prompt
+        enhanced = prompt
         if prompt_resp.status_code == 200:
-            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', user_prompt).strip('"')
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
 
         for p in range(5, 101, 5):
             await asyncio.sleep(0.2)
@@ -367,26 +446,14 @@ async def generate_image(message: types.Message, is_edit=False, edit_context=Non
             do_backup()
 
             image_id, session_id = save_image_to_history(
-                user_id=user_id, prompt=user_prompt, enhanced_prompt=enhanced,
-                model=model_key, image_data=img_data,
-                previous_id=edit_context.get('image_id') if edit_context else None,
-                session_id=edit_context.get('session_id') if edit_context else None,
-                edit_type=edit_context.get('edit_type') if edit_context else None,
-                edit_text=user_prompt if is_edit else None
+                user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
+                model=model_key, image_data=img_data
             )
 
             new_tokens = get_tokens(user_id)
-            caption = (
-                f"🖼️ **Твоя картинка**\n"
-                f"📝 {user_prompt[:50]}\n"
-                f"💰 -{price} токенов | 🪙 {new_tokens} осталось\n"
-            )
-            if is_edit:
-                caption += f"✏️ Версия: {get_edit_version(user_id, session_id)}"
-
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
-                caption=caption,
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
                 reply_markup=image_action_buttons(image_id, session_id)
             )
             await status_msg.delete()
@@ -423,6 +490,115 @@ async def generate_text(message: types.Message):
 # ============================ ПРАВКИ КАРТИНОК =============================
 # ============================================================================
 
+async def handle_edit_with_context(message: types.Message, edit_text: str):
+    user_id = message.from_user.id
+    last_img = get_last_image(user_id)
+    if not last_img:
+        await message.answer("❌ Нет предыдущей картинки для правки")
+        return
+
+    session_id = last_img.get('session_id')
+    full_prompt = last_img.get('prompt', '')
+    new_prompt = f"{full_prompt}, {edit_text}"
+
+    await generate_image_with_context(message, new_prompt, last_img)
+
+async def generate_image_with_context(message: types.Message, prompt: str, previous_img: dict):
+    user_id = message.from_user.id
+    model_key = user_model.get(user_id, "flux")
+    model_config = IMAGE_MODELS.get(model_key, IMAGE_MODELS["flux"])
+    price = 5
+
+    tokens = get_tokens(user_id)
+    if tokens < price:
+        await message.answer(f"❌ Недостаточно токенов! Для правки нужно {price} токенов.")
+        return
+
+    if not API_KEY:
+        return await message.answer("❌ API ключ не настроен")
+
+    status_msg = await message.answer("✏️ Редактирую картинку...")
+
+    try:
+        prompt_resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": PROMPT_MODEL,
+                "messages": [
+                    {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
+                    {"role": "user", "content": f"Prompt for: {prompt}"}
+                ],
+                "max_tokens": 200
+            },
+            timeout=30
+        )
+        enhanced = prompt
+        if prompt_resp.status_code == 200:
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
+
+        img_data = None
+        img_resp = requests.post(
+            "https://bothub.chat/api/v2/replicate/v1/images/generations",
+            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": model_config["api_model"],
+                "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"},
+                "bothub": {"include_usage": True, "return_base64": False}
+            },
+            timeout=120
+        )
+        if img_resp.status_code == 200:
+            result = img_resp.json()
+            img_url = result.get('url')
+            if isinstance(img_url, list):
+                img_url = img_url[0]
+            if img_url:
+                img_data_response = requests.get(img_url, timeout=30)
+                if img_data_response.status_code == 200 and len(img_data_response.content) > 1000:
+                    img_data = img_data_response.content
+
+        if img_data:
+            # Водяной знак
+            try:
+                img = Image.open(BytesIO(img_data))
+                draw = ImageDraw.Draw(img)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+                except:
+                    font = ImageFont.load_default()
+                draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
+                output = BytesIO()
+                img.save(output, format='PNG')
+                output.seek(0)
+                img_data = output.getvalue()
+            except:
+                pass
+
+            spend_tokens(user_id, price)
+            do_backup()
+
+            image_id, session_id = save_image_to_history(
+                user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
+                model=model_key, image_data=img_data,
+                previous_id=previous_img.get('id'), session_id=previous_img.get('session_id'),
+                edit_type='edit', edit_text=message.text
+            )
+
+            new_tokens = get_tokens(user_id)
+            version = get_edit_version(user_id, session_id)
+            await message.answer_photo(
+                BufferedInputFile(file=img_data, filename="image.png"),
+                caption=f"✏️ **Отредактировано!**\n✏️ Версия: {version}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=image_action_buttons(image_id, session_id)
+            )
+            await status_msg.delete()
+            return
+
+        await status_msg.edit_text("❌ Не удалось отредактировать картинку")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+
 async def handle_edit(message: types.Message):
     user_id = message.from_user.id
     state = user_pages.get(user_id, {})
@@ -440,57 +616,47 @@ async def handle_edit(message: types.Message):
     full_prompt = last_img.get('prompt', '')
     new_prompt = f"{full_prompt}, {message.text}"
 
-    await generate_image(
-        message,
-        is_edit=True,
-        edit_context={
-            'image_id': image_id,
-            'session_id': session_id,
-            'edit_type': 'edit',
-            'full_prompt': new_prompt
-        }
-    )
+    await generate_image_with_context(message, new_prompt, last_img)
     user_pages.pop(user_id, None)
+
+
+# ============================================================================
+# ============================ ИНФОРМАЦИЯ ==================================
+# ============================================================================
+
+async def send_price_info(message: types.Message):
+    text = (
+        "💰 **Цены и тарифы**\n\n"
+        "📦 **Пакеты токенов:**\n"
+        "• 50 токенов (5 карт) — 10⭐\n"
+        "• 200 токенов (20 карт) — 30⭐\n"
+        "• 500 токенов (50 карт) — 60⭐\n"
+        "• 1000 токенов (100 карт) — 120⭐\n"
+        "• 2500 токенов (250 карт) — 250⭐\n\n"
+        "👑 **Подписки:**\n"
+        "• 💎 Премиум — 150⭐/мес (50 карт/день)\n"
+        "• 👑 Премиум+ — 300⭐/мес (200 карт/день)\n\n"
+        "💡 1 Star ≈ 0.45 ₽\n\n"
+        "➡️ Нажми «Купить токены» в меню!"
+    )
+    await message.answer(text, reply_markup=main_menu())
+
+async def send_referral_info(message: types.Message):
+    user_id = message.from_user.id
+    count = get_referral_count(user_id)
+    link = f"https://t.me/Vertex1bot?start={user_id}"
+    text = (
+        "👥 **Рефералы**\n\n"
+        f"👤 Приглашено: {count}\n"
+        f"🎁 Бонус: +20 токенов за друга\n\n"
+        f"🔗 Твоя ссылка:\n{link}"
+    )
+    await message.answer(text, reply_markup=main_menu())
 
 
 # ============================================================================
 # ============================ АДМИН-ФУНКЦИИ ===============================
 # ============================================================================
-
-@router.callback_query(F.data == "mode_text")
-async def set_text_mode(callback: types.CallbackQuery):
-    user_modes[callback.from_user.id] = "text"
-    await callback.message.edit_text("🧠 Режим **Текст**\nПросто напиши мне вопрос!", reply_markup=main_menu())
-    await safe_answer(callback)
-
-@router.callback_query(F.data == "mode_image")
-async def set_image_mode(callback: types.CallbackQuery):
-    user_modes[callback.from_user.id] = "image"
-    await callback.message.edit_text("🖼️ Режим **Картинка**\nНапиши запрос!", reply_markup=main_menu())
-    await safe_answer(callback)
-
-@router.callback_query(F.data == "select_model")
-async def select_model_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    force_create_user(user_id, callback.from_user.username or "")
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
-    for key, model in IMAGE_MODELS.items():
-        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{model['name']} — {model['price']} токенов", callback_data=f"model_{key}")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
-    await callback.message.edit_text("🎨 **Выбери модель:**", reply_markup=kb)
-    await safe_answer(callback)
-
-@router.callback_query(F.data.startswith("model_"))
-async def set_model_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    model_key = callback.data.replace("model_", "")
-    if model_key not in IMAGE_MODELS:
-        await safe_answer(callback, "❌ Модель не найдена", show_alert=True)
-        return
-    user_model[user_id] = model_key
-    update_user_memory(user_id, {'preferred_model': model_key})
-    await safe_answer(callback, f"✅ Выбрана: {IMAGE_MODELS[model_key]['name']}", show_alert=True)
-    await callback.message.edit_text(f"✅ **{IMAGE_MODELS[model_key]['name']}** выбрана!\n💰 {IMAGE_MODELS[model_key]['price']} токенов", reply_markup=main_menu())
 
 @router.callback_query(F.data == "balance")
 async def balance_cb(callback: types.CallbackQuery):
@@ -504,16 +670,7 @@ async def profile_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "referral")
 async def referral_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    count = get_referral_count(user_id)
-    link = f"https://t.me/Vertex1bot?start={user_id}"
-    await callback.message.edit_text(
-        f"👥 **Рефералы**\n\n👤 Приглашено: {count}\n🎁 +20 токенов за друга\n\n🔗 {link}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Vertex AI!")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-        ])
-    )
+    await send_referral_info(callback.message)
     await safe_answer(callback)
 
 @router.callback_query(F.data == "promo_use")
