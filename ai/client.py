@@ -2,14 +2,27 @@ import os
 from openai import OpenAI
 from database.db import get_setting
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://openai.bothub.chat/v1"
-)
+def get_openai_client():
+    """Возвращает клиента OpenAI, создавая его при первом вызове."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        return OpenAI(
+            api_key=api_key,
+            base_url="https://openai.bothub.chat/v1"
+        )
+    except Exception as e:
+        print(f"Ошибка создания клиента OpenAI: {e}")
+        return None
 
 def solve_problem(question, mode="chat", is_premium=False):
     if not os.getenv("OPENAI_API_KEY"):
         return "⚠️ API ключ не настроен"
+    
+    client = get_openai_client()
+    if not client:
+        return "⚠️ Ошибка инициализации OpenAI клиента"
     
     max_input = int(get_setting('premium_input_chars' if is_premium else 'free_input_chars') or (3000 if is_premium else 500))
     max_output = int(get_setting('premium_output_words' if is_premium else 'free_output_words') or (300 if is_premium else 50))
