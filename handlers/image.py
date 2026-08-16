@@ -11,7 +11,16 @@ logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
-client = OpenAI(api_key=API_KEY, base_url='https://openai.bothub.chat/v1') if API_KEY else None
+
+# Исправленный клиент
+if API_KEY:
+    client = OpenAI(
+        api_key=API_KEY,
+        base_url='https://openai.bothub.chat/v1',
+        http_client=None  # ← Добавляем http_client=None
+    )
+else:
+    client = None
 
 async def generate_image(message: types.Message, prompt=None):
     user_id = message.from_user.id
@@ -28,7 +37,7 @@ async def generate_image(message: types.Message, prompt=None):
         await message.answer(f"❌ Недостаточно токенов! Нужно: {price}, у тебя: {tokens}")
         return
 
-    if not API_KEY:
+    if not API_KEY or not client:
         return await message.answer("❌ API ключ не настроен")
 
     status_msg = await message.answer("🎨 Генерирую...")
