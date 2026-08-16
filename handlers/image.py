@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile
 from database.db import *
 from . import helpers
-import logging, requests, json, time, asyncio, os
+import logging, requests, json, os
 from io import BytesIO
 from openai import OpenAI
 
@@ -12,15 +12,15 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
 
-# Исправленный клиент
-if API_KEY:
-    client = OpenAI(
-        api_key=API_KEY,
-        base_url='https://openai.bothub.chat/v1',
-        http_client=None  # ← Добавляем http_client=None
-    )
-else:
-    client = None
+def get_openai_client():
+    """Возвращает клиента OpenAI, создавая его при первом вызове."""
+    if not API_KEY:
+        return None
+    try:
+        return OpenAI(api_key=API_KEY, base_url='https://openai.bothub.chat/v1')
+    except Exception as e:
+        logger.error(f"Ошибка создания клиента OpenAI: {e}")
+        return None
 
 async def generate_image(message: types.Message, prompt=None):
     user_id = message.from_user.id
@@ -37,13 +37,16 @@ async def generate_image(message: types.Message, prompt=None):
         await message.answer(f"❌ Недостаточно токенов! Нужно: {price}, у тебя: {tokens}")
         return
 
-    if not API_KEY or not client:
+    if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
+    
+    client = get_openai_client()
+    if not client:
+        return await message.answer("❌ Ошибка инициализации OpenAI клиента")
 
     status_msg = await message.answer("🎨 Генерирую...")
 
     try:
-        # Улучшение промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -63,7 +66,6 @@ async def generate_image(message: types.Message, prompt=None):
 
         img_data = None
         
-        # OpenAI
         try:
             params = {
                 'model': model_config["api_model"],
@@ -80,7 +82,6 @@ async def generate_image(message: types.Message, prompt=None):
                         img_data = img_data_response.content
         except Exception as e:
             logger.error(f"OpenAI ошибка: {e}")
-            # Fallback Replicate
             img_resp = requests.post(
                 "https://bothub.chat/api/v2/replicate/v1/images/generations",
                 headers={"Authorization": f"Bearer {API_KEY}"},
