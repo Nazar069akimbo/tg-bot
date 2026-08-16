@@ -13,13 +13,16 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
 
 def get_openai_client():
-    """Возвращает клиента OpenAI, создавая его при первом вызове."""
+    """Возвращает клиента OpenAI."""
     if not API_KEY:
         return None
     try:
-        return OpenAI(api_key=API_KEY, base_url='https://openai.bothub.chat/v1')
+        return OpenAI(
+            api_key=API_KEY,
+            base_url="https://openai.bothub.chat/v1"
+        )
     except Exception as e:
-        logger.error(f"Ошибка создания клиента OpenAI: {e}")
+        logger.error(f"Ошибка создания клиента: {e}")
         return None
 
 async def generate_image(message: types.Message, prompt=None):
@@ -34,7 +37,7 @@ async def generate_image(message: types.Message, prompt=None):
 
     tokens = get_tokens(user_id)
     if tokens < price:
-        await message.answer(f"❌ Недостаточно токенов! Нужно: {price}, у тебя: {tokens}")
+        await message.answer(f"❌ Недостаточно токенов! Нужно: {price}")
         return
 
     if not API_KEY:
@@ -42,7 +45,7 @@ async def generate_image(message: types.Message, prompt=None):
     
     client = get_openai_client()
     if not client:
-        return await message.answer("❌ Ошибка инициализации OpenAI клиента")
+        return await message.answer("❌ Ошибка инициализации OpenAI")
 
     status_msg = await message.answer("🎨 Генерирую...")
 
