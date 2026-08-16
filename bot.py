@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import init_db, migrate_db, is_admin, add_admin
-from handlers import router
+from handlers import routers
 from backup import GitHubBackup
 
 load_dotenv()
@@ -33,17 +33,14 @@ def run_flask():
 async def main():
     logger.info("🚀 Запуск...")
     
-    # Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     logger.info("✅ Flask запущен")
     
-    # База данных
     init_db()
     migrate_db()
     logger.info("✅ База данных готова")
     
-    # Бэкап-цикл
     def backup_loop():
         while True:
             time.sleep(3600)
@@ -55,20 +52,21 @@ async def main():
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
     
-    # Добавляем админа
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
         logger.info(f"✅ Админ {ADMIN_ID} добавлен")
     
-    # Регистрируем роутер
-    dp.include_router(router)
+    for router in routers:
+        dp.include_router(router)
     
-    # Команды
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
         types.BotCommand(command="balance", description="💰 Баланс"),
         types.BotCommand(command="profile", description="👤 Профиль"),
-        types.BotCommand(command="help", description="❓ Помощь")
+        types.BotCommand(command="help", description="❓ Помощь"),
+        types.BotCommand(command="search", description="🔍 Поиск"),
+        types.BotCommand(command="remind", description="⏰ Напоминание"),
+        types.BotCommand(command="reminders", description="📋 Список напоминаний"),
     ])
     
     await bot.delete_webhook(drop_pending_updates=True)
