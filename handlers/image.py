@@ -1,5 +1,5 @@
 from aiogram import Router, types, F
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
 import logging, requests, json, os, time
@@ -33,24 +33,6 @@ async def generate_image(message: types.Message, prompt=None):
     status_msg = await message.answer("🎨 Генерирую картинку...")
 
     try:
-        # Улучшение промпта
-        prompt_resp = requests.post(
-            "https://openai.bothub.chat/v1/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            json={
-                "model": PROMPT_MODEL,
-                "messages": [
-                    {"role": "system", "content": "Create detailed English prompt. Only the prompt!"},
-                    {"role": "user", "content": f"Prompt for: {prompt}"}
-                ],
-                "max_tokens": 200
-            },
-            timeout=30
-        )
-        enhanced = prompt
-        if prompt_resp.status_code == 200:
-            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
-
         # Генерация через Replicate
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
@@ -58,7 +40,7 @@ async def generate_image(message: types.Message, prompt=None):
             json={
                 "model": model_config["api_model"],
                 "input": {
-                    "prompt": enhanced,
+                    "prompt": prompt,
                     "aspect_ratio": "1:1",
                     "output_format": "webp"
                 },
@@ -98,15 +80,16 @@ async def generate_image(message: types.Message, prompt=None):
 
             spend_tokens(user_id, price)
             
-            # СОХРАНЯЕМ В БД (С ПОВТОРНЫМИ ПОПЫТКАМИ)
+            # === СОХРАНЯЕМ В БД ===
             image_id = None
             session_id = None
             for attempt in range(3):
                 try:
                     image_id, session_id = save_image_to_history(
-                        user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
+                        user_id=user_id, prompt=prompt, enhanced_prompt=prompt,
                         model=model_config["api_model"], image_data=img_data
                     )
+                    logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}, session_id={session_id}")
                     break
                 except Exception as e:
                     if "database is locked" in str(e) and attempt < 2:
@@ -116,10 +99,17 @@ async def generate_image(message: types.Message, prompt=None):
                     break
             
             new_tokens = get_tokens(user_id)
+            
+            # === КНОПКИ С ПРАВКОЙ ===
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+            ]) if image_id else helpers.main_menu()
+            
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
                 caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-                reply_markup=helpers.image_action_buttons(image_id, session_id) if image_id else None
+                reply_markup=keyboard
             )
             await status_msg.delete()
             return
@@ -139,3 +129,28 @@ async def back_main_cb(callback: types.CallbackQuery):
         reply_markup=helpers.main_menu()
     )
     await helpers.safe_answer(callback)
+
+@router.callback_query(F.data.startswith("edit_"))
+async def edit_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    image_id = int(callback.data.replace("edit_", ""))
+    
+    logger.info(f"📌 [{user_id}] edit_callback: image_id={image_id}")
+    
+    image = get_image_by_id(image_id)
+    if not image:
+        await callback.answer("❌ Картинка не найдена", show_alert=True)
+        return
+    
+    helpers.user_pages[user_id] = {"state": "waiting_edit", "image_id": image_id}
+    
+    await callback.message.answer(
+        "✏️ **Что изменить?**\n\n"
+        "Напиши, что хочешь поменять:\n"
+        "• *сделай кота чёрным*\n"
+        "• *добавь шляпу*\n"
+        "• *убери фон*\n\n"
+        "⏹ /cancel",
+        reply_markup=helpers.edit_in_progress_kb()
+    )
+    await callback.answer()
