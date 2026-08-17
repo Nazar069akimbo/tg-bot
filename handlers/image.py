@@ -2,20 +2,17 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
-import logging, requests, json, os, time
+import logging, requests, os, time
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-from openai import OpenAI
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv('OPENAI_API_KEY')
+PROMPT_MODEL = "gpt-4.1-nano"
 
 async def generate_image(message: types.Message, prompt=None):
-    """
-    Генерация картинки через OpenAI-совместимый клиент Bothub
-    """
     user_id = message.from_user.id
     logger.info(f"📌 [{user_id}] generate_image")
     
@@ -36,110 +33,123 @@ async def generate_image(message: types.Message, prompt=None):
     status_msg = await message.answer("🎨 Генерирую картинку...")
 
     try:
-        # === ИСПОЛЬЗУЕМ OPENAI-КЛИЕНТ ===
-        client = OpenAI(
-            api_key=API_KEY,
-            base_url='https://openai.bothub.chat/v1'
+        # ===== 1. УЛУЧШЕНИЕ ПРОМПТА ЧЕРЕЗ GPT =====
+        logger.info(f"🔄 [{user_id}] Улучшение промпта...")
+        prompt_resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "model": PROMPT_MODEL,
+                "messages": [
+                    {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
+                    {"role": "user", "content": f"Prompt for: {prompt}"}
+                ],
+                "max_tokens": 200
+            },
+            timeout=30
+        )
+        enhanced = prompt
+        if prompt_resp.status_code == 200:
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
+            logger.info(f"✅ [{user_id}] Промпт улучшен: {enhanced[:50]}...")
+
+        # ===== 2. ГЕНЕРАЦИЯ ЧЕРЕЗ REPLICATE =====
+        logger.info(f"🔄 [{user_id}] Запрос к Replicate...")
+        img_resp = requests.post(
+            "https://bothub.chat/api/v2/replicate/v1/images/generations",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "model": model_config["api_model"],
+                "input": {
+                    "prompt": enhanced,
+                    "aspect_ratio": "1:1",
+                    "output_format": "webp"
+                },
+                "bothub": {"include_usage": True, "return_base64": False}
+            },
+            timeout=60
         )
         
-        # Параметры для генерации
-        params = {
-            'model': model_config["api_model"],  # 'flux-schnell'
-            'prompt': prompt,
-            'n': 1,
-            'size': '1024x1024',
-        }
+        img_data = None
         
-        logger.info(f"🔄 [{user_id}] Запрос к OpenAI API...")
-        response = client.images.generate(**params)
-        
-        # Логируем ответ для отладки
-        logger.info(f"✅ [{user_id}] Ответ получен: {response.model_dump_json()[:200]}...")
-        
-        # Извлекаем URL
-        if hasattr(response, 'data') and len(response.data) > 0:
-            image_url = response.data[0].url
-            logger.info(f"✅ [{user_id}] URL получен: {image_url[:50]}...")
+        if img_resp.status_code == 200:
+            result = img_resp.json()
+            img_url = result.get('url')
+            if isinstance(img_url, list):
+                img_url = img_url[0]
+            
+            if img_url:
+                logger.info(f"✅ [{user_id}] URL получен")
+                img_response = requests.get(img_url, timeout=30)
+                if img_response.status_code == 200 and len(img_response.content) > 1000:
+                    img_data = img_response.content
+                    logger.info(f"✅ [{user_id}] Картинка скачана, размер: {len(img_data)} байт")
         else:
-            raise ValueError("Нет data в ответе OpenAI")
-        
-        if not image_url:
-            raise ValueError("URL картинки не получен")
-        
-        # === СКАЧИВАЕМ КАРТИНКУ ===
-        logger.info(f"🔄 [{user_id}] Скачивание картинки...")
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        img_response = requests.get(image_url, headers=headers, timeout=30)
-        
-        if img_response.status_code != 200:
-            raise ValueError(f"Ошибка скачивания: {img_response.status_code}")
-        
-        if len(img_response.content) < 1000:
-            raise ValueError(f"Картинка слишком маленькая: {len(img_response.content)} байт")
-        
-        img_data = img_response.content
-        logger.info(f"✅ [{user_id}] Картинка скачана, размер: {len(img_data)} байт")
+            logger.error(f"❌ [{user_id}] Replicate ошибка: {img_resp.status_code}")
 
-        # === ВОДЯНОЙ ЗНАК ===
-        try:
-            img = Image.open(BytesIO(img_data))
-            draw = ImageDraw.Draw(img)
+        if img_data:
+            # ===== 3. ВОДЯНОЙ ЗНАК =====
             try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
-            except:
-                font = ImageFont.load_default()
-            draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
-            output = BytesIO()
-            img.save(output, format='PNG')
-            output.seek(0)
-            img_data = output.getvalue()
-        except Exception as e:
-            logger.warning(f"⚠️ [{user_id}] Не удалось наложить водяной знак: {e}")
-
-        # === СПИСЫВАЕМ ТОКЕНЫ ===
-        spend_tokens(user_id, price)
-        
-        # === СОХРАНЯЕМ В БД ===
-        image_id = None
-        session_id = None
-        for attempt in range(3):
-            try:
-                image_id, session_id = save_image_to_history(
-                    user_id=user_id,
-                    prompt=prompt,
-                    enhanced_prompt=prompt,
-                    model=model_config["api_model"],
-                    image_data=img_data
-                )
-                logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
-                break
+                img = Image.open(BytesIO(img_data))
+                draw = ImageDraw.Draw(img)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+                except:
+                    font = ImageFont.load_default()
+                draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
+                output = BytesIO()
+                img.save(output, format='PNG')
+                output.seek(0)
+                img_data = output.getvalue()
             except Exception as e:
-                if "database is locked" in str(e) and attempt < 2:
-                    time.sleep(1)
-                    continue
-                logger.error(f"❌ [{user_id}] Ошибка сохранения в БД: {e}")
-                break
+                logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
-        new_tokens = get_tokens(user_id)
-        
-        # === КНОПКИ ===
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
-            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-        ]) if image_id else helpers.main_menu()
-        
-        # === ОТПРАВЛЯЕМ ===
-        await message.answer_photo(
-            BufferedInputFile(file=img_data, filename="image.png"),
-            caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-            reply_markup=keyboard
-        )
-        await status_msg.delete()
-        logger.info(f"✅ [{user_id}] Картинка отправлена пользователю")
-        return
+            # ===== 4. СПИСЫВАЕМ ТОКЕНЫ =====
+            spend_tokens(user_id, price)
+            
+            # ===== 5. СОХРАНЯЕМ В БД =====
+            image_id = None
+            session_id = None
+            for attempt in range(3):
+                try:
+                    image_id, session_id = save_image_to_history(
+                        user_id=user_id,
+                        prompt=prompt,
+                        enhanced_prompt=enhanced,
+                        model=model_config["api_model"],
+                        image_data=img_data
+                    )
+                    logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
+                    break
+                except Exception as e:
+                    if "database is locked" in str(e) and attempt < 2:
+                        time.sleep(1)
+                        continue
+                    logger.error(f"❌ [{user_id}] Ошибка БД: {e}")
+                    break
 
+            new_tokens = get_tokens(user_id)
+            
+            # ===== 6. КНОПКИ =====
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+            ]) if image_id else helpers.main_menu()
+            
+            # ===== 7. ОТПРАВЛЯЕМ =====
+            await message.answer_photo(
+                BufferedInputFile(file=img_data, filename="image.png"),
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=keyboard
+            )
+            await status_msg.delete()
+            logger.info(f"✅ [{user_id}] Картинка отправлена")
+            return
+
+        await status_msg.edit_text("❌ Не удалось получить картинку")
+        
     except Exception as e:
-        logger.error(f"❌ [{user_id}] Ошибка генерации: {e}", exc_info=True)
+        logger.error(f"❌ [{user_id}] Ошибка: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
 
 @router.callback_query(F.data == "back_to_main")
@@ -155,11 +165,8 @@ async def back_main_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_callback(callback: types.CallbackQuery):
-    """Обработка нажатия на кнопку 'Поправить'"""
     user_id = callback.from_user.id
     image_id = int(callback.data.replace("edit_", ""))
-    
-    logger.info(f"📌 [{user_id}] edit_callback: image_id={image_id}")
     
     image = get_image_by_id(image_id)
     if not image:
