@@ -11,17 +11,17 @@ from contextlib import contextmanager
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# ===== ОЧЕРЕДЬ ЗАПРОСОВ =====
+# ===== ПРОСТАЯ ОЧЕРЕДЬ С ОДНИМ ПОТОКОМ =====
 _db_queue = queue.Queue()
 _db_thread = None
 _db_running = True
 
 def _db_worker():
-    """Фоновый поток, обрабатывающий запросы к БД"""
+    """Фоновый поток для БД"""
     conn = None
     while _db_running:
         try:
-            task = _db_queue.get(timeout=1)
+            task = _db_queue.get(timeout=5)
             if task is None:
                 continue
             
@@ -42,7 +42,8 @@ def _db_worker():
                     result_queue.put(result)
                     
             except Exception as e:
-                conn.rollback()
+                if conn:
+                    conn.rollback()
                 if error_queue:
                     error_queue.put(e)
                 else:
@@ -62,6 +63,7 @@ def _ensure_db_thread():
     if _db_thread is None or not _db_thread.is_alive():
         _db_thread = threading.Thread(target=_db_worker, daemon=True)
         _db_thread.start()
+        print("✅ Поток БД запущен")
 
 def _execute_db(func, *args, **kwargs):
     _ensure_db_thread()
@@ -72,6 +74,7 @@ def _execute_db(func, *args, **kwargs):
     _db_queue.put((func, args, kwargs, result_queue, error_queue))
     
     try:
+        # Проверяем ошибку
         if not error_queue.empty():
             raise error_queue.get(timeout=1)
         return result_queue.get(timeout=30)
@@ -284,7 +287,38 @@ def migrate_db():
     except Exception as e:
         print(f"⚠️ Ошибка миграции: {e}")
 
-# ===== ОСНОВНЫЕ ФУНКЦИИ =====
+# ===== ФУНКЦИИ БЕЗ ДЕКОРАТОРА (ПРЯМОЙ ДОСТУП) =====
+
+def get_user_sync(user_id):
+    """Синхронное получение пользователя (без очереди)"""
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def set_user_name_sync(user_id, name):
+    """Синхронное обновление имени (без очереди)"""
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Проверяем, есть ли запись
+    cursor.execute("SELECT user_id FROM user_memory WHERE user_id = ?", (user_id,))
+    if not cursor.fetchone():
+        cursor.execute("""
+            INSERT INTO user_memory (user_id, created_at, updated_at, context_history)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, datetime.now().isoformat(), datetime.now().isoformat(), json.dumps([])))
+    
+    cursor.execute("UPDATE user_memory SET name = ?, updated_at = ? WHERE user_id = ?", 
+                   (name, datetime.now().isoformat(), user_id))
+    conn.commit()
+    conn.close()
+
+# ===== ОСНОВНЫЕ ФУНКЦИИ (С ДЕКОРАТОРОМ) =====
 
 @db_operation
 def get_user(conn, cursor, user_id):
@@ -305,13 +339,15 @@ def create_user(conn, cursor, user_id, username):
 
 def force_create_user(user_id, username=None):
     try:
-        user = get_user(user_id)
+        # Используем синхронную версию для скорости
+        user = get_user_sync(user_id)
         if user:
             return user
         create_user(user_id, username or str(user_id))
-        init_user_memory(user_id)
-        return get_user(user_id)
-    except:
+        set_user_name_sync(user_id, username or str(user_id))
+        return get_user_sync(user_id)
+    except Exception as e:
+        print(f"❌ Ошибка force_create_user: {e}")
         return None
 
 @db_operation
@@ -369,10 +405,10 @@ def update_user_memory(conn, cursor, user_id, data):
     query = f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?"
     cursor.execute(query, values)
 
-# ===== НОВАЯ ФУНКЦИЯ: set_user_name =====
+# ===== ОБЁРТКА ДЛЯ set_user_name (СИНХРОННАЯ) =====
 def set_user_name(user_id, name):
-    """Установить имя пользователя"""
-    update_user_memory(user_id, {'name': name})
+    """Установить имя пользователя (синхронно)"""
+    set_user_name_sync(user_id, name)
 
 def add_to_context(user_id, prompt, image_id=None, edit_type=None):
     memory = get_user_memory(user_id)
@@ -624,7 +660,7 @@ def do_backup():
     except:
         pass
 
-# ===== ЭКСПОРТ ВСЕХ ФУНКЦИЙ =====
+# ===== ЭКСПОРТ =====
 __all__ = [
     'init_db', 'migrate_db',
     'get_user', 'create_user', 'force_create_user',
