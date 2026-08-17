@@ -5,29 +5,6 @@ from . import helpers
 from .image import generate_image
 import logging, json, re, os, requests
 
-# ЯВНО ИМПОРТИРУЕМ НУЖНЫЕ ФУНКЦИИ
-from database.db import (
-    get_user, create_user, force_create_user,
-    get_tokens, add_tokens, spend_tokens,
-    get_user_memory, init_user_memory, update_user_memory,
-    set_user_name,  # ← ЭТО ГЛАВНОЕ!
-    add_to_context,
-    get_last_image, get_image_by_id,
-    get_text_requests, can_request_text, add_text_request,
-    has_trial, activate_trial, get_trial_remaining,
-    add_referral, get_referral_count,
-    use_promocode,
-    is_admin, add_admin,
-    add_premium,
-    get_stats,
-    add_reminder, get_user_reminders,
-    get_setting, set_setting,
-    save_image_to_history,
-    get_image_chain_by_session, get_edit_version,
-    create_payment, complete_payment,
-    block_user, unblock_user
-)
-
 router = Router()
 logger = logging.getLogger(__name__)
 
@@ -93,7 +70,6 @@ async def handle_text(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
     
-    # Проверяем состояния
     state = helpers.user_pages.get(user_id, {})
     
     if state.get("state") == "waiting_name":
@@ -114,10 +90,8 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === АНАЛИЗ ЧЕРЕЗ GPT ===
     action, params = await ai_analyze_intent(user_id, text)
     
-    # === ВЫПОЛНЯЕМ ДЕЙСТВИЕ ===
     if action == 'generate_image':
         prompt = params.get('prompt', text)
         await generate_image(message, prompt)
@@ -142,7 +116,6 @@ async def handle_text(message: types.Message):
         await send_referral_info(message)
     
     else:
-        # Обычный текстовый ответ
         await generate_text(message)
 
 async def generate_text(message: types.Message):

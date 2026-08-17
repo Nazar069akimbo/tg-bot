@@ -21,7 +21,6 @@ def _db_worker():
     conn = None
     while _db_running:
         try:
-            # Получаем задачу из очереди
             task = _db_queue.get(timeout=1)
             if task is None:
                 continue
@@ -29,19 +28,16 @@ def _db_worker():
             func, args, kwargs, result_queue, error_queue = task
             
             try:
-                # Подключаемся к БД
                 if conn is None:
                     conn = sqlite3.connect(DB_PATH, timeout=60)
                     conn.row_factory = sqlite3.Row
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=NORMAL")
                 
-                # Выполняем запрос
                 cursor = conn.cursor()
                 result = func(conn, cursor, *args, **kwargs)
                 conn.commit()
                 
-                # Возвращаем результат
                 if result_queue:
                     result_queue.put(result)
                     
@@ -50,7 +46,6 @@ def _db_worker():
                 if error_queue:
                     error_queue.put(e)
                 else:
-                    # Если нет error_queue, просто логируем
                     print(f"❌ Ошибка БД: {e}")
                     
             finally:
@@ -63,14 +58,12 @@ def _db_worker():
             conn = None
 
 def _ensure_db_thread():
-    """Запускает поток-воркер если он не запущен"""
     global _db_thread
     if _db_thread is None or not _db_thread.is_alive():
         _db_thread = threading.Thread(target=_db_worker, daemon=True)
         _db_thread.start()
 
 def _execute_db(func, *args, **kwargs):
-    """Отправляет запрос в очередь и ждёт результат"""
     _ensure_db_thread()
     
     result_queue = queue.Queue()
@@ -78,9 +71,7 @@ def _execute_db(func, *args, **kwargs):
     
     _db_queue.put((func, args, kwargs, result_queue, error_queue))
     
-    # Ждём результат
     try:
-        # Проверяем ошибку
         if not error_queue.empty():
             raise error_queue.get(timeout=1)
         return result_queue.get(timeout=30)
@@ -89,16 +80,13 @@ def _execute_db(func, *args, **kwargs):
     except Exception as e:
         raise e
 
-# ===== ДЕКОРАТОР ДЛЯ ФУНКЦИЙ =====
 def db_operation(func):
-    """Декоратор для функций, работающих с БД"""
     def wrapper(*args, **kwargs):
         return _execute_db(func, *args, **kwargs)
     return wrapper
 
 # ===== ИНИЦИАЛИЗАЦИЯ =====
 def init_db():
-    """Инициализация БД со всеми таблицами"""
     def _init(conn, cursor):
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -280,7 +268,6 @@ def init_db():
     _execute_db(_init)
 
 def migrate_db():
-    """Автоматическая миграция"""
     def _migrate(conn, cursor):
         cursor.execute("PRAGMA table_info(promocodes)")
         cols = [row[1] for row in cursor.fetchall()]
@@ -297,7 +284,7 @@ def migrate_db():
     except Exception as e:
         print(f"⚠️ Ошибка миграции: {e}")
 
-# ===== ОСНОВНЫЕ ФУНКЦИИ (С ДЕКОРАТОРОМ) =====
+# ===== ОСНОВНЫЕ ФУНКЦИИ =====
 
 @db_operation
 def get_user(conn, cursor, user_id):
@@ -381,6 +368,11 @@ def update_user_memory(conn, cursor, user_id, data):
     values.append(user_id)
     query = f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?"
     cursor.execute(query, values)
+
+# ===== НОВАЯ ФУНКЦИЯ: set_user_name =====
+def set_user_name(user_id, name):
+    """Установить имя пользователя"""
+    update_user_memory(user_id, {'name': name})
 
 def add_to_context(user_id, prompt, image_id=None, edit_type=None):
     memory = get_user_memory(user_id)
@@ -631,3 +623,27 @@ def do_backup():
         GitHubBackup().backup_db()
     except:
         pass
+
+# ===== ЭКСПОРТ ВСЕХ ФУНКЦИЙ =====
+__all__ = [
+    'init_db', 'migrate_db',
+    'get_user', 'create_user', 'force_create_user',
+    'get_tokens', 'add_tokens', 'spend_tokens',
+    'get_user_memory', 'init_user_memory', 'update_user_memory',
+    'set_user_name',
+    'add_to_context',
+    'get_last_image', 'get_image_by_id', 'save_image_to_history',
+    'get_image_chain_by_session', 'get_edit_version',
+    'get_text_requests', 'can_request_text', 'add_text_request',
+    'has_trial', 'activate_trial', 'get_trial_remaining',
+    'add_referral', 'get_referral_count',
+    'use_promocode',
+    'create_payment', 'complete_payment',
+    'is_admin', 'add_admin',
+    'add_premium',
+    'block_user', 'unblock_user',
+    'get_stats',
+    'add_reminder', 'get_due_reminders', 'mark_reminder_sent', 'get_user_reminders', 'delete_reminder',
+    'get_setting', 'set_setting',
+    'do_backup'
+]
