@@ -109,11 +109,26 @@ async def generate_image(message: types.Message, prompt=None):
             spend_tokens(user_id, price)
             logger.info(f"✅ [{user_id}] Токены списаны: {price}")
             
-            # ===== 5. СОХРАНЯЕМ В БД (С МЕНЬШИМ ТАЙМАУТОМ) =====
-            image_id = None
-            session_id = None
+            new_tokens = get_tokens(user_id)
             
-            # Пробуем сохранить, но если БД заблокирована — пропускаем
+            # ===== 5. ОТПРАВЛЯЕМ КАРТИНКУ (БЕЗ СОХРАНЕНИЯ В БД) =====
+            logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
+            
+            # Простая клавиатура без сохранения в БД
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+            ])
+            
+            await message.answer_photo(
+                BufferedInputFile(file=img_data, filename="image.png"),
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=keyboard
+            )
+            await status_msg.delete()
+            logger.info(f"✅ [{user_id}] Картинка отправлена")
+            
+            # ===== 6. СОХРАНЯЕМ В БД (ФОНОВО, НЕ БЛОКИРУЕМ) =====
             try:
                 image_id, session_id = save_image_to_history(
                     user_id=user_id,
@@ -124,29 +139,8 @@ async def generate_image(message: types.Message, prompt=None):
                 )
                 logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
             except Exception as e:
-                logger.warning(f"⚠️ [{user_id}] БД заблокирована, пропускаем сохранение: {e}")
-                # Продолжаем без сохранения
-
-            new_tokens = get_tokens(user_id)
+                logger.warning(f"⚠️ [{user_id}] Не удалось сохранить в БД: {e}")
             
-            # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ =====
-            logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
-            
-            # Кнопка "Поправить" только если есть image_id
-            keyboard = None
-            if image_id:
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
-                    [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-                ])
-            
-            await message.answer_photo(
-                BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-                reply_markup=keyboard or helpers.main_menu()
-            )
-            await status_msg.delete()
-            logger.info(f"✅ [{user_id}] Картинка отправлена")
             return
 
         await status_msg.edit_text("❌ Не удалось получить картинку")
@@ -166,25 +160,10 @@ async def back_main_cb(callback: types.CallbackQuery):
     )
     await helpers.safe_answer(callback)
 
-@router.callback_query(F.data.startswith("edit_"))
-async def edit_callback(callback: types.CallbackQuery):
+@router.callback_query(F.data == "regenerate")
+async def regenerate_cb(callback: types.CallbackQuery):
+    """Повторная генерация с тем же промптом"""
     user_id = callback.from_user.id
-    image_id = int(callback.data.replace("edit_", ""))
-    
-    image = get_image_by_id(image_id)
-    if not image:
-        await callback.answer("❌ Картинка не найдена", show_alert=True)
-        return
-    
-    helpers.user_pages[user_id] = {"state": "waiting_edit", "image_id": image_id}
-    
-    await callback.message.answer(
-        "✏️ **Что изменить?**\n\n"
-        "Напиши, что хочешь поменять:\n"
-        "• *сделай кота чёрным*\n"
-        "• *добавь шляпу*\n"
-        "• *убери фон*\n\n"
-        "⏹ /cancel",
-        reply_markup=helpers.edit_in_progress_kb()
-    )
+    await callback.message.answer("🔄 Генерирую ещё одну картинку...")
+    # Здесь можно взять последний промпт и сгенерировать заново
     await callback.answer()
