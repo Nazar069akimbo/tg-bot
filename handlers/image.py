@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
-import logging, requests, os, time
+import logging, requests, os, time, asyncio
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,7 +33,7 @@ async def generate_image(message: types.Message, prompt=None):
     status_msg = await message.answer("🎨 Генерирую картинку...")
 
     try:
-        # ===== 1. УЛУЧШЕНИЕ ПРОМПТА ЧЕРЕЗ GPT =====
+        # ===== 1. УЛУЧШЕНИЕ ПРОМПТА =====
         logger.info(f"🔄 [{user_id}] Улучшение промпта...")
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
@@ -101,11 +101,13 @@ async def generate_image(message: types.Message, prompt=None):
                 img.save(output, format='PNG')
                 output.seek(0)
                 img_data = output.getvalue()
+                logger.info(f"✅ [{user_id}] Водяной знак наложен")
             except Exception as e:
                 logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
             # ===== 4. СПИСЫВАЕМ ТОКЕНЫ =====
             spend_tokens(user_id, price)
+            logger.info(f"✅ [{user_id}] Токены списаны: {price}")
             
             # ===== 5. СОХРАНЯЕМ В БД =====
             image_id = None
@@ -130,20 +132,25 @@ async def generate_image(message: types.Message, prompt=None):
 
             new_tokens = get_tokens(user_id)
             
-            # ===== 6. КНОПКИ =====
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
-                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-            ]) if image_id else helpers.main_menu()
+            # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ =====
+            logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
             
-            # ===== 7. ОТПРАВЛЯЕМ =====
-            await message.answer_photo(
-                BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-                reply_markup=keyboard
-            )
+            try:
+                # Пробуем отправить с таймаутом
+                await asyncio.wait_for(
+                    message.answer_photo(
+                        BufferedInputFile(file=img_data, filename="image.png"),
+                        caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                        reply_markup=helpers.image_action_buttons(image_id, session_id) if image_id else None
+                    ),
+                    timeout=30
+                )
+                logger.info(f"✅ [{user_id}] Картинка отправлена")
+            except asyncio.TimeoutError:
+                logger.error(f"❌ [{user_id}] Таймаут при отправке картинки")
+                await message.answer("⚠️ Картинка сгенерирована, но не удалось отправить. Попробуйте позже.")
+            
             await status_msg.delete()
-            logger.info(f"✅ [{user_id}] Картинка отправлена")
             return
 
         await status_msg.edit_text("❌ Не удалось получить картинку")
