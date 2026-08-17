@@ -109,48 +109,44 @@ async def generate_image(message: types.Message, prompt=None):
             spend_tokens(user_id, price)
             logger.info(f"✅ [{user_id}] Токены списаны: {price}")
             
-            # ===== 5. СОХРАНЯЕМ В БД =====
+            # ===== 5. СОХРАНЯЕМ В БД (С МЕНЬШИМ ТАЙМАУТОМ) =====
             image_id = None
             session_id = None
-            for attempt in range(3):
-                try:
-                    image_id, session_id = save_image_to_history(
-                        user_id=user_id,
-                        prompt=prompt,
-                        enhanced_prompt=enhanced,
-                        model=model_config["api_model"],
-                        image_data=img_data
-                    )
-                    logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
-                    break
-                except Exception as e:
-                    if "database is locked" in str(e) and attempt < 2:
-                        time.sleep(1)
-                        continue
-                    logger.error(f"❌ [{user_id}] Ошибка БД: {e}")
-                    break
+            
+            # Пробуем сохранить, но если БД заблокирована — пропускаем
+            try:
+                image_id, session_id = save_image_to_history(
+                    user_id=user_id,
+                    prompt=prompt,
+                    enhanced_prompt=enhanced,
+                    model=model_config["api_model"],
+                    image_data=img_data
+                )
+                logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ [{user_id}] БД заблокирована, пропускаем сохранение: {e}")
+                # Продолжаем без сохранения
 
             new_tokens = get_tokens(user_id)
             
             # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ =====
             logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
             
-            try:
-                # Пробуем отправить с таймаутом
-                await asyncio.wait_for(
-                    message.answer_photo(
-                        BufferedInputFile(file=img_data, filename="image.png"),
-                        caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-                        reply_markup=helpers.image_action_buttons(image_id, session_id) if image_id else None
-                    ),
-                    timeout=30
-                )
-                logger.info(f"✅ [{user_id}] Картинка отправлена")
-            except asyncio.TimeoutError:
-                logger.error(f"❌ [{user_id}] Таймаут при отправке картинки")
-                await message.answer("⚠️ Картинка сгенерирована, но не удалось отправить. Попробуйте позже.")
+            # Кнопка "Поправить" только если есть image_id
+            keyboard = None
+            if image_id:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
+                    [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+                ])
             
+            await message.answer_photo(
+                BufferedInputFile(file=img_data, filename="image.png"),
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=keyboard or helpers.main_menu()
+            )
             await status_msg.delete()
+            logger.info(f"✅ [{user_id}] Картинка отправлена")
             return
 
         await status_msg.edit_text("❌ Не удалось получить картинку")
