@@ -111,10 +111,9 @@ async def generate_image(message: types.Message, prompt=None):
             
             new_tokens = get_tokens(user_id)
             
-            # ===== 5. ОТПРАВЛЯЕМ КАРТИНКУ (БЕЗ СОХРАНЕНИЯ В БД) =====
+            # ===== 5. ОТПРАВЛЯЕМ КАРТИНКУ =====
             logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
             
-            # Простая клавиатура без сохранения в БД
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
                 [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
@@ -128,7 +127,7 @@ async def generate_image(message: types.Message, prompt=None):
             await status_msg.delete()
             logger.info(f"✅ [{user_id}] Картинка отправлена")
             
-            # ===== 6. СОХРАНЯЕМ В БД (ФОНОВО, НЕ БЛОКИРУЕМ) =====
+            # ===== 6. СОХРАНЯЕМ В БД (ФОНОВО) =====
             try:
                 image_id, session_id = save_image_to_history(
                     user_id=user_id,
@@ -151,19 +150,43 @@ async def generate_image(message: types.Message, prompt=None):
 
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
+    """Возврат в главное меню (безопасная версия)"""
     user_id = callback.from_user.id
     tokens = get_tokens(user_id)
     name = helpers.get_user_name(user_id) or "друг"
-    await callback.message.edit_text(
-        f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}",
-        reply_markup=helpers.main_menu()
-    )
+    
+    # Проверяем, есть ли текст для редактирования
+    try:
+        # Пробуем отредактировать существующее сообщение
+        await callback.message.edit_text(
+            f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}",
+            reply_markup=helpers.main_menu()
+        )
+    except Exception as e:
+        # Если не получилось — отправляем новое сообщение
+        await callback.message.answer(
+            f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}",
+            reply_markup=helpers.main_menu()
+        )
     await helpers.safe_answer(callback)
 
 @router.callback_query(F.data == "regenerate")
 async def regenerate_cb(callback: types.CallbackQuery):
     """Повторная генерация с тем же промптом"""
     user_id = callback.from_user.id
-    await callback.message.answer("🔄 Генерирую ещё одну картинку...")
-    # Здесь можно взять последний промпт и сгенерировать заново
-    await callback.answer()
+    # Пробуем получить последний промпт из контекста
+    memory = get_user_memory(user_id)
+    if memory and memory.get('context_history'):
+        history = json.loads(memory.get('context_history', '[]'))
+        if history:
+            last = history[-1]
+            prompt = last.get('prompt', '')
+            if prompt:
+                await callback.message.answer("🔄 Генерирую ещё одну картинку...")
+                # Создаём новое сообщение для генерации
+                # (используем callback.message как основу)
+                await generate_image(callback.message, prompt)
+                await callback.answer()
+                return
+    
+    await callback.answer("❌ Не найден предыдущий запрос", show_alert=True)
