@@ -44,21 +44,18 @@ async def safe_edit(callback, text, reply_markup=None):
 
 # ===== РАБОТА С БД ЧЕРЕЗ ОЧЕРЕДЬ =====
 def get_users_from_db():
-    """Получить список пользователей через очередь БД"""
     def _get_users(conn, cursor):
         cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 20")
         return cursor.fetchall()
     return _execute_db(_get_users)
 
 def get_messages_from_db():
-    """Получить сообщения через очередь БД"""
     def _get_messages(conn, cursor):
         cursor.execute("SELECT id, user_id, username, text, date FROM messages_to_admin ORDER BY date DESC LIMIT 20")
         return cursor.fetchall()
     return _execute_db(_get_messages)
 
 def get_promocodes_from_db():
-    """Получить промокоды через очередь БД"""
     def _get_promocodes(conn, cursor):
         cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
         return cursor.fetchall()
@@ -105,7 +102,6 @@ async def a_users_cb(callback: types.CallbackQuery):
         return
     
     try:
-        # Используем очередь БД
         users = get_users_from_db()
         
         if not users:
@@ -315,6 +311,20 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка загрузки промокодов: {e}")
         await safe_edit(callback, "❌ Ошибка загрузки", helpers.admin_kb())
+    
+    await helpers.safe_answer(callback)
+
+@router.callback_query(F.data == "a_db_status")
+async def a_db_status_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    
+    try:
+        text = get_queue_info()
+        await safe_edit(callback, text, helpers.admin_kb())
+    except Exception as e:
+        await safe_edit(callback, f"❌ Ошибка: {e}", helpers.admin_kb())
     
     await helpers.safe_answer(callback)
 

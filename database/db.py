@@ -66,7 +66,7 @@ def _ensure_db_thread():
         print("✅ Поток БД запущен")
 
 def _execute_db(func, *args, **kwargs):
-    """Отправляет запрос в очередь и ждёт результат (ЭКСПОРТИРУЕТСЯ)"""
+    """Отправляет запрос в очередь и ждёт результат"""
     _ensure_db_thread()
     
     result_queue = queue.Queue()
@@ -87,6 +87,26 @@ def db_operation(func):
     def wrapper(*args, **kwargs):
         return _execute_db(func, *args, **kwargs)
     return wrapper
+
+# ===== МОНИТОРИНГ ОЧЕРЕДИ =====
+def get_queue_status():
+    """Возвращает статус очереди БД"""
+    return {
+        'queue_size': _db_queue.qsize(),
+        'thread_alive': _db_thread.is_alive() if _db_thread else False,
+        'is_running': _db_running
+    }
+
+def get_queue_info():
+    """Подробная информация об очереди"""
+    size = _db_queue.qsize()
+    status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
+    return f"""
+📊 **Статус очереди БД**
+━━━━━━━━━━━━━━━━━━━━━━━
+📦 Очередь: {size} задач
+🔄 Поток: {status}
+"""
 
 # ===== ИНИЦИАЛИЗАЦИЯ =====
 def init_db():
@@ -287,7 +307,7 @@ def migrate_db():
     except Exception as e:
         print(f"⚠️ Ошибка миграции: {e}")
 
-# ===== ФУНКЦИИ БЕЗ ДЕКОРАТОРА (СИНХРОННЫЕ) =====
+# ===== СИНХРОННЫЕ ФУНКЦИИ =====
 def get_user_sync(user_id):
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
@@ -312,7 +332,7 @@ def set_user_name_sync(user_id, name):
     conn.commit()
     conn.close()
 
-# ===== ОСНОВНЫЕ ФУНКЦИИ (С ДЕКОРАТОРОМ) =====
+# ===== ОСНОВНЫЕ ФУНКЦИИ =====
 
 @db_operation
 def get_user(conn, cursor, user_id):
@@ -672,5 +692,6 @@ __all__ = [
     'get_stats',
     'add_reminder', 'get_due_reminders', 'mark_reminder_sent', 'get_user_reminders', 'delete_reminder',
     'get_setting', 'set_setting',
-    'do_backup'
+    'do_backup',
+    'get_queue_status', 'get_queue_info'
 ]
