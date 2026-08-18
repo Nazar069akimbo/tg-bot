@@ -65,8 +65,8 @@ class GitHubBackup:
             if response.status_code in [200, 201]:
                 logger.info(f"✅ Бэкап загружен в GitHub ({reason}): {file_path}")
                 os.remove(backup_name)
-                # Очищаем старые бэкапы (но сохраняем последние 5)
-                self.cleanup_old_backups(keep=5)
+                # Очищаем старые бэкапы (оставляем последние 10)
+                self.cleanup_old_backups(keep=10)
                 return True
             else:
                 logger.error(f"❌ Ошибка загрузки: {response.text}")
@@ -93,6 +93,7 @@ class GitHubBackup:
                 logger.info("ℹ️ Нет .db файлов для восстановления")
                 return False
             
+            # Сортируем по убыванию (новые сверху)
             db_files.sort(key=lambda x: x['name'], reverse=True)
             latest = db_files[0]
             
@@ -115,7 +116,7 @@ class GitHubBackup:
             logger.error(f"❌ Ошибка восстановления: {e}")
             return False
     
-    def cleanup_old_backups(self, keep=5):
+    def cleanup_old_backups(self, keep=10):
         """Удаляет старые бэкапы, оставляя только последние keep штук"""
         try:
             url = f'https://api.github.com/repos/{self.repo}/contents/backups'
@@ -128,15 +129,17 @@ class GitHubBackup:
             files = response.json()
             db_files = [f for f in files if f['name'].endswith('.db')]
             
-            if len(db_files) <= keep:
-                logger.info(f"ℹ️ Бэкапов {len(db_files)}, оставляем все")
-                return
-            
-            # Сортируем по имени (дата в имени)
+            # Сортируем по дате (новые сверху)
             db_files.sort(key=lambda x: x['name'], reverse=True)
             
-            # Оставляем последние keep, остальные удаляем
+            # Если бэкапов меньше чем keep — ничего не удаляем
+            if len(db_files) <= keep:
+                logger.info(f"ℹ️ Бэкапов: {len(db_files)}, оставляем все (keep={keep})")
+                return
+            
+            # Удаляем старые (кроме последних keep)
             to_delete = db_files[keep:]
+            logger.info(f"🗑️ Удаляем {len(to_delete)} старых бэкапов (оставляем {keep})")
             
             deleted_count = 0
             for file in to_delete:
