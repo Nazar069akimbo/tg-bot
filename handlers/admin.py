@@ -32,7 +32,6 @@ async def admin_panel_cb(callback: types.CallbackQuery):
     else:
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
 
-# ===== БЕЗОПАСНОЕ РЕДАКТИРОВАНИЕ =====
 async def safe_edit(callback, text, reply_markup=None):
     try:
         await callback.message.edit_text(text, reply_markup=reply_markup)
@@ -42,7 +41,6 @@ async def safe_edit(callback, text, reply_markup=None):
         else:
             raise
 
-# ===== РАБОТА С БД ЧЕРЕЗ ОЧЕРЕДЬ =====
 def get_users_from_db():
     def _get_users(conn, cursor):
         cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 50")
@@ -61,14 +59,14 @@ def get_promocodes_from_db():
         return cursor.fetchall()
     return _execute_db(_get_promocodes)
 
-# ===== НАГРУЗОЧНЫЙ ТЕСТ =====
+# ===== НАГРУЗОЧНЫЙ ТЕСТ (1000 ПОЛЬЗОВАТЕЛЕЙ) =====
 @router.callback_query(F.data == "a_load_test")
 async def load_test_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     
-    await safe_edit(callback, "⏳ **Запуск теста нагрузки...**\n\nОчередь будет заполняться!", helpers.admin_kb())
+    await safe_edit(callback, "⏳ **Запуск теста нагрузки (1000 пользователей)...**\n\nОчередь будет заполняться!", helpers.admin_kb())
     
     asyncio.create_task(run_load_test(callback))
 
@@ -77,26 +75,29 @@ async def run_load_test(callback):
     user_id = callback.from_user.id
     
     try:
-        for i in range(100):
+        total_users = 1000  # ← 1000 ПОЛЬЗОВАТЕЛЕЙ!
+        
+        for i in range(total_users):
             test_user_id = 9000000 + i
             create_user(test_user_id, f"load_{i}")
             add_tokens(test_user_id, 10)
             
-            if i % 10 == 0:
+            # Обновляем статус каждые 100 пользователей
+            if i % 100 == 0:
                 status = get_queue_info()
                 await callback.message.edit_text(
                     f"🔄 **Нагрузочный тест**\n\n"
-                    f"📊 Прогресс: {i+1}/100\n"
+                    f"📊 Прогресс: {i+1}/{total_users}\n"
                     f"{status}\n\n"
                     f"⏳ Продолжаем...",
                     reply_markup=helpers.admin_kb()
                 )
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.1)
         
         status = get_queue_info()
         await callback.message.edit_text(
             f"✅ **Тест завершён!**\n\n"
-            f"👥 Создано 100 пользователей\n"
+            f"👥 Создано {total_users} пользователей\n"
             f"🪙 Каждому добавлено 10 токенов\n\n"
             f"{status}",
             reply_markup=helpers.admin_kb()
@@ -108,7 +109,7 @@ async def run_load_test(callback):
             reply_markup=helpers.admin_kb()
         )
 
-# ===== АДМИН-ФУНКЦИИ =====
+# ===== ВСЕ АДМИН-ФУНКЦИИ =====
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
