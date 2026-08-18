@@ -37,7 +37,8 @@ def admin_kb():
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
         [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status"),
-         InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
+         InlineKeyboardButton(text="⚡ Нагрузить БД", callback_data="a_load_test")],
+        [InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
