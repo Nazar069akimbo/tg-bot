@@ -4,7 +4,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboar
 from database.db import *
 from . import helpers
 from backup import GitHubBackup
-import logging, os
+import logging, os, sqlite3
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -34,15 +34,35 @@ async def admin_panel_cb(callback: types.CallbackQuery):
 
 # ===== БЕЗОПАСНОЕ РЕДАКТИРОВАНИЕ =====
 async def safe_edit(callback, text, reply_markup=None):
-    """Безопасное редактирование сообщения"""
     try:
         await callback.message.edit_text(text, reply_markup=reply_markup)
     except Exception as e:
         if "there is no text in the message to edit" in str(e) or "message is not modified" in str(e):
-            # Если нечего редактировать — отправляем новое сообщение
             await callback.message.answer(text, reply_markup=reply_markup)
         else:
             raise
+
+# ===== РАБОТА С БД ЧЕРЕЗ ОЧЕРЕДЬ =====
+def get_users_from_db():
+    """Получить список пользователей через очередь БД"""
+    def _get_users(conn, cursor):
+        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 20")
+        return cursor.fetchall()
+    return _execute_db(_get_users)
+
+def get_messages_from_db():
+    """Получить сообщения через очередь БД"""
+    def _get_messages(conn, cursor):
+        cursor.execute("SELECT id, user_id, username, text, date FROM messages_to_admin ORDER BY date DESC LIMIT 20")
+        return cursor.fetchall()
+    return _execute_db(_get_messages)
+
+def get_promocodes_from_db():
+    """Получить промокоды через очередь БД"""
+    def _get_promocodes(conn, cursor):
+        cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
+        return cursor.fetchall()
+    return _execute_db(_get_promocodes)
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
@@ -83,20 +103,23 @@ async def a_users_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    conn = sqlite3.connect('data/repsolver.db')
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 20")
-    users = cursor.fetchall()
-    conn.close()
-    if not users:
-        text = "👥 Нет пользователей"
-    else:
-        text = "👥 **Топ**\n\n"
-        for u in users:
-            status = "⛔" if u['is_blocked'] == 1 else "✅"
-            name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else "Без имени"
-            text += f"{status} {name}: {u['tokens']} токенов\n"
+    
+    try:
+        # Используем очередь БД
+        users = get_users_from_db()
+        
+        if not users:
+            text = "👥 Нет пользователей"
+        else:
+            text = "👥 **Топ**\n\n"
+            for u in users:
+                status = "⛔" if u['is_blocked'] == 1 else "✅"
+                name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else "Без имени"
+                text += f"{status} {name}: {u['tokens']} токенов\n"
+    except Exception as e:
+        logger.error(f"Ошибка получения пользователей: {e}")
+        text = "❌ Ошибка загрузки пользователей"
+    
     await safe_edit(callback, text[:4000], helpers.admin_kb())
     await helpers.safe_answer(callback)
 
@@ -123,19 +146,26 @@ async def a_block_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    conn = sqlite3.connect('data/repsolver.db')
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, is_blocked FROM users WHERE user_id != 8676871187 LIMIT 20")
-    users = cursor.fetchall()
-    conn.close()
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
-    for u in users:
-        name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(u['user_id'])
-        status = "✅" if u['is_blocked'] == 0 else "⛔"
-        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{status} {name}", callback_data=f"block_user_{u['user_id']}")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    await safe_edit(callback, "🚫 **Блокировка**\n\nНажмите на пользователя:", kb)
+    
+    try:
+        users = get_users_from_db()
+        
+        if not users:
+            await safe_edit(callback, "👥 Нет пользователей", helpers.admin_kb())
+            await helpers.safe_answer(callback)
+            return
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[])
+        for u in users:
+            name = u['username'] if u['username'] and u['username'] != str(u['user_id']) else str(u['user_id'])
+            status = "✅" if u['is_blocked'] == 0 else "⛔"
+            kb.inline_keyboard.append([InlineKeyboardButton(text=f"{status} {name}", callback_data=f"block_user_{u['user_id']}")])
+        kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+        await safe_edit(callback, "🚫 **Блокировка**\n\nНажмите на пользователя:", kb)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки блокировки: {e}")
+        await safe_edit(callback, "❌ Ошибка загрузки", helpers.admin_kb())
+    
     await helpers.safe_answer(callback)
 
 @router.callback_query(F.data.startswith("block_user_"))
@@ -162,21 +192,24 @@ async def a_messages_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    conn = sqlite3.connect('data/repsolver.db')
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, user_id, username, text, date FROM messages_to_admin ORDER BY date DESC LIMIT 20")
-    msgs = cursor.fetchall()
-    conn.close()
-    if not msgs:
-        await safe_edit(callback, "📭 Нет обращений.", helpers.admin_kb())
-        await helpers.safe_answer(callback)
-        return
-    text = "📩 **Обращения**\n\n"
-    for m in msgs:
-        name = m['username'] if m['username'] and m['username'] != str(m['user_id']) else str(m['user_id'])
-        text += f"👤 {name}: {m['text'][:50]}\n🕐 {m['date'][:16]}\n\n"
-    await safe_edit(callback, text[:4000], helpers.admin_kb())
+    
+    try:
+        msgs = get_messages_from_db()
+        
+        if not msgs:
+            await safe_edit(callback, "📭 Нет обращений.", helpers.admin_kb())
+            await helpers.safe_answer(callback)
+            return
+        
+        text = "📩 **Обращения**\n\n"
+        for m in msgs:
+            name = m['username'] if m['username'] and m['username'] != str(m['user_id']) else str(m['user_id'])
+            text += f"👤 {name}: {m['text'][:50]}\n🕐 {m['date'][:16]}\n\n"
+        await safe_edit(callback, text[:4000], helpers.admin_kb())
+    except Exception as e:
+        logger.error(f"Ошибка загрузки сообщений: {e}")
+        await safe_edit(callback, "❌ Ошибка загрузки", helpers.admin_kb())
+    
     await helpers.safe_answer(callback)
 
 @router.callback_query(F.data == "a_backup")
@@ -266,20 +299,23 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    conn = sqlite3.connect('data/repsolver.db')
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
-    promos = cursor.fetchall()
-    conn.close()
-    if not promos:
-        await safe_edit(callback, "📋 Нет промокодов", helpers.admin_kb())
-        await helpers.safe_answer(callback)
-        return
-    text = "📋 **Промокоды**\n\n"
-    for p in promos:
-        text += f"🔹 `{p['code']}` +{p['bonus_tokens']} токенов, {p['used']}/{p['max_uses']}, до {p['expires_at'][:10]}\n"
-    await safe_edit(callback, text[:4000], helpers.admin_kb())
+    
+    try:
+        promos = get_promocodes_from_db()
+        
+        if not promos:
+            await safe_edit(callback, "📋 Нет промокодов", helpers.admin_kb())
+            await helpers.safe_answer(callback)
+            return
+        
+        text = "📋 **Промокоды**\n\n"
+        for p in promos:
+            text += f"🔹 `{p['code']}` +{p['bonus_tokens']} токенов, {p['used']}/{p['max_uses']}, до {p['expires_at'][:10]}\n"
+        await safe_edit(callback, text[:4000], helpers.admin_kb())
+    except Exception as e:
+        logger.error(f"Ошибка загрузки промокодов: {e}")
+        await safe_edit(callback, "❌ Ошибка загрузки", helpers.admin_kb())
+    
     await helpers.safe_answer(callback)
 
 @router.callback_query(F.data == "a_stars_balance")
