@@ -7,3 +7,6 @@ data/
 *.sqlite3
 *.tar.gz
 *.json
+clean_test_users.py
+test_load_slow.py
+=
