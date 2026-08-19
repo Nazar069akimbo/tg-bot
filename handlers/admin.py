@@ -397,3 +397,125 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     except Exception as e:
         await safe_edit(callback, f"❌ Ошибка: {e}", helpers.admin_kb())
     await helpers.safe_answer(callback)
+
+# ===== АДМИН-ВВОД =====
+async def handle_admin_input(message: types.Message):
+    """Обрабатывает ввод от админа (рассылка, промокоды, раздача токенов)"""
+    user_id = message.from_user.id
+    state = helpers.user_pages.get(user_id, {})
+    
+    if message.text == "/cancel":
+        helpers.user_pages.pop(user_id, None)
+        await message.answer("✅ Отменено", reply_markup=helpers.admin_kb())
+        return
+    
+    # === СОЗДАНИЕ ПРОМОКОДА ===
+    if state.get("state") == "waiting_promo_code":
+        try:
+            parts = message.text.strip().split("|")
+            if len(parts) < 2:
+                await message.answer("❌ Формат: код | токены | дни")
+                return
+            code = parts[0].strip().upper()
+            bonus = int(parts[1].strip())
+            days = int(parts[2].strip()) if len(parts) > 2 else 30
+            conn = sqlite3.connect('data/repsolver.db')
+            cursor = conn.cursor()
+            expires = (datetime.now() + timedelta(days=days)).isoformat()
+            cursor.execute("INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                          (code, bonus, 100, datetime.now().isoformat(), expires))
+            conn.commit()
+            conn.close()
+            await message.answer(f"✅ Промокод `{code}` создан! +{bonus} токенов, {days} дней", reply_markup=helpers.admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+    
+    # === ИЗМЕНЕНИЕ ЦЕН ===
+    if state.get("state") == "waiting_price":
+        try:
+            new_price = int(message.text.strip())
+            if new_price < 1:
+                await message.answer("❌ Цена > 0", reply_markup=helpers.admin_kb())
+                return
+            model_key = state.get("model")
+            if model_key and model_key in helpers.IMAGE_MODELS:
+                helpers.IMAGE_MODELS[model_key]["price"] = new_price
+                await message.answer(f"✅ Цена обновлена: {new_price}", reply_markup=helpers.admin_kb())
+        except:
+            await message.answer("❌ Введи число", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+    
+    # === РАЗДАЧА ТОКЕНОВ ===
+    if state.get("state") == "waiting_give_tokens":
+        try:
+            text = message.text.strip()
+            if text.startswith("всем") or text.startswith("all"):
+                parts = text.split("|")
+                amount = int(parts[1].strip()) if len(parts) > 1 else 10
+                conn = sqlite3.connect('data/repsolver.db')
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+                users = cursor.fetchall()
+                conn.close()
+                count = 0
+                for u in users:
+                    add_tokens(u['user_id'], amount)
+                    count += 1
+                await message.answer(f"✅ Раздано {amount} токенов {count} пользователям", reply_markup=helpers.admin_kb())
+            else:
+                parts = text.split("|")
+                if len(parts) < 2:
+                    await message.answer("❌ Формат: ID | количество")
+                    return
+                target_id = int(parts[0].strip())
+                amount = int(parts[1].strip())
+                add_tokens(target_id, amount)
+                await message.answer(f"✅ {target_id} +{amount} токенов", reply_markup=helpers.admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+    
+    # === РАССЫЛКА ===
+    if state.get("state") == "waiting_broadcast":
+        if not message.text or not message.text.strip():
+            await message.answer("❌ Пустой текст", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+        
+        await message.answer("📢 Рассылка...")
+        conn = sqlite3.connect('data/repsolver.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+        users = cursor.fetchall()
+        conn.close()
+        
+        sent = 0
+        for u in users:
+            try:
+                await message.bot.send_message(u['user_id'], f"📢 {message.text}")
+                sent += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        
+        await message.answer(f"✅ Отправлено: {sent}", reply_markup=helpers.admin_kb())
+        do_backup()
+        helpers.user_pages.pop(user_id, None)
+        return
+    
+    # === ОБРАЩЕНИЕ В ПОДДЕРЖКУ ===
+    if state.get("state") == "waiting_contact":
+        conn = sqlite3.connect('data/repsolver.db')
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
+                      (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        await message.bot.send_message(os.getenv('ADMIN_ID', 6957852385), f"📩 От {user_id}:\n{message.text}")
+        await message.answer("✅ Отправлено!", reply_markup=helpers.main_menu())
+        helpers.user_pages.pop(user_id, None)
+        return
