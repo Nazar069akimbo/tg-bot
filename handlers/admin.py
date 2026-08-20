@@ -4,7 +4,8 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboar
 from database.db import *
 from . import helpers
 from backup import GitHubBackup
-import logging, os, sqlite3, asyncio, time
+import logging, os, sqlite3
+from datetime import datetime, timedelta
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -41,75 +42,27 @@ async def safe_edit(callback, text, reply_markup=None):
         else:
             raise
 
+# ===== ПРОСТЫЕ ЗАПРОСЫ К БД (БЕЗ _execute_db) =====
+
 def get_users_from_db():
-    def _get_users(conn, cursor):
+    with db_connection() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 50")
         return cursor.fetchall()
-    return _execute_db(_get_users)
 
 def get_messages_from_db():
-    def _get_messages(conn, cursor):
+    with db_connection() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT id, user_id, username, text, date FROM messages_to_admin ORDER BY date DESC LIMIT 20")
         return cursor.fetchall()
-    return _execute_db(_get_messages)
 
 def get_promocodes_from_db():
-    def _get_promocodes(conn, cursor):
+    with db_connection() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
         return cursor.fetchall()
-    return _execute_db(_get_promocodes)
 
-# ===== НАГРУЗОЧНЫЙ ТЕСТ (1000 ПОЛЬЗОВАТЕЛЕЙ) =====
-@router.callback_query(F.data == "a_load_test")
-async def load_test_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
-        return
-    
-    await safe_edit(callback, "⏳ **Запуск теста нагрузки (1000 пользователей)...**\n\nОчередь будет заполняться!", helpers.admin_kb())
-    
-    asyncio.create_task(run_load_test(callback))
-
-async def run_load_test(callback):
-    """Запускает нагрузочный тест и обновляет статус"""
-    user_id = callback.from_user.id
-    
-    try:
-        total_users = 1000  # ← 1000 ПОЛЬЗОВАТЕЛЕЙ!
-        
-        for i in range(total_users):
-            test_user_id = 9000000 + i
-            create_user(test_user_id, f"load_{i}")
-            add_tokens(test_user_id, 10)
-            
-            # Обновляем статус каждые 100 пользователей
-            if i % 100 == 0:
-                status = get_queue_info()
-                await callback.message.edit_text(
-                    f"🔄 **Нагрузочный тест**\n\n"
-                    f"📊 Прогресс: {i+1}/{total_users}\n"
-                    f"{status}\n\n"
-                    f"⏳ Продолжаем...",
-                    reply_markup=helpers.admin_kb()
-                )
-                await asyncio.sleep(0.1)
-        
-        status = get_queue_info()
-        await callback.message.edit_text(
-            f"✅ **Тест завершён!**\n\n"
-            f"👥 Создано {total_users} пользователей\n"
-            f"🪙 Каждому добавлено 10 токенов\n\n"
-            f"{status}",
-            reply_markup=helpers.admin_kb()
-        )
-        
-    except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=helpers.admin_kb()
-        )
-
-# ===== ВСЕ АДМИН-ФУНКЦИИ =====
+# ===== ОСТАЛЬНЫЕ АДМИН-ФУНКЦИИ =====
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
@@ -399,8 +352,8 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 # ===== АДМИН-ВВОД =====
+
 async def handle_admin_input(message: types.Message):
-    """Обрабатывает ввод от админа (рассылка, промокоды, раздача токенов)"""
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
     
@@ -409,7 +362,6 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отменено", reply_markup=helpers.admin_kb())
         return
     
-    # === СОЗДАНИЕ ПРОМОКОДА ===
     if state.get("state") == "waiting_promo_code":
         try:
             parts = message.text.strip().split("|")
@@ -419,20 +371,17 @@ async def handle_admin_input(message: types.Message):
             code = parts[0].strip().upper()
             bonus = int(parts[1].strip())
             days = int(parts[2].strip()) if len(parts) > 2 else 30
-            conn = sqlite3.connect('data/repsolver.db')
-            cursor = conn.cursor()
-            expires = (datetime.now() + timedelta(days=days)).isoformat()
-            cursor.execute("INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-                          (code, bonus, 100, datetime.now().isoformat(), expires))
-            conn.commit()
-            conn.close()
+            with db_connection() as conn:
+                cursor = conn.cursor()
+                expires = (datetime.now() + timedelta(days=days)).isoformat()
+                cursor.execute("INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                              (code, bonus, 100, datetime.now().isoformat(), expires))
             await message.answer(f"✅ Промокод `{code}` создан! +{bonus} токенов, {days} дней", reply_markup=helpers.admin_kb())
         except Exception as e:
             await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
         helpers.user_pages.pop(user_id, None)
         return
     
-    # === ИЗМЕНЕНИЕ ЦЕН ===
     if state.get("state") == "waiting_price":
         try:
             new_price = int(message.text.strip())
@@ -448,18 +397,16 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
     
-    # === РАЗДАЧА ТОКЕНОВ ===
     if state.get("state") == "waiting_give_tokens":
         try:
             text = message.text.strip()
             if text.startswith("всем") or text.startswith("all"):
                 parts = text.split("|")
                 amount = int(parts[1].strip()) if len(parts) > 1 else 10
-                conn = sqlite3.connect('data/repsolver.db')
-                cursor = conn.cursor()
-                cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-                users = cursor.fetchall()
-                conn.close()
+                with db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+                    users = cursor.fetchall()
                 count = 0
                 for u in users:
                     add_tokens(u['user_id'], amount)
@@ -479,7 +426,6 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
     
-    # === РАССЫЛКА ===
     if state.get("state") == "waiting_broadcast":
         if not message.text or not message.text.strip():
             await message.answer("❌ Пустой текст", reply_markup=helpers.admin_kb())
@@ -487,11 +433,10 @@ async def handle_admin_input(message: types.Message):
             return
         
         await message.answer("📢 Рассылка...")
-        conn = sqlite3.connect('data/repsolver.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-        users = cursor.fetchall()
-        conn.close()
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+            users = cursor.fetchall()
         
         sent = 0
         for u in users:
@@ -507,14 +452,11 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
     
-    # === ОБРАЩЕНИЕ В ПОДДЕРЖКУ ===
     if state.get("state") == "waiting_contact":
-        conn = sqlite3.connect('data/repsolver.db')
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
-                      (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO messages_to_admin (user_id, username, text, date) VALUES (?, ?, ?, ?)",
+                          (user_id, message.from_user.username or "", message.text, datetime.now().isoformat()))
         await message.bot.send_message(os.getenv('ADMIN_ID', 6957852385), f"📩 От {user_id}:\n{message.text}")
         await message.answer("✅ Отправлено!", reply_markup=helpers.main_menu())
         helpers.user_pages.pop(user_id, None)
