@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from database.db import *
 from . import helpers
-import logging, re
+import logging
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -9,18 +9,16 @@ logger = logging.getLogger(__name__)
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    
-    # Проверяем, что это именно edit_ с числом
     data = callback.data
+    
+    # Проверяем, что это edit_ с числом
     if not data.startswith("edit_"):
-        await callback.answer("❌ Неверный формат", show_alert=True)
+        await callback.answer()
         return
     
-    # Извлекаем ID (только если это edit_ЦИФРА)
     try:
         image_id_str = data.replace("edit_", "")
         if not image_id_str.isdigit():
-            # Если это не число — игнорируем (это не наш колбэк)
             await callback.answer()
             return
         image_id = int(image_id_str)

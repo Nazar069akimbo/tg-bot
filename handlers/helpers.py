@@ -17,9 +17,9 @@ def main_menu():
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
-         InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
-        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"),
+         InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
     ])
 
 def admin_kb():
@@ -36,9 +36,7 @@ def admin_kb():
          InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
-        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status"),
-         InlineKeyboardButton(text="⚡ Нагрузить БД", callback_data="a_load_test")],
-        [InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
+        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
