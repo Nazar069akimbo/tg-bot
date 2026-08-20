@@ -42,8 +42,6 @@ async def safe_edit(callback, text, reply_markup=None):
         else:
             raise
 
-# ===== ПРОСТЫЕ ЗАПРОСЫ К БД (БЕЗ _execute_db) =====
-
 def get_users_from_db():
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -61,8 +59,6 @@ def get_promocodes_from_db():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
         return cursor.fetchall()
-
-# ===== ОСТАЛЬНЫЕ АДМИН-ФУНКЦИИ =====
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
@@ -256,17 +252,17 @@ async def a_edit_prices_cb(callback: types.CallbackQuery):
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for key, model in helpers.IMAGE_MODELS.items():
-        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{model['name']} — {model['price']} токенов", callback_data=f"edit_price_{key}")])
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{model['name']} — {model['price']} токенов", callback_data=f"a_edit_price_{key}")])  # ← ИЗМЕНЕНО!
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     await safe_edit(callback, "💰 **Цены**\n\nВыбери модель:", kb)
     await helpers.safe_answer(callback)
 
-@router.callback_query(F.data.startswith("edit_price_"))
+@router.callback_query(F.data.startswith("a_edit_price_"))
 async def edit_price_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    model_key = callback.data.replace("edit_price_", "")
+    model_key = callback.data.replace("a_edit_price_", "")  # ← ИЗМЕНЕНО!
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_price", "model": model_key}
     await safe_edit(callback, f"💰 Введи новую цену для {helpers.IMAGE_MODELS[model_key]['name']}:", helpers.admin_kb())
     await helpers.safe_answer(callback)
