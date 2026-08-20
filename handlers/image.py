@@ -53,22 +53,32 @@ async def generate_image(message: types.Message, prompt=None):
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
             logger.info(f"✅ [{user_id}] Промпт улучшен: {enhanced[:50]}...")
 
-        # ===== 2. ГЕНЕРАЦИЯ ЧЕРЕЗ REPLICATE =====
+        # ===== 2. ГЕНЕРАЦИЯ ЧЕРЕЗ REPLICATE С УВЕЛИЧЕННЫМ ТАЙМАУТОМ =====
         logger.info(f"🔄 [{user_id}] Запрос к Replicate...")
-        img_resp = requests.post(
-            "https://bothub.chat/api/v2/replicate/v1/images/generations",
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            json={
-                "model": model_config["api_model"],
-                "input": {
-                    "prompt": enhanced,
-                    "aspect_ratio": "1:1",
-                    "output_format": "webp"
+        
+        try:
+            img_resp = requests.post(
+                "https://bothub.chat/api/v2/replicate/v1/images/generations",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                json={
+                    "model": model_config["api_model"],
+                    "input": {
+                        "prompt": enhanced,
+                        "aspect_ratio": "1:1",
+                        "output_format": "webp"
+                    },
+                    "bothub": {"include_usage": True, "return_base64": False}
                 },
-                "bothub": {"include_usage": True, "return_base64": False}
-            },
-            timeout=60
-        )
+                timeout=120  # УВЕЛИЧЕН ДО 120 СЕКУНД
+            )
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ [{user_id}] Таймаут Replicate API")
+            await status_msg.edit_text("⏳ Генерация занимает больше времени. Попробуйте ещё раз.")
+            return
+        except Exception as e:
+            logger.error(f"❌ [{user_id}] Ошибка Replicate: {e}")
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+            return
         
         img_data = None
         
@@ -80,12 +90,15 @@ async def generate_image(message: types.Message, prompt=None):
             
             if img_url:
                 logger.info(f"✅ [{user_id}] URL получен")
-                img_response = requests.get(img_url, timeout=30)
-                if img_response.status_code == 200 and len(img_response.content) > 1000:
-                    img_data = img_response.content
-                    logger.info(f"✅ [{user_id}] Картинка скачана, размер: {len(img_data)} байт")
+                try:
+                    img_response = requests.get(img_url, timeout=30)
+                    if img_response.status_code == 200 and len(img_response.content) > 1000:
+                        img_data = img_response.content
+                        logger.info(f"✅ [{user_id}] Картинка скачана, размер: {len(img_data)} байт")
+                except Exception as e:
+                    logger.error(f"❌ [{user_id}] Ошибка скачивания: {e}")
         else:
-            logger.error(f"❌ [{user_id}] Replicate ошибка: {img_resp.status_code}")
+            logger.error(f"❌ [{user_id}] Replicate ошибка: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
             # ===== 3. ВОДЯНОЙ ЗНАК =====
@@ -111,7 +124,7 @@ async def generate_image(message: types.Message, prompt=None):
             
             new_tokens = get_tokens(user_id)
             
-            # ===== 5. СОХРАНЯЕМ В БД (ПОЛУЧАЕМ image_id) =====
+            # ===== 5. СОХРАНЯЕМ В БД =====
             image_id = None
             session_id = None
             try:
@@ -126,17 +139,15 @@ async def generate_image(message: types.Message, prompt=None):
             except Exception as e:
                 logger.warning(f"⚠️ [{user_id}] Не удалось сохранить в БД: {e}")
             
-            # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ С КНОПКОЙ =====
+            # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ =====
             logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
             
-            # КНОПКИ (ВСЕГДА ПОКАЗЫВАЕМ!)
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")] if image_id else [],
                 [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
                 [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
             ])
             
-            # Убираем пустые ряды
             if not image_id:
                 keyboard.inline_keyboard = [
                     [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
@@ -150,10 +161,10 @@ async def generate_image(message: types.Message, prompt=None):
             )
             await status_msg.delete()
             logger.info(f"✅ [{user_id}] Картинка отправлена")
-            
             return
 
-        await status_msg.edit_text("❌ Не удалось получить картинку")
+        # Если не удалось получить картинку
+        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуйте позже.")
         
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}")
