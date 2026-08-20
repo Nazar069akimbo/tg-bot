@@ -1,4 +1,7 @@
-import os, base64, logging, shutil
+import os
+import shutil
+import logging
+import base64
 from datetime import datetime, timedelta
 import requests
 
@@ -9,67 +12,153 @@ class GitHubBackup:
         self.token = os.getenv('GITHUB_TOKEN')
         self.repo = os.getenv('GITHUB_BACKUP_REPO')
         self.branch = os.getenv('GITHUB_BACKUP_BRANCH', 'main')
-        self.headers = {'Authorization': f'token {self.token}', 'Accept': 'application/vnd.github.v3+json'} if self.token and self.repo else None
+        
+        if not self.token:
+            logger.error("❌ GITHUB_TOKEN не найден!")
+            return
+        if not self.repo:
+            logger.error("❌ GITHUB_BACKUP_REPO не найден!")
+            return
+        
+        self.headers = {
+            'Authorization': f'token {self.token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        logger.info(f"✅ GitHub бэкап инициализирован для {self.repo}")
     
-    def backup_db(self, db_path='data/repsolver.db', reason='auto'):
-        if not self.headers: return False
-        if not os.path.exists(db_path): return False
-        
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        backup_name = f'repsolver_backup_{timestamp}.db'
-        shutil.copy2(db_path, backup_name)
-        
-        with open(backup_name, 'rb') as f:
-            content = base64.b64encode(f.read()).decode()
-        
-        url = f'https://api.github.com/repos/{self.repo}/contents/backups/{backup_name}'
-        data = {'message': f'Backup {backup_name}', 'content': content, 'branch': self.branch}
-        
-        resp = requests.get(url, headers=self.headers)
-        if resp.status_code == 200:
-            data['sha'] = resp.json()['sha']
-        
-        resp = requests.put(url, headers=self.headers, json=data)
-        os.remove(backup_name)
-        
-        if resp.status_code in [200, 201]:
-            logger.info(f"✅ Бэкап загружен")
-            self.cleanup_old_backups()
-            return True
-        return False
+    def backup_db(self, db_path='data/repsolver.db', reason='автоматический'):
+        try:
+            if not os.path.exists(db_path):
+                logger.warning(f"⚠️ Файл {db_path} не найден")
+                return False
+            
+            timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            backup_name = f'repsolver_backup_{timestamp}.db'
+            shutil.copy2(db_path, backup_name)
+            logger.info(f"📦 Создан бэкап ({reason}): {backup_name}")
+            
+            with open(backup_name, 'rb') as f:
+                content = base64.b64encode(f.read()).decode('utf-8')
+            
+            file_path = f'backups/{backup_name}'
+            url = f'https://api.github.com/repos/{self.repo}/contents/{file_path}'
+            
+            response = requests.get(url, headers=self.headers)
+            
+            if response.status_code == 200:
+                sha = response.json()['sha']
+                data = {
+                    'message': f'Обновление бэкапа {backup_name} ({reason})',
+                    'content': content,
+                    'sha': sha,
+                    'branch': self.branch
+                }
+            else:
+                data = {
+                    'message': f'Добавлен бэкап {backup_name} ({reason})',
+                    'content': content,
+                    'branch': self.branch
+                }
+            
+            response = requests.put(url, headers=self.headers, json=data)
+            
+            if response.status_code in [200, 201]:
+                logger.info(f"✅ Бэкап загружен в GitHub ({reason}): {file_path}")
+                os.remove(backup_name)
+                # Очищаем старые бэкапы (оставляем последние 10)
+                self.cleanup_old_backups(keep=10)
+                return True
+            else:
+                logger.error(f"❌ Ошибка загрузки: {response.text}")
+                os.remove(backup_name)
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка бэкапа: {e}")
+            return False
     
     def restore_latest_backup(self, db_path='data/repsolver.db'):
-        if not self.headers: return False
-        url = f'https://api.github.com/repos/{self.repo}/contents/backups'
-        resp = requests.get(url, headers=self.headers)
-        if resp.status_code != 200: return False
-        
-        files = [f for f in resp.json() if f['name'].endswith('.db')]
-        if not files: return False
-        
-        latest = sorted(files, key=lambda x: x['name'], reverse=True)[0]
-        resp = requests.get(latest['download_url'])
-        if resp.status_code == 200:
-            os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            with open(db_path, 'wb') as f:
-                f.write(resp.content)
-            logger.info(f"✅ Восстановлен {latest['name']}")
-            return True
-        return False
+        try:
+            url = f'https://api.github.com/repos/{self.repo}/contents/backups'
+            response = requests.get(url, headers=self.headers)
+            
+            if response.status_code != 200:
+                logger.info("ℹ️ Нет бэкапов для восстановления")
+                return False
+            
+            files = response.json()
+            db_files = [f for f in files if f['name'].endswith('.db')]
+            
+            if not db_files:
+                logger.info("ℹ️ Нет .db файлов для восстановления")
+                return False
+            
+            # Сортируем по убыванию (новые сверху)
+            db_files.sort(key=lambda x: x['name'], reverse=True)
+            latest = db_files[0]
+            
+            logger.info(f"📥 Восстановление из: {latest['name']}")
+            
+            download_url = latest['download_url']
+            response = requests.get(download_url)
+            
+            if response.status_code == 200:
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+                with open(db_path, 'wb') as f:
+                    f.write(response.content)
+                logger.info(f"✅ БД восстановлена из {latest['name']}")
+                return True
+            else:
+                logger.error(f"❌ Ошибка скачивания: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка восстановления: {e}")
+            return False
     
-    def cleanup_old_backups(self, days=7):
-        if not self.headers: return
-        url = f'https://api.github.com/repos/{self.repo}/contents/backups'
-        resp = requests.get(url, headers=self.headers)
-        if resp.status_code != 200: return
-        
-        now = datetime.now()
-        for f in resp.json():
-            if not f['name'].endswith('.db'): continue
-            try:
-                date_str = f['name'].replace('repsolver_backup_', '').replace('.db', '')
-                if (now - datetime.strptime(date_str, '%Y-%m-%d_%H-%M-%S')) > timedelta(days=days):
-                    requests.delete(f'https://api.github.com/repos/{self.repo}/contents/backups/{f["name"]}',
-                                  headers=self.headers, json={'message': 'Delete old backup', 'sha': f['sha'], 'branch': self.branch})
-                    logger.info(f"🗑️ Удален старый бэкап")
-            except: pass
+    def cleanup_old_backups(self, keep=10):
+        """Удаляет старые бэкапы, оставляя только последние keep штук"""
+        try:
+            url = f'https://api.github.com/repos/{self.repo}/contents/backups'
+            response = requests.get(url, headers=self.headers)
+            
+            if response.status_code != 200:
+                logger.info("ℹ️ Нет бэкапов для очистки")
+                return
+            
+            files = response.json()
+            db_files = [f for f in files if f['name'].endswith('.db')]
+            
+            # Сортируем по дате (новые сверху)
+            db_files.sort(key=lambda x: x['name'], reverse=True)
+            
+            # Если бэкапов меньше чем keep — ничего не удаляем
+            if len(db_files) <= keep:
+                logger.info(f"ℹ️ Бэкапов: {len(db_files)}, оставляем все (keep={keep})")
+                return
+            
+            # Удаляем старые (кроме последних keep)
+            to_delete = db_files[keep:]
+            logger.info(f"🗑️ Удаляем {len(to_delete)} старых бэкапов (оставляем {keep})")
+            
+            deleted_count = 0
+            for file in to_delete:
+                try:
+                    delete_url = f'https://api.github.com/repos/{self.repo}/contents/backups/{file["name"]}'
+                    data = {
+                        'message': f'Удаление старого бэкапа {file["name"]}',
+                        'sha': file['sha'],
+                        'branch': self.branch
+                    }
+                    response = requests.delete(delete_url, headers=self.headers, json=data)
+                    if response.status_code == 200:
+                        logger.info(f"🗑️ Удален старый бэкап: {file['name']}")
+                        deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось удалить {file['name']}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"✅ Удалено {deleted_count} старых бэкапов")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка очистки: {e}")

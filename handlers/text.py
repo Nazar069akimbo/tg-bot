@@ -12,31 +12,23 @@ API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
 
 async def ai_analyze_intent(user_id, text):
-    """
-    Использует GPT для анализа намерения пользователя
-    Возвращает: действие и параметры
-    """
+    """Анализ запроса через GPT"""
     if not API_KEY:
-        logger.error("❌ API_KEY отсутствует для анализа")
+        logger.error("❌ API_KEY отсутствует")
         return 'chat', {}
 
     system_prompt = """Ты — ИИ-ассистент бота. Определи, что хочет пользователь.
 
-Верни ТОЛЬКО JSON (без пояснений):
+Верни ТОЛЬКО JSON:
 {"action": "действие", "params": {"prompt": "текст"}}
 
 Действия:
-- generate_image: пользователь хочет создать картинку. Примеры: "нарисуй кота", "создай портрет", "покажи закат"
-- edit_image: пользователь хочет изменить картинку. Примеры: "сделай кота чёрным", "добавь шляпу"
-- show_prices: пользователь спрашивает о ценах. Примеры: "сколько стоит", "цена подписки"
-- show_balance: пользователь спрашивает баланс. Примеры: "мой баланс", "сколько токенов"
-- show_referral: пользователь спрашивает о рефералах. Примеры: "рефералка", "пригласить друга"
-- chat: обычный разговор. Примеры: "привет", "как дела", "расскажи о себе"
-
-Важно:
-- Если запрос содержит просьбу создать/нарисовать/показать что-то визуальное — generate_image
-- Если запрос содержит изменение существующего — edit_image
-- Если пользователь просто общается — chat"""
+- generate_image: пользователь хочет создать картинку
+- edit_image: пользователь хочет изменить картинку
+- show_prices: пользователь спрашивает о ценах
+- show_balance: пользователь спрашивает баланс
+- show_referral: пользователь спрашивает о рефералах
+- chat: обычный разговор"""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ запроса через GPT: {text[:50]}...")
@@ -78,9 +70,32 @@ async def handle_text(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
     
-    # Проверяем состояния
+    # === СНАЧАЛА ПРОВЕРЯЕМ СОСТОЯНИЯ (АДМИН-ВВОД) ===
     state = helpers.user_pages.get(user_id, {})
     
+    # Если пользователь в админ-режиме — не анализируем через GPT
+    if state.get("state") in [
+        "waiting_broadcast",      # Рассылка
+        "waiting_block_user",     # Блокировка
+        "waiting_contact",        # Поддержка
+        "waiting_give_tokens",    # Раздача токенов
+        "waiting_price",          # Изменение цен
+        "waiting_promo_code",     # Создание промокода
+        "waiting_edit"            # Правка картинки
+    ]:
+        logger.info(f"📌 [{user_id}] Админ-ввод: {state.get('state')}")
+        from .admin import handle_admin_input
+        await handle_admin_input(message)
+        return
+    
+    # Если пользователь вводит промокод для активации
+    if state.get("state") == "waiting_promo_use":
+        success, msg = use_promocode(text.upper(), user_id)
+        await message.answer(msg, reply_markup=helpers.main_menu())
+        helpers.user_pages.pop(user_id, None)
+        return
+    
+    # Если пользователь вводит имя
     if state.get("state") == "waiting_name":
         from .start import start_cmd
         set_user_name(user_id, text)
@@ -88,21 +103,10 @@ async def handle_text(message: types.Message):
         await message.answer(f"✅ Отлично! Я запомнил тебя.")
         await start_cmd(message)
         return
-
-    if state.get("state") == "waiting_edit":
-        await handle_edit(message)
-        return
-
-    if state.get("state") == "waiting_promo_use":
-        success, msg = use_promocode(text.upper(), user_id)
-        await message.answer(msg, reply_markup=helpers.main_menu())
-        helpers.user_pages.pop(user_id, None)
-        return
-
-    # === АНАЛИЗ ЧЕРЕЗ GPT ===
+    
+    # === АНАЛИЗ ЧЕРЕЗ GPT ДЛЯ ОБЫЧНЫХ ЗАПРОСОВ ===
     action, params = await ai_analyze_intent(user_id, text)
     
-    # === ВЫПОЛНЯЕМ ДЕЙСТВИЕ ===
     if action == 'generate_image':
         prompt = params.get('prompt', text)
         await generate_image(message, prompt)
@@ -127,7 +131,6 @@ async def handle_text(message: types.Message):
         await send_referral_info(message)
     
     else:
-        # Обычный текстовый ответ
         await generate_text(message)
 
 async def generate_text(message: types.Message):
@@ -145,25 +148,6 @@ async def generate_text(message: types.Message):
         await status_msg.edit_text(f"🧠 {answer}\n\n📝 Осталось: {max_req - used}/{max_req}")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
-
-async def handle_edit(message: types.Message):
-    user_id = message.from_user.id
-    state = helpers.user_pages.get(user_id, {})
-    image_id = state.get("image_id")
-    if not image_id:
-        await message.answer("❌ Нет картинки для правки")
-        return
-
-    last_img = get_image_by_id(image_id)
-    if not last_img:
-        await message.answer("❌ Картинка не найдена")
-        return
-
-    full_prompt = last_img.get('prompt', '')
-    new_prompt = f"{full_prompt}, {message.text}"
-    
-    await generate_image(message, new_prompt)
-    helpers.user_pages.pop(user_id, None)
 
 async def send_price_info(message: types.Message):
     text = (

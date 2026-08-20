@@ -24,12 +24,20 @@ def main_menu():
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"), InlineKeyboardButton(text="📈 Модели", callback_data="a_model_stats")],
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"), InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"), InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"), InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
-        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"), InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
-        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"), InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
+         InlineKeyboardButton(text="📈 Модели", callback_data="a_model_stats")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
+         InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
+         InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
+        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
+         InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
+        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
+         InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
+        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
+         InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
+        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status"),
+         InlineKeyboardButton(text="⚡ Нагрузить БД", callback_data="a_load_test")],
         [InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
