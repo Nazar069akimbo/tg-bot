@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    logger.info(f"📌 [{user_id}] start")
+    logger.info(f"📌 [{user_id}] start: Команда /start")
     
     username = message.from_user.username or ""
     user = force_create_user(user_id, username)
@@ -65,39 +65,3 @@ async def start_cmd(message: types.Message):
     )
     await message.answer(text, reply_markup=helpers.main_menu())
     logger.info(f"✅ [{user_id}] Бот запущен")
-
-@router.message(Command("help"))
-async def help_cmd(message: types.Message):
-    text = (
-        "❓ **Помощь**\n\n"
-        "🖼️ **Картинка** — *нарисуй кота*\n"
-        "✏️ **Правка** — *сделай кота чёрным*\n"
-        "📄 **Файл** — отправь PDF, DOCX, TXT, CSV\n"
-        "🎤 **Голосовое** — отправь голосовое\n"
-        "🔍 **Поиск** — /search запрос\n"
-        "⏰ **Напоминание** — /remind 10:00 текст\n"
-        "💰 **Цены** — *сколько стоит премиум*\n"
-        "📊 **Баланс** — *мой баланс*\n"
-        "👥 **Рефералы** — *как пригласить друга*\n\n"
-        "📌 Команды: /start, /balance, /profile, /help"
-    )
-    await message.answer(text, reply_markup=helpers.main_menu())
-
-@router.message(Command("profile"))
-async def profile_cmd(message: types.Message):
-    user_id = message.from_user.id
-    tokens = get_tokens(user_id)
-    name = helpers.get_user_name(user_id) or "Не указано"
-    await message.answer(
-        f"👤 **Мой профиль**\n\n"
-        f"🆔 ID: {user_id}\n"
-        f"👤 Имя: {name}\n"
-        f"💰 Токенов: {tokens}\n"
-        f"🖼️ Картинок: {tokens // 10}",
-        reply_markup=helpers.main_menu()
-    )
-
-@router.message(Command("cancel"))
-async def cancel_cmd(message: types.Message):
-    helpers.user_pages.pop(message.from_user.id, None)
-    await message.answer("✅ Отменено", reply_markup=helpers.main_menu())

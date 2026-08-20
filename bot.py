@@ -56,9 +56,10 @@ async def main():
         add_admin(ADMIN_ID)
         logger.info(f"✅ Админ {ADMIN_ID} добавлен")
     
-    # Регистрируем все роутеры
+    # === РЕГИСТРИРУЕМ РОУТЕРЫ ===
     for router in routers:
         dp.include_router(router)
+        logger.info(f"✅ Роутер зарегистрирован: {router}")
     
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
@@ -70,13 +71,8 @@ async def main():
         types.BotCommand(command="reminders", description="📋 Список напоминаний"),
     ])
     
-    # УДАЛЯЕМ ВЕБХУК И ЖДЁМ (ЧТОБЫ СТАРЫЙ БОТ ОСТАНОВИЛСЯ)
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("✅ Вебхук удалён")
-    
-    # Ждём 3 секунды, чтобы старый бот точно остановился
-    await asyncio.sleep(3)
-    
     logger.info("🚀 Бот готов!")
     
     await dp.start_polling(bot, skip_updates=True)
