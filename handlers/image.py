@@ -1,0 +1,208 @@
+from aiogram import Router, types, F
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from database.db import *
+from . import helpers
+import logging, requests, os, json
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
+
+router = Router()
+logger = logging.getLogger(__name__)
+
+API_KEY = os.getenv('OPENAI_API_KEY')
+PROMPT_MODEL = "gpt-4.1-nano"
+
+async def generate_image(message: types.Message, prompt=None):
+    user_id = message.from_user.id
+    logger.info(f"📌 [{user_id}] generate_image")
+    
+    if not prompt:
+        prompt = message.text
+
+    model_config = helpers.get_model_config(user_id)
+    price = model_config["price"]
+
+    tokens = get_tokens(user_id)
+    if tokens < price:
+        await message.answer(f"❌ Недостаточно токенов! Нужно: {price}, у тебя: {tokens}")
+        return
+
+    if not API_KEY:
+        return await message.answer("❌ API ключ не настроен")
+
+    status_msg = await message.answer("🎨 Генерирую картинку...")
+
+    try:
+        # ===== 1. УЛУЧШЕНИЕ ПРОМПТА =====
+        logger.info(f"🔄 [{user_id}] Улучшение промпта...")
+        prompt_resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "model": PROMPT_MODEL,
+                "messages": [
+                    {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
+                    {"role": "user", "content": f"Prompt for: {prompt}"}
+                ],
+                "max_tokens": 200
+            },
+            timeout=30
+        )
+        enhanced = prompt
+        if prompt_resp.status_code == 200:
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
+            logger.info(f"✅ [{user_id}] Промпт улучшен: {enhanced[:50]}...")
+
+        # ===== 2. ГЕНЕРАЦИЯ ЧЕРЕЗ REPLICATE С УВЕЛИЧЕННЫМ ТАЙМАУТОМ =====
+        logger.info(f"🔄 [{user_id}] Запрос к Replicate...")
+        
+        try:
+            img_resp = requests.post(
+                "https://bothub.chat/api/v2/replicate/v1/images/generations",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                json={
+                    "model": model_config["api_model"],
+                    "input": {
+                        "prompt": enhanced,
+                        "aspect_ratio": "1:1",
+                        "output_format": "webp"
+                    },
+                    "bothub": {"include_usage": True, "return_base64": False}
+                },
+                timeout=120  # УВЕЛИЧЕН ДО 120 СЕКУНД
+            )
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ [{user_id}] Таймаут Replicate API")
+            await status_msg.edit_text("⏳ Генерация занимает больше времени. Попробуйте ещё раз.")
+            return
+        except Exception as e:
+            logger.error(f"❌ [{user_id}] Ошибка Replicate: {e}")
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+            return
+        
+        img_data = None
+        
+        if img_resp.status_code == 200:
+            result = img_resp.json()
+            img_url = result.get('url')
+            if isinstance(img_url, list):
+                img_url = img_url[0]
+            
+            if img_url:
+                logger.info(f"✅ [{user_id}] URL получен")
+                try:
+                    img_response = requests.get(img_url, timeout=30)
+                    if img_response.status_code == 200 and len(img_response.content) > 1000:
+                        img_data = img_response.content
+                        logger.info(f"✅ [{user_id}] Картинка скачана, размер: {len(img_data)} байт")
+                except Exception as e:
+                    logger.error(f"❌ [{user_id}] Ошибка скачивания: {e}")
+        else:
+            logger.error(f"❌ [{user_id}] Replicate ошибка: {img_resp.status_code} - {img_resp.text[:200]}")
+
+        if img_data:
+            # ===== 3. ВОДЯНОЙ ЗНАК =====
+            try:
+                img = Image.open(BytesIO(img_data))
+                draw = ImageDraw.Draw(img)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+                except:
+                    font = ImageFont.load_default()
+                draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
+                output = BytesIO()
+                img.save(output, format='PNG')
+                output.seek(0)
+                img_data = output.getvalue()
+                logger.info(f"✅ [{user_id}] Водяной знак наложен")
+            except Exception as e:
+                logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
+
+            # ===== 4. СПИСЫВАЕМ ТОКЕНЫ =====
+            spend_tokens(user_id, price)
+            logger.info(f"✅ [{user_id}] Токены списаны: {price}")
+            
+            new_tokens = get_tokens(user_id)
+            
+            # ===== 5. СОХРАНЯЕМ В БД =====
+            image_id = None
+            session_id = None
+            try:
+                image_id, session_id = save_image_to_history(
+                    user_id=user_id,
+                    prompt=prompt,
+                    enhanced_prompt=enhanced,
+                    model=model_config["api_model"],
+                    image_data=img_data
+                )
+                # Отдельный вызов (не вложенный) — контекст для кнопки "Сгенерировать ещё"
+                add_to_context(user_id, prompt, image_id, None)
+                logger.info(f"✅ [{user_id}] Сохранено в БД: image_id={image_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ [{user_id}] Не удалось сохранить в БД: {e}")
+            
+            # ===== 6. ОТПРАВЛЯЕМ КАРТИНКУ =====
+            logger.info(f"🔄 [{user_id}] Отправка картинки пользователю...")
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")] if image_id else [],
+                [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+            ])
+            
+            if not image_id:
+                keyboard.inline_keyboard = [
+                    [InlineKeyboardButton(text="🔄 Сгенерировать ещё", callback_data="regenerate")],
+                    [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+                ]
+            
+            await message.answer_photo(
+                BufferedInputFile(file=img_data, filename="image.png"),
+                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=keyboard
+            )
+            await status_msg.delete()
+            logger.info(f"✅ [{user_id}] Картинка отправлена")
+            return
+
+        # Если не удалось получить картинку
+        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуйте позже.")
+        
+    except Exception as e:
+        logger.error(f"❌ [{user_id}] Ошибка: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data == "back_to_main")
+async def back_main_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    tokens = get_tokens(user_id)
+    name = helpers.get_user_name(user_id) or "друг"
+    
+    try:
+        await callback.message.edit_text(
+            f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}",
+            reply_markup=helpers.main_menu()
+        )
+    except Exception as e:
+        await callback.message.answer(
+            f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}",
+            reply_markup=helpers.main_menu()
+        )
+    await helpers.safe_answer(callback)
+
+@router.callback_query(F.data == "regenerate")
+async def regenerate_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    memory = get_user_memory(user_id)
+    if memory and memory.get('context_history'):
+        history = json.loads(memory.get('context_history', '[]'))
+        if history:
+            last = history[-1]
+            prompt = last.get('prompt', '')
+            if prompt:
+                await callback.message.answer("🔄 Генерирую ещё одну картинку...")
+                await generate_image(callback.message, prompt)
+                await callback.answer()
+                return
+    
+    await callback.answer("❌ Не найден предыдущий запрос", show_alert=True)

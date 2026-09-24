@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/
+*.db
+*.sqlite3
+*.tar.gz
+*.json
+clean_test_users.py
+test_load_slow.py
+=
