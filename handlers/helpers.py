@@ -2,8 +2,6 @@ from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from database.db import *
-from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,12 +38,6 @@ def admin_kb():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
-def image_action_buttons(image_id, session_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Поправить", callback_data=f"edit_{image_id}")],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-    ])
-
 def edit_in_progress_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏹ Отмена", callback_data="cancel_edit")]
@@ -67,22 +59,6 @@ def get_user_name(user_id):
     if memory and memory.get('name'):
         return memory['name']
     return None
-
-def add_watermark(image_data):
-    try:
-        img = Image.open(BytesIO(image_data))
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
-        except:
-            font = ImageFont.load_default()
-        draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
-        output = BytesIO()
-        img.save(output, format='PNG')
-        output.seek(0)
-        return output.getvalue()
-    except:
-        return image_data
 
 IMAGE_MODELS = {
     "flux": {"name": "🖼️ Flux Schnell", "price": 10, "api_model": "flux-schnell", "type": "replicate", "description": "⚡ Быстрая, базовая"},

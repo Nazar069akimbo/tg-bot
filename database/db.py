@@ -429,17 +429,6 @@ def get_image_by_id(conn, cursor, image_id):
     return dict(row) if row else None
 
 @db_operation
-def get_image_chain_by_session(conn, cursor, user_id, session_id):
-    cursor.execute("SELECT * FROM images_history WHERE user_id = ? AND session_id = ? ORDER BY id ASC", (user_id, session_id))
-    rows = cursor.fetchall()
-    return [dict(row) for row in rows]
-
-@db_operation
-def get_edit_version(conn, cursor, user_id, session_id):
-    cursor.execute("SELECT COUNT(*) FROM images_history WHERE user_id = ? AND session_id = ?", (user_id, session_id))
-    return cursor.fetchone()[0] or 0
-
-@db_operation
 def get_text_requests(conn, cursor, user_id):
     cursor.execute("SELECT text_requests, max_text_requests FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
@@ -491,19 +480,6 @@ def has_trial(conn, cursor, user_id):
 def activate_trial(conn, cursor, user_id):
     cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 20 WHERE user_id = ?",
                   (datetime.now().isoformat(), user_id))
-
-@db_operation
-def get_trial_remaining(conn, cursor, user_id):
-    cursor.execute("SELECT trial_start FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        return 0
-    trial_start = row[0]
-    if not trial_start:
-        return 0
-    start_date = datetime.fromisoformat(trial_start)
-    days_passed = (datetime.now() - start_date).days
-    return max(0, 3 - days_passed)
 
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):

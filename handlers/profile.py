@@ -27,12 +27,13 @@ async def show_profile(message: types.Message, user_id: int = None):
     if not user:
         await message.answer("❌ Пользователь не найден", reply_markup=helpers.main_menu())
         return
+    user = dict(user)  # sqlite3.Row -> dict (у Row нет .get())
 
     memory = get_user_memory(user_id)
     name = (memory or {}).get("name") or "—"
 
-    tokens = user["tokens"] or 0
-    plan = user["plan"] or "basic"
+    tokens = user.get("tokens") or 0
+    plan = user.get("plan") or "basic"
     plan_name = get_plan_name(plan)
 
     premium_until = user.get("premium_until")
@@ -44,7 +45,7 @@ async def show_profile(message: types.Message, user_id: int = None):
         except Exception:
             pass
 
-    joined = user.get("joined", "")
+    joined = user.get("joined") or ""
     joined_line = ""
     if joined:
         try:
