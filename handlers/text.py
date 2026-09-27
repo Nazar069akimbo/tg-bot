@@ -173,7 +173,7 @@ async def send_price_info(message: types.Message):
     from .payments import TOKEN_PACKS, STAR_RATE
     lines = []
     for key, (name, tokens, price, stars) in TOKEN_PACKS.items():
-        lines.append(f"• {name} — {tokens} токенов — {stars}⭐ (≈{price}₽)")
+        lines.append(f"• {name} — {tokens} токенов — {price}₽")
     text = (
         "💰 **Цены и тарифы**\n\n"
         "📦 **Пакеты токенов:**\n"
@@ -181,7 +181,6 @@ async def send_price_info(message: types.Message):
         + "\n\n👑 **Подписки:**\n"
         "• 💎 Премиум — 150⭐/мес (50 карт/день)\n"
         "• 👑 Премиум+ — 300⭐/мес (200 карт/день)\n\n"
-        f"💡 1 Star ≈ {STAR_RATE} ₽\n\n"
         "➡️ Нажми «Купить токены» в меню!"
     )
     await message.answer(text, reply_markup=helpers.main_menu())

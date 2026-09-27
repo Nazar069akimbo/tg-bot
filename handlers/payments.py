@@ -25,7 +25,7 @@ async def buy_tokens_cb(callback: types.CallbackQuery):
     force_create_user(user_id, callback.from_user.username or "")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"{name} · {tokens} ток · {price}₽ / {stars}⭐",
+            text=f"{name} · {tokens} токенов · {price}₽",
             callback_data=f"token_{key}"
         )]
         for key, (name, tokens, price, stars) in TOKEN_PACKS.items()
@@ -35,8 +35,7 @@ async def buy_tokens_cb(callback: types.CallbackQuery):
     ])
     await callback.message.edit_text(
         "✨ **Купить токены**\n\n"
-        "💳 Оплата в Telegram Stars (⭐)\n"
-        "💡 1⭐ ≈ 0.45 ₽\n\n"
+        "💳 Оплата в рублях (₽)\n\n"
         "Выбери пакет:",
         reply_markup=kb
     )
@@ -64,7 +63,7 @@ async def token_pay_cb(callback: types.CallbackQuery):
     create_payment(user_id, stars, payload, "tokens")
     await callback.bot.send_invoice(
         chat_id=user_id, title=f"{name} · {tokens} токенов",
-        description=f"{tokens} токенов = {tokens//10} картинок · ≈{price_rub}₽",
+        description=f"{tokens} токенов = {tokens//10} картинок · {price_rub}₽",
         payload=payload, provider_token=PROVIDER_TOKEN, currency="XTR",
         prices=[LabeledPrice(label=f"{tokens} токенов", amount=stars)],
         start_parameter="buy_tokens"
