@@ -28,6 +28,8 @@ async def ai_analyze_intent(user_id, text):
 - show_prices: пользователь спрашивает о ценах
 - show_balance: пользователь спрашивает баланс
 - show_referral: пользователь спрашивает о рефералах
+- show_profile: пользователь спрашивает про свой профиль, данные или статус
+- show_help: пользователь просит помощь, список команд или возможностей
 - chat: обычный разговор"""
 
     try:
@@ -139,6 +141,14 @@ async def handle_text(message: types.Message):
     
     elif action == 'show_referral':
         await send_referral_info(message)
+    
+    elif action == 'show_profile':
+        from .profile import show_profile
+        await show_profile(message)
+    
+    elif action == 'show_help':
+        from .help import show_help
+        await show_help(message)
     
     else:
         await generate_text(message)

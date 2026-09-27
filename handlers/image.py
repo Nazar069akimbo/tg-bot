@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
 
-async def generate_image(message: types.Message, prompt=None):
-    user_id = message.from_user.id
+async def generate_image(message: types.Message, prompt=None, user_id: int = None):
+    if user_id is None:
+        user_id = message.from_user.id
     logger.info(f"📌 [{user_id}] generate_image")
     
     if not prompt:
@@ -201,7 +202,9 @@ async def regenerate_cb(callback: types.CallbackQuery):
             prompt = last.get('prompt', '')
             if prompt:
                 await callback.message.answer("🔄 Генерирую ещё одну картинку...")
-                await generate_image(callback.message, prompt)
+                # ВАЖНО: generate_image берёт user_id из параметра (не из message.from_user,
+                # т.к. callback.message.from_user — это бот)
+                await generate_image(callback.message, prompt, user_id)
                 await callback.answer()
                 return
     

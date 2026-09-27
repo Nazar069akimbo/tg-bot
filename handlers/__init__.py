@@ -12,6 +12,8 @@ from .voice import router as voice_router
 from .search import router as search_router
 from .reminders import router as reminders_router
 from .inline import router as inline_router
+from .profile import router as profile_router
+from .help import router as help_router
 from .helpers import user_pages, user_model
 
 routers = [
@@ -29,4 +31,6 @@ routers = [
     search_router,
     reminders_router,
     inline_router,
+    profile_router,
+    help_router,
 ]
