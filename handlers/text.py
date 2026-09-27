@@ -170,18 +170,18 @@ async def generate_text(message: types.Message):
         await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 async def send_price_info(message: types.Message):
+    from .payments import TOKEN_PACKS, STAR_RATE
+    lines = []
+    for key, (name, tokens, price, stars) in TOKEN_PACKS.items():
+        lines.append(f"• {name} — {tokens} токенов — {stars}⭐ (≈{price}₽)")
     text = (
         "💰 **Цены и тарифы**\n\n"
         "📦 **Пакеты токенов:**\n"
-        "• 50 токенов (5 карт) — 10⭐\n"
-        "• 200 токенов (20 карт) — 30⭐\n"
-        "• 500 токенов (50 карт) — 60⭐\n"
-        "• 1000 токенов (100 карт) — 120⭐\n"
-        "• 2500 токенов (250 карт) — 250⭐\n\n"
-        "👑 **Подписки:**\n"
+        + "\n".join(lines)
+        + "\n\n👑 **Подписки:**\n"
         "• 💎 Премиум — 150⭐/мес (50 карт/день)\n"
         "• 👑 Премиум+ — 300⭐/мес (200 карт/день)\n\n"
-        "💡 1 Star ≈ 0.45 ₽\n\n"
+        f"💡 1 Star ≈ {STAR_RATE} ₽\n\n"
         "➡️ Нажми «Купить токены» в меню!"
     )
     await message.answer(text, reply_markup=helpers.main_menu())

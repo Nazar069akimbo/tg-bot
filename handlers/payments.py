@@ -9,20 +9,37 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 
+# Пакеты токенов: ключ -> (название пакета, токенов, цена в ₽, цена в ⭐)
+STAR_RATE = 0.45  # 1 ⭐ ≈ 0.45 ₽
+TOKEN_PACKS = {
+    'start':   ('🚀 Старт',    900, 100, round(100 / STAR_RATE)),
+    'basic':   ('📦 Базовый',  1800, 200, round(200 / STAR_RATE)),
+    'value':   ('🎁 Выгодный', 2700, 290, round(290 / STAR_RATE)),
+    'pro':     ('💎 Профи',    3600, 390, round(390 / STAR_RATE)),
+    'max':     ('👑 Максимум', 4500, 490, round(490 / STAR_RATE)),
+}
+
 @router.callback_query(F.data == "buy_tokens")
 async def buy_tokens_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 50 токенов — 10⭐", callback_data="token_50")],
-        [InlineKeyboardButton(text="📦 200 токенов — 30⭐", callback_data="token_200")],
-        [InlineKeyboardButton(text="📦 500 токенов — 60⭐", callback_data="token_500")],
-        [InlineKeyboardButton(text="📦 1000 токенов — 120⭐", callback_data="token_1000")],
-        [InlineKeyboardButton(text="📦 2500 токенов — 250⭐", callback_data="token_2500")],
+        [InlineKeyboardButton(
+            text=f"{name} · {tokens} ток · {price}₽ / {stars}⭐",
+            callback_data=f"token_{key}"
+        )]
+        for key, (name, tokens, price, stars) in TOKEN_PACKS.items()
+    ] + [
         [InlineKeyboardButton(text="👑 Подписка", callback_data="subscription")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
-    await callback.message.edit_text("✨ **Купить токены**\n\nВыбери пакет:", reply_markup=kb)
+    await callback.message.edit_text(
+        "✨ **Купить токены**\n\n"
+        "💳 Оплата в Telegram Stars (⭐)\n"
+        "💡 1⭐ ≈ 0.45 ₽\n\n"
+        "Выбери пакет:",
+        reply_markup=kb
+    )
     await helpers.safe_answer(callback)
 
 @router.callback_query(F.data == "subscription")
@@ -38,17 +55,16 @@ async def subscription_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("token_"))
 async def token_pay_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    packs = {'50': (10, 50), '200': (30, 200), '500': (60, 500), '1000': (120, 1000), '2500': (250, 2500)}
     pack_type = callback.data.replace("token_", "")
-    if pack_type not in packs:
+    if pack_type not in TOKEN_PACKS:
         await helpers.safe_answer(callback, "❌ Неверный пакет", show_alert=True)
         return
-    stars, tokens = packs[pack_type]
+    name, tokens, price_rub, stars = TOKEN_PACKS[pack_type]
     payload = secrets.token_hex(16)
     create_payment(user_id, stars, payload, "tokens")
     await callback.bot.send_invoice(
-        chat_id=user_id, title=f"📦 {tokens} токенов",
-        description=f"{tokens} токенов = {tokens//10} картинок",
+        chat_id=user_id, title=f"{name} · {tokens} токенов",
+        description=f"{tokens} токенов = {tokens//10} картинок · ≈{price_rub}₽",
         payload=payload, provider_token=PROVIDER_TOKEN, currency="XTR",
         prices=[LabeledPrice(label=f"{tokens} токенов", amount=stars)],
         start_parameter="buy_tokens"
@@ -89,8 +105,12 @@ async def payment_success(message: types.Message):
             await message.answer(f"✅ Подписка {plan_type} активирована!", reply_markup=helpers.main_menu())
             return
         if plan == "tokens":
-            packs = {10: 50, 30: 200, 60: 500, 120: 1000, 250: 2500}
-            tokens = packs.get(stars, 0)
+            # Находим пакет по цене в ⭐
+            tokens = 0
+            for key, (pname, p_tokens, p_rub, p_stars) in TOKEN_PACKS.items():
+                if p_stars == stars:
+                    tokens = p_tokens
+                    break
             if tokens > 0:
                 add_tokens(message.from_user.id, tokens)
                 await message.answer(f"✅ +{tokens} токенов!", reply_markup=helpers.main_menu())
