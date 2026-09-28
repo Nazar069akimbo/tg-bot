@@ -10,3 +10,6 @@ data/
 clean_test_users.py
 test_load_slow.py
 =
+
+# Логи
+logs/
