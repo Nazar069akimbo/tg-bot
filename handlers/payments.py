@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.types import LabeledPrice, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
-import secrets, logging, os
+import secrets, logging, os, time
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -12,34 +12,57 @@ PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 # Пакеты токенов: ключ -> (название пакета, токенов, цена в ₽, цена в ⭐)
 STAR_RATE = 0.45  # 1 ⭐ ≈ 0.45 ₽
 TOKEN_PACKS = {
-    'start':   ('🚀 Старт',    900, 100, round(100 / STAR_RATE)),
-    'basic':   ('📦 Базовый',  1800, 200, round(200 / STAR_RATE)),
-    'value':   ('🎁 Выгодный', 2700, 290, round(290 / STAR_RATE)),
-    'pro':     ('💎 Профи',    3600, 390, round(390 / STAR_RATE)),
-    'max':     ('👑 Максимум', 4500, 490, round(490 / STAR_RATE)),
+    'start':   ('Старт',    900, 100, round(100 / STAR_RATE)),
+    'basic':   ('Базовый',  1800, 200, round(200 / STAR_RATE)),
+    'value':   ('Выгодный', 2700, 290, round(290 / STAR_RATE)),
+    'pro':     ('Профи',    3600, 390, round(390 / STAR_RATE)),
+    'max':     ('Максимум', 4500, 490, round(490 / STAR_RATE)),
 }
+
+# Если пользователь кликает подряд (экраны покупок), обновляем на месте.
+# Если прошло время — отправляем НОВЫМ сообщением вниз (чтобы не листать вверх).
+_last_screen_time = {}  # user_id -> timestamp
+SCREEN_EDIT_SEC = 15
+
+def packs_table():
+    rows = [f"{'Пакет':<8} {'Токены':>12}  Цена"]
+    for _, (name, tokens, price, _) in TOKEN_PACKS.items():
+        rows.append(f"{name:<8} {tokens:>4} токенов {price:>3} ₽")
+    return "```\n" + "\n".join(rows) + "\n```"
+
+async def show_screen(callback, text, kb):
+    """show_screen: новое сообщение вниз, при быстрой серии кликов — правка на месте."""
+    user_id = callback.from_user.id
+    now = time.time()
+    last = _last_screen_time.get(user_id, 0)
+    if now - last < SCREEN_EDIT_SEC:
+        try:
+            await callback.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, reply_markup=kb)
+    else:
+        await callback.message.answer(text, reply_markup=kb)
+    _last_screen_time[user_id] = now
+    await helpers.safe_answer(callback)
 
 @router.callback_query(F.data == "buy_tokens")
 async def buy_tokens_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     force_create_user(user_id, callback.from_user.username or "")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"{name} · {tokens} токенов · {price}₽",
-            callback_data=f"token_{key}"
-        )]
+        [InlineKeyboardButton(text=f"{name} — {price}₽", callback_data=f"token_{key}")]
         for key, (name, tokens, price, stars) in TOKEN_PACKS.items()
     ] + [
         [InlineKeyboardButton(text="👑 Подписка", callback_data="subscription")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
-    await callback.message.edit_text(
+    text = (
         "✨ **Купить токены**\n\n"
         "💳 Оплата в рублях (₽)\n\n"
-        "Выбери пакет:",
-        reply_markup=kb
+        f"{packs_table()}\n\n"
+        "Выбери пакет:"
     )
-    await helpers.safe_answer(callback)
+    await show_screen(callback, text, kb)
 
 @router.callback_query(F.data == "subscription")
 async def subscription_cb(callback: types.CallbackQuery):
@@ -48,8 +71,8 @@ async def subscription_cb(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="👑 Премиум+ — 300⭐/мес", callback_data="sub_premium_plus")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="buy_tokens")]
     ])
-    await callback.message.edit_text("👑 **Подписки**\n\n💎 Премиум — 150⭐/мес\n👑 Премиум+ — 300⭐/мес", reply_markup=kb)
-    await helpers.safe_answer(callback)
+    text = "👑 **Подписки**\n\n💎 Премиум — 150⭐/мес\n👑 Премиум+ — 300⭐/мес"
+    await show_screen(callback, text, kb)
 
 @router.callback_query(F.data.startswith("token_"))
 async def token_pay_cb(callback: types.CallbackQuery):
