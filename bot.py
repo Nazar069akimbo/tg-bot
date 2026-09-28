@@ -67,6 +67,8 @@ async def main():
         types.BotCommand(command="profile", description="👤 Профиль"),
         types.BotCommand(command="help", description="❓ Помощь"),
         types.BotCommand(command="search", description="🔍 Поиск"),
+        types.BotCommand(command="prices", description="💰 Цены"),
+        types.BotCommand(command="credits", description="🛒 Купить токены"),
         types.BotCommand(command="remind", description="⏰ Напоминание"),
         types.BotCommand(command="reminders", description="📋 Список напоминаний"),
     ])

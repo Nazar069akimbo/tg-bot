@@ -13,7 +13,7 @@ def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
-        [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_use"),
+        [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
         [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"),
