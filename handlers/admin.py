@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 router = Router()
 logger = logging.getLogger(__name__)
 
-ADMIN_CODE = "30121979"
+ADMIN_CODE = os.getenv("ADMIN_CODE", "")
+EXCLUDED_USER_ID = int(os.getenv("EXCLUDED_USER_ID", "0"))  # 0 = не исключать никого
 
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
@@ -45,7 +46,10 @@ async def safe_edit(callback, text, reply_markup=None):
 def get_users_from_db():
     with db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != 8676871187 ORDER BY tokens DESC LIMIT 50")
+        if EXCLUDED_USER_ID:
+            cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users WHERE user_id != ? ORDER BY tokens DESC LIMIT 50", (EXCLUDED_USER_ID,))
+        else:
+            cursor.execute("SELECT user_id, username, tokens, is_blocked FROM users ORDER BY tokens DESC LIMIT 50")
         return cursor.fetchall()
 
 def get_messages_from_db():

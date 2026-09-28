@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
-import logging, requests, os, json
+import logging, requests, os, json, html
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -159,8 +159,9 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
-                reply_markup=keyboard
+                caption=f"🖼️ <b>Твоя картинка</b>\n📝 {html.escape(prompt[:50])}\n🤖 {html.escape(model_config['name'])}\n💰 -{price} токенов | 🪙 {new_tokens} осталось",
+                reply_markup=keyboard,
+                parse_mode="HTML"
             )
             await status_msg.delete()
             logger.info(f"✅ [{user_id}] Картинка отправлена")

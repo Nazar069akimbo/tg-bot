@@ -587,6 +587,21 @@ def get_user_reminders(conn, cursor, user_id):
     return cursor.fetchall()
 
 @db_operation
+def get_due_reminders(conn, cursor, now_iso: str):
+    """Напоминания, у которых время наступило и которые ещё не отправлены."""
+    cursor.execute("SELECT * FROM reminders WHERE sent = 0 AND time <= ?", (now_iso,))
+    return cursor.fetchall()
+
+@db_operation
+def mark_reminder_sent(conn, cursor, reminder_id: int):
+    cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
+
+@db_operation
+def reset_daily_reminders(conn, cursor, now_iso: str):
+    """Повторяющиеся напоминания (* в repeat) — сбрасываем на следующий день."""
+    cursor.execute("UPDATE reminders SET sent = 0 WHERE repeat = '*' AND sent = 1 AND time <= ?", (now_iso,))
+
+@db_operation
 def get_setting(conn, cursor, key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()

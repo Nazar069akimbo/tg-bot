@@ -25,6 +25,12 @@ async def set_reminder(message: types.Message):
         time_str = parts[0]
         reminder_text = parts[1]
         
+        # Поддержка повторения: /remind 10:00* Текст — повторять каждый день
+        repeat = None
+        if time_str.endswith("*"):
+            time_str = time_str.rstrip("*")
+            repeat = "*"
+        
         today = datetime.now().date()
         time_obj = datetime.strptime(time_str, "%H:%M").time()
         full_time = datetime.combine(today, time_obj)
@@ -32,9 +38,10 @@ async def set_reminder(message: types.Message):
         if full_time < datetime.now():
             full_time = full_time + timedelta(days=1)
         
-        add_reminder(user_id, reminder_text, full_time.isoformat())
+        add_reminder(user_id, reminder_text, full_time.isoformat(), repeat)
         
-        await message.answer(f"⏰ **Напоминание установлено!**\n\n📝 {reminder_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
+        repeat_note = " (ежедневно)" if repeat else ""
+        await message.answer(f"⏰ **Напоминание установлено!**{repeat_note}\n\n📝 {reminder_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
         
     except ValueError:
         await message.answer("❌ Неверный формат. Используй: /remind 10:00 Текст")

@@ -1,10 +1,12 @@
 import os, sys, asyncio, logging, threading, time
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import init_db, migrate_db, is_admin, add_admin
+from database.db import get_due_reminders, mark_reminder_sent, reset_daily_reminders
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
@@ -73,6 +75,32 @@ async def main():
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
         logger.info(f"✅ Админ {ADMIN_ID} добавлен")
+
+    # === ФОНОВЫЙ ВОРКЕР НАПОМИНАНИЙ ===
+    async def reminder_worker():
+        logger.info("⏰ Воркер напоминаний запущен")
+        while True:
+            await asyncio.sleep(30)
+            try:
+                now = datetime.now()
+                now_iso = now.isoformat()
+                due = get_due_reminders(now_iso)
+                for r in due:
+                    try:
+                        await bot.send_message(
+                            r["user_id"],
+                            f"⏰ <b>Напоминание:</b>\n{r['text']}",
+                            parse_mode="HTML"
+                        )
+                        mark_reminder_sent(r["id"])
+                        logger.info(f"⏰ [{r['user_id']}] Напоминание отправлено: {r['text'][:50]}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не удалось отправить напоминание {r['id']}: {e}")
+                # Повторяющиеся напоминания (*) — сбрасываем на следующий день
+                reset_daily_reminders(now_iso)
+            except Exception as e:
+                logger.error(f"❌ Ошибка воркера напоминаний: {e}")
+    asyncio.create_task(reminder_worker())
     
     # === РЕГИСТРИРУЕМ РОУТЕРЫ ===
     for router in routers:
