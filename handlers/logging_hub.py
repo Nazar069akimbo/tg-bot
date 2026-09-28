@@ -44,8 +44,13 @@ class LoggingMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-async def log_errors(event, data: dict):
-    """Регистрируется как error-хендлер диспетчера: ловит все исключения."""
+async def log_errors(event):
+    """Регистрируется как error-хендлер диспетчера: ловит все исключения.
+
+    В aiogram 3.x error-хендлер получает ОДИН аргумент — ErrorEvent.
+    Раньше сигнатура была (event, data) — отсюда TypeError:
+    "log_errors() missing 1 required positional argument: 'data'".
+    """
     logger = logging.getLogger('bot.hub')
     exception = getattr(event, 'exception', None) or event
     try:

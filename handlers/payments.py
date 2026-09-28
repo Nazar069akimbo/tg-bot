@@ -34,6 +34,11 @@ TOKEN_PACKS = {
 }
 PACK_ORDER = list(TOKEN_PACKS.keys())
 
+# Анти-спам экранов: не чаще 1 показа в 1.5 сек через answer,
+# иначе редактируем то же сообщение (защита от дублей при быстрых кликах)
+SCREEN_EDIT_SEC = 1.5
+_last_screen_time: dict = {}
+
 
 def is_premium(user_id) -> bool:
     """Активна ли подписка (по premium_until)."""
