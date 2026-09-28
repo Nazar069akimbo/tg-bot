@@ -1,14 +1,29 @@
 import os, sys, asyncio, logging, threading, time
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import init_db, migrate_db, is_admin, add_admin
 from handlers import routers
+from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+
+# ═══════════ ЛОГИРОВАНИЕ: консоль + файл logs/bot.log (ротация 5МБ x 3) ═══════════
+os.makedirs('logs', exist_ok=True)
+LOG_FORMAT = '%(asctime)s | %(levelname)-7s | %(name)s | %(message)s'
+
+logging.basicConfig(
+    level=logging.INFO,
+    format=LOG_FORMAT,
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler('logs/bot.log', maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'),
+    ]
+)
+logging.getLogger('aiogram').setLevel(logging.WARNING)  # меньше шума от aiogram
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -20,6 +35,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
+
+# Подключаем логирование ВСЕХ действий пользователей (в файл logs/bot.log)
+setup_logging(dp, logger)
 
 @app.route('/')
 @app.route('/healthz')
