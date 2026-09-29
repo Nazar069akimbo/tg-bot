@@ -3,6 +3,7 @@ import json
 import re
 import logging
 import requests
+from datetime import datetime, timedelta
 from openai import OpenAI
 from database.db import get_setting, get_model_setting
 
@@ -97,11 +98,10 @@ def analyze_intent(user_id, text):
 
     model = get_model_setting("prompt_enhance") or "gpt-4.1-nano"
 
-    from datetime import datetime
     now = datetime.now()
     now_str = now.strftime("%Y-%m-%d %H:%M")
     today_str = now.strftime("%Y-%m-%d")
-    tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime("%Y-%m-%d")
 
     system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
 
@@ -123,14 +123,18 @@ def analyze_intent(user_id, text):
 - chat: разговор
 
 ПРАВИЛА для set_reminder:
-1. Если пользователь сказал "напомни на 18:03" без текста — значит он хочет БЕЗ текста, но это странно. Спроси: "Что напомнить?" → need_clarification: true, question: "Что напомнить?"
-2. Если указано время и дата (или "сегодня"/"завтра") — извлеки их. date в формате YYYY-MM-DD.
-3. Если не указана дата — поставь today.
-4. Если не указано время — need_clarification: true, question: "Во сколько напомнить?"
-5. Если не указан текст — need_clarification: true, question: "Что напомнить?"
-6. Если всё есть — need_clarification: false.
+1. "через N минут" → time = "через N минут".
+2. "в HH:MM" → time = "HH:MM".
+3. "завтра" → date = "tomorrow". "сегодня" → date = "today".
+4. "25 числа" или "25.09" → date = "YYYY-MM-DD".
+5. Если не указан текст → need_clarification: true, question: "Что напомнить?"
+6. Если не указано время → need_clarification: true, question: "Во сколько напомнить?"
+7. Если пользователь отвечает просто "завтра" на вопрос "во сколько?" — это ответ про ДАТУ, а не время. Верни date = "tomorrow", need_clarification: true, question: "Во сколько?"
+8. Если отвечает "18:03" — это ВРЕМЯ.
 
-ПРАВИЛА для update_profile: если пользователь говорит "я люблю...", "меня зовут...", "я занимаюсь..." — сохрани это.
+ПРАВИЛА для update_profile:
+Если пользователь говорит "я люблю...", "меня зовут...", "я занимаюсь..." — сохрани это в профиль.
+
 Отвечай ТОЛЬКО JSON, без пояснений."""
 
     try:

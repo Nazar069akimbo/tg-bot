@@ -11,30 +11,57 @@ logger = logging.getLogger(__name__)
 
 
 def _build_datetime(date_str, time_str):
-    """Собирает datetime. Если дата не указана — сегодня."""
+    """Понимает: 'HH:MM', 'через N минут', 'YYYY-MM-DD', 'today', 'tomorrow'."""
     now = datetime.now()
     today = now.date()
 
     if not time_str:
         return None
-    try:
-        time_obj = datetime.strptime(time_str, "%H:%M").time()
-    except ValueError:
-        return None
 
-    if date_str in (None, "", "today", "сегодня"):
-        full = datetime.combine(today, time_obj)
-        if full < now:
-            full += timedelta(days=1)
-        return full
-    elif date_str in ("tomorrow", "завтра"):
-        return datetime.combine(today + timedelta(days=1), time_obj)
-    else:
-        try:
-            d = datetime.strptime(date_str, "%Y-%m-%d").date()
-            return datetime.combine(d, time_obj)
-        except ValueError:
+    time_str = str(time_str).strip().lower()
+    date_str = str(date_str or "").strip().lower()
+
+    # "через N минут/часов/дней"
+    m = re.match(r'через\s+(\d+)\s*(мин|минут|час|часов|дн|дней|день)', time_str)
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2)
+        if unit.startswith('мин'):
+            return now + timedelta(minutes=amount)
+        elif unit.startswith('час'):
+            return now + timedelta(hours=amount)
+        elif unit.startswith('дн'):
+            return now + timedelta(days=amount)
+
+    # "через 25" без единицы — минуты
+    m = re.match(r'через\s+(\d+)$', time_str)
+    if m:
+        return now + timedelta(minutes=int(m.group(1)))
+
+    # "HH:MM"
+    m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
             return None
+        time_obj = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+
+        if date_str in (None, "", "today", "сегодня"):
+            full = datetime.combine(today, time_obj)
+            if full < now:
+                full += timedelta(days=1)
+            return full
+        elif date_str in ("tomorrow", "завтра"):
+            return datetime.combine(today + timedelta(days=1), time_obj)
+        else:
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                return datetime.combine(d, time_obj)
+            except ValueError:
+                return None
+
+    return None
 
 
 def reminders_kb(reminders):
@@ -56,7 +83,6 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
     need_clarification = params.get("need_clarification", False)
     question = params.get("question", "")
 
-    # Если нужно уточнение — задаём вопрос и ждём ответа
     if need_clarification or not text or not time_str:
         if not question:
             if not text:
@@ -91,7 +117,7 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
 
 
 async def handle_clarification(message: types.Message, text: str):
-    """Пользователь ответил на уточняющий вопрос."""
+    """Умный разбор ответа: что это — дата, время или текст."""
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
 
@@ -105,34 +131,63 @@ async def handle_clarification(message: types.Message, text: str):
     saved_date = state.get("date", "")
     question = state.get("question", "")
 
-    # Понять, что ответил пользователь
-    stripped = text.strip()
+    # Спрашиваем ИИ, что это за ответ
+    from ai.client import analyze_intent
+    action, params = analyze_intent(user_id, text.strip())
 
-    # 1. Ответ на "Что напомнить?"
-    if "что напомнить" in question.lower() and not saved_text:
-        saved_text = stripped
-    # 2. Ответ на "Во сколько?"
-    elif "во сколько" in question.lower() and not saved_time:
-        # Ищем время в ответе
-        m = re.search(r'(\d{1,2}):(\d{2})', stripped)
-        if m:
+    # Если ИИ вернул set_reminder — забираем оттуда поля
+    if action == "set_reminder":
+        new_text = (params.get("text") or "").strip()
+        new_time = (params.get("time") or "").strip()
+        new_date = (params.get("date") or "").strip()
+
+        # Мержим: не перезаписываем то, что уже есть
+        if new_text and not saved_text:
+            saved_text = new_text
+        if new_time:
+            saved_time = new_time
+        if new_date:
+            saved_date = new_date
+
+    else:
+        # ИИ не понял как напоминание — пробуем парсить сами
+        stripped = text.strip().lower()
+
+        # Время: "18:03", "18 03", "6 вечера"
+        m = re.search(r'(\d{1,2})[:.\s](\d{2})', stripped)
+        if m and not saved_time:
             saved_time = f"{int(m.group(1)):02d}:{m.group(2)}"
         else:
-            # Попробуем через ИИ
-            action, params = __import__('ai.client', fromlist=['analyze_intent']).analyze_intent(user_id, f"Время: {stripped}")
-            saved_time = params.get("time", "")
-    # 3. Ответ на "На какой день?"
-    elif "день" in question.lower() and not saved_date:
-        saved_date = stripped.lower()
-    else:
-        # Не поняли вопрос — пробуем разобрать как новый запрос
-        from ai.client import analyze_intent
-        action, params = analyze_intent(user_id, stripped)
-        if action == "set_reminder":
-            await create_reminder_from_ai(message, params)
-            return
+            # Дата: "завтра", "сегодня", "25", "25.09"
+            if stripped in ("завтра", "tomorrow"):
+                saved_date = "tomorrow"
+            elif stripped in ("сегодня", "today"):
+                saved_date = "today"
+            elif re.match(r'^\d{1,2}$', stripped) and not saved_date:
+                # Число без месяца — считаем датой текущего месяца
+                day = int(stripped)
+                if 1 <= day <= 31:
+                    now = datetime.now()
+                    try:
+                        saved_date = now.replace(day=day).strftime("%Y-%m-%d")
+                    except ValueError:
+                        saved_date = None
+            elif re.match(r'^\d{1,2}\.\d{1,2}', stripped) and not saved_date:
+                # "25.09" или "25.09.2026"
+                parts = stripped.split(".")
+                day = int(parts[0])
+                month = int(parts[1]) if len(parts) > 1 else datetime.now().month
+                year = int(parts[2]) if len(parts) > 2 else datetime.now().year
+                try:
+                    saved_date = f"{year:04d}-{month:02d}-{day:02d}"
+                except Exception:
+                    pass
 
-    # Пробуем завершить создание
+        # Если это ответ на "Что напомнить?" — сохраняем как текст
+        if "что напомнить" in question.lower() and not saved_text:
+            saved_text = text.strip()
+
+    # Пробуем завершить
     if saved_text and saved_time:
         full_time = _build_datetime(saved_date, saved_time)
         if full_time:
@@ -145,13 +200,15 @@ async def handle_clarification(message: types.Message, text: str):
             )
             return
 
-    # Если что-то ещё не хватает — спрашиваем ещё раз
+    # Что-то не хватает — спрашиваем ещё раз
     if not saved_text:
         new_question = "Что напомнить?"
     elif not saved_time:
-        new_question = "Во сколько напомнить?"
+        new_question = "Во сколько напомнить? (например, 18:03)"
+    elif not saved_date:
+        new_question = "На какой день? (сегодня, завтра или дата)"
     else:
-        new_question = "На какой день?"
+        new_question = "Уточни, пожалуйста."
 
     helpers.user_pages[user_id] = {
         "state": "waiting_reminder_clarification",
