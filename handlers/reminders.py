@@ -11,8 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 def _build_datetime(date_str, time_str):
+    """Собирает datetime. Если дата не указана — сегодня."""
     now = datetime.now()
     today = now.date()
+
     if not time_str:
         return None
     try:
@@ -39,7 +41,7 @@ def reminders_kb(reminders):
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for r in reminders:
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"❌ Удалить: {r['text'][:20]}", callback_data=f"del_reminder_{r['id']}")
+            InlineKeyboardButton(text=f"❌ {r['text'][:25]}", callback_data=f"del_reminder_{r['id']}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🗑️ Удалить все", callback_data="del_all_reminders")])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
@@ -48,38 +50,48 @@ def reminders_kb(reminders):
 
 async def create_reminder_from_ai(message: types.Message, params: dict):
     user_id = message.from_user.id
-    text = params.get("text", "").strip()
-    time_str = params.get("time", "").strip()
-    date_str = params.get("date", "").strip()
+    text = (params.get("text") or "").strip()
+    time_str = (params.get("time") or "").strip()
+    date_str = (params.get("date") or "").strip()
     need_clarification = params.get("need_clarification", False)
     question = params.get("question", "")
 
-    if need_clarification:
+    # Если нужно уточнение — задаём вопрос и ждём ответа
+    if need_clarification or not text or not time_str:
+        if not question:
+            if not text:
+                question = "Что напомнить?"
+            elif not time_str:
+                question = "Во сколько напомнить?"
+            else:
+                question = "Уточни, пожалуйста."
+
         helpers.user_pages[user_id] = {
             "state": "waiting_reminder_clarification",
-            "text": text, "time": time_str, "date": date_str, "question": question
+            "text": text,
+            "time": time_str,
+            "date": date_str,
+            "question": question
         }
         await message.answer(f"❓ {question}\n\n⏹ /cancel — отмена")
         return
 
-    if not text or not time_str:
-        await message.answer("❌ Не понял. Напиши: «Напомни завтра в 10 купить хлеб»")
-        return
-
     full_time = _build_datetime(date_str, time_str)
     if not full_time:
-        await message.answer("❌ Не понял дату или время.")
+        await message.answer("❌ Не понял время. Напиши, например: «Напомни завтра в 10 купить хлеб»")
         return
 
     add_reminder(user_id, text, full_time.isoformat())
     await message.answer(
         f"⏰ **Напоминание установлено!**\n\n"
-        f"📝 {text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+        f"📝 {text}\n"
+        f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
     )
     logger.info(f"⏰ [{user_id}] {text} на {full_time}")
 
 
 async def handle_clarification(message: types.Message, text: str):
+    """Пользователь ответил на уточняющий вопрос."""
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
 
@@ -88,25 +100,67 @@ async def handle_clarification(message: types.Message, text: str):
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    time_str = state.get("time", "")
-    date_str = state.get("date", "")
+    saved_text = state.get("text", "")
+    saved_time = state.get("time", "")
+    saved_date = state.get("date", "")
+    question = state.get("question", "")
 
-    if re.match(r'^\d{1,2}:\d{2}$', text.strip()):
-        time_str = text.strip()
+    # Понять, что ответил пользователь
+    stripped = text.strip()
+
+    # 1. Ответ на "Что напомнить?"
+    if "что напомнить" in question.lower() and not saved_text:
+        saved_text = stripped
+    # 2. Ответ на "Во сколько?"
+    elif "во сколько" in question.lower() and not saved_time:
+        # Ищем время в ответе
+        m = re.search(r'(\d{1,2}):(\d{2})', stripped)
+        if m:
+            saved_time = f"{int(m.group(1)):02d}:{m.group(2)}"
+        else:
+            # Попробуем через ИИ
+            action, params = __import__('ai.client', fromlist=['analyze_intent']).analyze_intent(user_id, f"Время: {stripped}")
+            saved_time = params.get("time", "")
+    # 3. Ответ на "На какой день?"
+    elif "день" in question.lower() and not saved_date:
+        saved_date = stripped.lower()
     else:
-        date_str = text.strip().lower()
+        # Не поняли вопрос — пробуем разобрать как новый запрос
+        from ai.client import analyze_intent
+        action, params = analyze_intent(user_id, stripped)
+        if action == "set_reminder":
+            await create_reminder_from_ai(message, params)
+            return
 
-    full_time = _build_datetime(date_str, time_str)
-    if not full_time:
-        await message.answer("❌ Не понял. Уточни: во сколько и на какой день?")
-        return
+    # Пробуем завершить создание
+    if saved_text and saved_time:
+        full_time = _build_datetime(saved_date, saved_time)
+        if full_time:
+            add_reminder(user_id, saved_text, full_time.isoformat())
+            helpers.user_pages.pop(user_id, None)
+            await message.answer(
+                f"⏰ **Напоминание установлено!**\n\n"
+                f"📝 {saved_text}\n"
+                f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+            )
+            return
 
-    add_reminder(user_id, state.get("text", ""), full_time.isoformat())
-    helpers.user_pages.pop(user_id, None)
-    await message.answer(
-        f"⏰ **Напоминание установлено!**\n\n"
-        f"📝 {state.get('text', '')}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
-    )
+    # Если что-то ещё не хватает — спрашиваем ещё раз
+    if not saved_text:
+        new_question = "Что напомнить?"
+    elif not saved_time:
+        new_question = "Во сколько напомнить?"
+    else:
+        new_question = "На какой день?"
+
+    helpers.user_pages[user_id] = {
+        "state": "waiting_reminder_clarification",
+        "text": saved_text,
+        "time": saved_time,
+        "date": saved_date,
+        "question": new_question
+    }
+    await message.answer(f"❓ {new_question}\n\n⏹ /cancel — отмена")
 
 
 async def list_reminders_msg(message: types.Message, user_id: int = None):
@@ -142,12 +196,13 @@ async def set_reminder_cmd(message: types.Message):
         time_str, reminder_text = parts[0], parts[1]
         full_time = _build_datetime("today", time_str)
         if not full_time:
-            await message.answer("❌ Неверное время.")
+            await message.answer("❌ Неверное время. Пример: /remind 10:00 Текст")
             return
         add_reminder(message.from_user.id, reminder_text, full_time.isoformat())
         await message.answer(
             f"⏰ **Напоминание установлено!**\n\n"
-            f"📝 {reminder_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+            f"📝 {reminder_text}\n"
+            f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
         )
     except Exception:
         await message.answer("❌ Формат: /remind 10:00 Текст")
@@ -160,7 +215,8 @@ async def list_reminders_cmd(message: types.Message):
 
 @router.callback_query(F.data == "my_reminders")
 async def my_reminders_cb(callback: types.CallbackQuery):
-    reminders = get_user_reminders(callback.from_user.id)
+    user_id = callback.from_user.id
+    reminders = get_user_reminders(user_id)
     if not reminders:
         await callback.message.answer("📭 Нет активных напоминаний", reply_markup=helpers.main_menu())
         await helpers.safe_answer(callback)
@@ -174,7 +230,10 @@ async def my_reminders_cb(callback: types.CallbackQuery):
             time_str = r['time']
         text += f"{i}. 🕐 {time_str} — {r['text']}\n"
 
-    await callback.message.edit_text(text, reply_markup=reminders_kb(reminders))
+    try:
+        await callback.message.edit_text(text, reply_markup=reminders_kb(reminders))
+    except Exception:
+        await callback.message.answer(text, reply_markup=reminders_kb(reminders))
     await helpers.safe_answer(callback)
 
 
@@ -185,7 +244,6 @@ async def del_reminder_cb(callback: types.CallbackQuery):
     except ValueError:
         await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
         return
-
     delete_reminder(reminder_id)
     await helpers.safe_answer(callback, "✅ Удалено", show_alert=True)
     await my_reminders_cb(callback)

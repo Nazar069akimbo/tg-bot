@@ -15,8 +15,7 @@ def get_openai_client():
         logger.error("❌ OPENAI_API_KEY не найден")
         return None
     try:
-        client = OpenAI(api_key=api_key, base_url="https://openai.bothub.chat/v1")
-        return client
+        return OpenAI(api_key=api_key, base_url="https://openai.bothub.chat/v1")
     except Exception as e:
         logger.error(f"❌ Ошибка клиента: {e}")
         return None
@@ -48,7 +47,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
             profile = load_profile(user_id)
             name = profile.get("name")
             prefs = profile.get("preferences", {})
-
             lines = []
             if name:
                 lines.append(f"Пользователя зовут {name}.")
@@ -62,7 +60,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
                 lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
             if lines:
                 messages[0]["content"] += " " + " ".join(lines)
-
             for msg in get_recent_history(user_id, limit=20):
                 role = "user" if msg.get("role") == "user" else "assistant"
                 messages.append({"role": role, "content": msg.get("text", "")})
@@ -79,7 +76,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
             temperature=0.5
         )
         answer = resp.choices[0].message.content
-
         if user_id:
             try:
                 from utils.user_storage import append_history
@@ -87,7 +83,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
                 append_history(user_id, "assistant", answer)
             except Exception as e:
                 logger.warning(f"⚠️ История [{user_id}]: {e}")
-
         return answer
     except Exception as e:
         logger.error(f"❌ OpenAI: {e}")
@@ -95,38 +90,48 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
 
 
 def analyze_intent(user_id, text):
+    """Разбор намерения. ИИ сам восстанавливает дату/время из текста."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "chat", {}
 
     model = get_model_setting("prompt_enhance") or "gpt-4.1-nano"
 
-    system_prompt = """Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
+    from datetime import datetime
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M")
+    today_str = now.strftime("%Y-%m-%d")
+    tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+
+    system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
+
+СЕЙЧАС: {now_str} ({today_str}).
+ЗАВТРА: {tomorrow_str}.
 
 Верни ТОЛЬКО JSON:
-{"action": "действие", "params": {...}}
+{{"action": "действие", "params": {{...}}}}
 
 Действия:
-- generate_image: создать картинку. params: {"prompt": "..."}
-- edit_image: изменить картинку. params: {"prompt": "..."}
-- show_prices: цены
-- show_balance: баланс
-- show_referral: рефералы
-- show_profile: профиль
-- show_help: помощь
-- set_reminder: напомнить. params: {"text": "...", "time": "HH:MM", "date": "YYYY-MM-DD или today/tomorrow", "need_clarification": true/false, "question": "..."}
+- generate_image: создать картинку. params: {{"prompt": "..."}}
+- show_prices, show_balance, show_referral, show_profile, show_help
+- set_reminder: напомнить. params: {{"text": "...", "time": "HH:MM", "date": "YYYY-MM-DD", "need_clarification": true/false, "question": "..."}}
 - list_reminders: список напоминаний
-- delete_reminder: удалить напоминание. params: {"text": "..."}
+- delete_reminder: удалить. params: {{"text": "..."}}
 - delete_all_reminders: удалить все
-- search_web: поиск в интернете. params: {"query": "..."}
-- update_profile: обновить профиль. params: {"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}
-- chat: обычный разговор
+- search_web: поиск. params: {{"query": "..."}}
+- update_profile: обновить профиль. params: {{"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}}
+- chat: разговор
 
-Правила:
-- Если просит напомнить и не указал дату — need_clarification: true, question: "На какой день?"
-- Если не указал время — need_clarification: true, question: "Во сколько напомнить?"
-- Если говорит о себе ("я люблю...", "меня зовут...", "я занимаюсь...") — update_profile.
-- Отвечай ТОЛЬКО JSON."""
+ПРАВИЛА для set_reminder:
+1. Если пользователь сказал "напомни на 18:03" без текста — значит он хочет БЕЗ текста, но это странно. Спроси: "Что напомнить?" → need_clarification: true, question: "Что напомнить?"
+2. Если указано время и дата (или "сегодня"/"завтра") — извлеки их. date в формате YYYY-MM-DD.
+3. Если не указана дата — поставь today.
+4. Если не указано время — need_clarification: true, question: "Во сколько напомнить?"
+5. Если не указан текст — need_clarification: true, question: "Что напомнить?"
+6. Если всё есть — need_clarification: false.
+
+ПРАВИЛА для update_profile: если пользователь говорит "я люблю...", "меня зовут...", "я занимаюсь..." — сохрани это.
+Отвечай ТОЛЬКО JSON, без пояснений."""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ: {text[:50]}...")
@@ -139,7 +144,7 @@ def analyze_intent(user_id, text):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Запрос: {text}"}
                 ],
-                "max_tokens": 200,
+                "max_tokens": 300,
                 "temperature": 0.1
             },
             timeout=15
