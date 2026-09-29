@@ -22,6 +22,32 @@ def get_openai_client():
         return None
 
 
+def _build_memory_block(user_id: int) -> str:
+    """Собирает блок памяти: имя, предпочтения, хобби, темы."""
+    try:
+        from utils.user_storage import load_profile
+        profile = load_profile(user_id)
+        if not profile:
+            return ""
+        prefs = profile.get("preferences", {})
+        lines = []
+        if profile.get("name"):
+            lines.append(f"Пользователя зовут {profile['name']}.")
+        if prefs.get("style"):
+            lines.append(f"Любимый стиль: {prefs['style']}.")
+        if prefs.get("colors"):
+            lines.append(f"Любимые цвета: {prefs['colors']}.")
+        if prefs.get("hobbies"):
+            lines.append(f"Хобби: {', '.join(prefs['hobbies'])}.")
+        if prefs.get("favorite_topics"):
+            lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
+        if lines:
+            return " ".join(lines)
+    except Exception as e:
+        logger.warning(f"⚠️ Память [{user_id}]: {e}")
+    return ""
+
+
 def solve_problem(question, mode="chat", is_premium=False, user_id=None):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -39,33 +65,22 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
 
     model = get_model_setting("text_chat") or "deepseek-v4-flash"
 
-    system_prompt = f"Ты ассистент. Отвечай кратко, до {max_output} слов."
+    # === ПАМЯТЬ ===
+    memory_block = _build_memory_block(user_id) if user_id else ""
+    system_prompt = f"Ты — Vertex AI, умный ассистент. Отвечай кратко, до {max_output} слов."
+    if memory_block:
+        system_prompt += f" Ты знаешь о пользователе: {memory_block} Используй эту информацию, не переспрашивай то, что уже знаешь."
+
     messages = [{"role": "system", "content": system_prompt}]
 
     if user_id:
         try:
-            from utils.user_storage import load_profile, get_recent_history
-            profile = load_profile(user_id)
-            name = profile.get("name")
-            prefs = profile.get("preferences", {})
-            lines = []
-            if name:
-                lines.append(f"Пользователя зовут {name}.")
-            if prefs.get("style"):
-                lines.append(f"Любимый стиль: {prefs['style']}.")
-            if prefs.get("colors"):
-                lines.append(f"Любимые цвета: {prefs['colors']}.")
-            if prefs.get("hobbies"):
-                lines.append(f"Хобби: {', '.join(prefs['hobbies'])}.")
-            if prefs.get("favorite_topics"):
-                lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
-            if lines:
-                messages[0]["content"] += " " + " ".join(lines)
+            from utils.user_storage import get_recent_history
             for msg in get_recent_history(user_id, limit=20):
                 role = "user" if msg.get("role") == "user" else "assistant"
                 messages.append({"role": role, "content": msg.get("text", "")})
         except Exception as e:
-            logger.warning(f"⚠️ Память [{user_id}]: {e}")
+            logger.warning(f"⚠️ История [{user_id}]: {e}")
 
     messages.append({"role": "user", "content": question})
 
@@ -91,7 +106,7 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
 
 
 def analyze_intent(user_id, text):
-    """Разбор намерения. ИИ сам восстанавливает дату/время из текста."""
+    """Разбор намерения. ИИ сам восстанавливает дату/время, имя, хобби и т.д."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "chat", {}
@@ -103,10 +118,14 @@ def analyze_intent(user_id, text):
     today_str = now.strftime("%Y-%m-%d")
     tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # Подтягиваем текущий профиль, чтобы ИИ знал контекст
+    memory_block = _build_memory_block(user_id) if user_id else ""
+
     system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
 
 СЕЙЧАС: {now_str} ({today_str}).
 ЗАВТРА: {tomorrow_str}.
+{f"О ПОЛЬЗОВАТЕЛЕ: {memory_block}" if memory_block else ""}
 
 Верни ТОЛЬКО JSON:
 {{"action": "действие", "params": {{...}}}}
@@ -122,20 +141,14 @@ def analyze_intent(user_id, text):
 - update_profile: обновить профиль. params: {{"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}}
 - chat: разговор
 
-ПРАВИЛА для set_reminder:
-1. "через N минут" → time = "через N минут".
-2. "в HH:MM" → time = "HH:MM".
-3. "завтра" → date = "tomorrow". "сегодня" → date = "today".
-4. "25 числа" или "25.09" → date = "YYYY-MM-DD".
-5. Если не указан текст → need_clarification: true, question: "Что напомнить?"
-6. Если не указано время → need_clarification: true, question: "Во сколько напомнить?"
-7. Если пользователь отвечает просто "завтра" на вопрос "во сколько?" — это ответ про ДАТУ, а не время. Верни date = "tomorrow", need_clarification: true, question: "Во сколько?"
-8. Если отвечает "18:03" — это ВРЕМЯ.
-
-ПРАВИЛА для update_profile:
-Если пользователь говорит "я люблю...", "меня зовут...", "я занимаюсь..." — сохрани это в профиль.
-
-Отвечай ТОЛЬКО JSON, без пояснений."""
+ПРАВИЛА:
+1. Если пользователь говорит "меня зовут X" / "я X" — update_profile с key="name", value=X. Это работает в любой момент диалога.
+2. Если говорит "я люблю X" / "мне нравится X" / "я занимаюсь X" — update_profile с key="hobbies", value=X.
+3. Если "мой любимый цвет X" — update_profile с key="colors", value=X.
+4. Если "мой стиль X" — update_profile с key="style", value=X.
+5. Если просит напомнить — set_reminder. Если чего-то не хватает — need_clarification: true.
+6. Если спрашивает о своём хобби/имени/предпочтениях — action="chat", но используй данные из "О ПОЛЬЗОВАТЕЛЕ".
+7. Отвечай ТОЛЬКО JSON."""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ: {text[:50]}...")
@@ -178,7 +191,6 @@ def search_web(query):
     model = get_model_setting("text_chat") or "deepseek-v4-flash"
 
     try:
-        logger.info(f"🔍 Поиск: {query[:60]}...")
         resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},

@@ -16,11 +16,17 @@ def main_menu():
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders"),
-         InlineKeyboardButton(text="🧠 Моя память", callback_data="my_memory")],
+        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
         [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
+    ])
+
+
+def profile_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑️ Забыть всё", callback_data="forget_all")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
     ])
 
 
@@ -79,11 +85,6 @@ AVAILABLE_MODELS = {
         ("flux-schnell", "🖼️ Flux Schnell"),
         ("flux-2-max", "🔥 Flux-2-Max"),
     ],
-    "image_edit": [
-        ("flux-schnell", "⚡ Flux Schnell (img2img)"),
-        ("flux-img2img", "✏️ Flux img2img"),
-        ("sdxl-img2img", "🎨 SDXL img2img"),
-    ],
     "prompt_enhance": [
         ("gpt-4.1-nano", "🧠 GPT-4.1 nano"),
         ("deepseek-v4-flash", "🧠 DeepSeek Flash"),
@@ -96,7 +97,6 @@ AVAILABLE_MODELS = {
 
 TASK_NAMES = {
     "image_generate": "🎨 Генерация картинок",
-    "image_edit": "✏️ Правка картинок",
     "prompt_enhance": "🧠 Улучшение промпта",
     "text_chat": "💬 Текстовый чат",
 }
