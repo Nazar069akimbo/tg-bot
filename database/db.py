@@ -10,7 +10,6 @@ from contextlib import contextmanager
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# ===== ОЧЕРЕДЬ ЗАПРОСОВ =====
 _db_queue = queue.Queue()
 _db_thread = None
 _db_running = True
@@ -96,7 +95,6 @@ def db_connection():
         conn.close()
 
 
-# ===== ИНИЦИАЛИЗАЦИЯ =====
 def init_db():
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -253,6 +251,20 @@ def init_db():
         )
         ''')
 
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tariffs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            price_rub INTEGER DEFAULT 0,
+            stars INTEGER DEFAULT 0,
+            tokens INTEGER DEFAULT 0,
+            days INTEGER DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )
+        ''')
+
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -275,6 +287,23 @@ def init_db():
         for task, model in default_models:
             cursor.execute("INSERT OR IGNORE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)",
                            (task, model, datetime.now().isoformat()))
+
+        cursor.execute("SELECT COUNT(*) FROM tariffs")
+        if cursor.fetchone()[0] == 0:
+            defaults = [
+                ('tokens', 'Старт', 100, 225, 900, 0, 1),
+                ('tokens', 'Базовый', 200, 450, 1800, 0, 2),
+                ('tokens', 'Выгодный', 300, 650, 2700, 0, 3),
+                ('tokens', 'Профи', 400, 900, 3600, 0, 4),
+                ('tokens', 'Максимум', 500, 1100, 4500, 0, 5),
+                ('premium', 'Premium', 150, 335, 3000, 30, 1),
+                ('premium', 'Premium+', 300, 670, 8000, 30, 2),
+            ]
+            for kind, name, price_rub, stars, tokens, days, order in defaults:
+                cursor.execute(
+                    "INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (kind, name, price_rub, stars, tokens, days, order)
+                )
 
         ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
         cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
@@ -370,8 +399,7 @@ def update_user_memory(conn, cursor, user_id, data):
     set_parts.append("updated_at = ?")
     values.append(datetime.now().isoformat())
     values.append(user_id)
-    query = f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?"
-    cursor.execute(query, values)
+    cursor.execute(f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?", values)
 
 
 def set_user_name(user_id, name):
@@ -418,7 +446,7 @@ def get_image_by_id(conn, cursor, image_id):
     return dict(row) if row else None
 
 
-# ===== ЛИМИТЫ ТЕКСТА =====
+# ===== ЛИМИТЫ =====
 @db_operation
 def get_text_requests(conn, cursor, user_id):
     cursor.execute("SELECT text_requests, max_text_requests FROM users WHERE user_id = ?", (user_id,))
@@ -649,6 +677,49 @@ def get_all_model_settings(conn, cursor):
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
+# ===== ТАРИФЫ =====
+@db_operation
+def get_tariffs(conn, cursor, kind=None):
+    if kind:
+        cursor.execute("SELECT * FROM tariffs WHERE active = 1 AND kind = ? ORDER BY sort_order", (kind,))
+    else:
+        cursor.execute("SELECT * FROM tariffs WHERE active = 1 ORDER BY kind, sort_order")
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def add_tariff(conn, cursor, kind, name, price_rub, stars, tokens, days=0):
+    cursor.execute(
+        "INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
+        (kind, name, price_rub, stars, tokens, days)
+    )
+
+
+@db_operation
+def update_tariff(conn, cursor, tariff_id, **fields):
+    if not fields:
+        return
+    set_parts = []
+    values = []
+    for k, v in fields.items():
+        set_parts.append(f"{k} = ?")
+        values.append(v)
+    values.append(tariff_id)
+    cursor.execute(f"UPDATE tariffs SET {', '.join(set_parts)} WHERE id = ?", values)
+
+
+@db_operation
+def delete_tariff(conn, cursor, tariff_id):
+    cursor.execute("DELETE FROM tariffs WHERE id = ?", (tariff_id,))
+
+
+@db_operation
+def get_tariff(conn, cursor, tariff_id):
+    cursor.execute("SELECT * FROM tariffs WHERE id = ?", (tariff_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
 # ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
@@ -666,7 +737,7 @@ def get_queue_info():
     size = _db_queue.qsize()
     status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
     return f"""
-📊 **Статус очереди БД**
+📊 Статус очереди БД
 ━━━━━━━━━━━━━━━━━━━━━━━
 📦 Очередь: {size} задач
 🔄 Поток: {status}

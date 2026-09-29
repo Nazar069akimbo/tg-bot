@@ -26,7 +26,8 @@ async def handle_text(message: types.Message):
         return
 
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
-                              "waiting_give_tokens", "waiting_price", "waiting_promo_code"]:
+                              "waiting_give_tokens", "waiting_price", "waiting_promo_code",
+                              "waiting_tariff_edit", "waiting_tariff_add"]:
         from .admin import handle_admin_input
         await handle_admin_input(message)
         return
@@ -74,20 +75,31 @@ async def handle_text(message: types.Message):
     elif action == 'search_web':
         status = await message.answer("🔍 Ищу...")
         answer = search_web(params.get('query', text))
-        await status.edit_text(f"🔍 **Результат:**\n\n{answer}")
+        await status.edit_text(f"🔍 Результат:\n\n{answer}")
 
     elif action == 'update_profile':
         key = params.get("key")
         value = params.get("value")
         if key and value:
             update_profile_field(user_id, key, value)
-            await message.answer(f"🧠 Запомнил: {key} = {value}")
+            if key == "name":
+                await message.answer(f"Ок, {value}! Запомнил 😊")
+            elif key == "hobbies":
+                await message.answer(f"Круто! Запомнил, что ты любишь {value} 🎯")
+            elif key == "colors":
+                await message.answer(f"Запомнил: любимый цвет — {value} 🌈")
+            elif key == "style":
+                await message.answer(f"Понял, твой стиль — {value} 🎨")
+            elif key == "favorite_topics":
+                await message.answer(f"Запомнил, тебе интересно: {value} 💬")
+            else:
+                await message.answer(f"Запомнил: {key} = {value}")
         else:
             await message.answer("❌ Не понял, что запомнить")
 
     elif action == 'show_prices':
-        from .payments import send_prices
-        await send_prices(message)
+        from .payments import prices_text, prices_kb
+        await message.answer(prices_text(), reply_markup=prices_kb())
 
     elif action == 'show_balance':
         await balance_cmd(message)
@@ -129,7 +141,7 @@ async def balance_cmd(message: types.Message):
     tokens = get_tokens(user_id)
     used, max_req = get_text_requests(user_id)
     await message.answer(
-        f"💰 **Баланс**\n\n🪙 Токенов: {tokens}\n🖼️ Картинок: {tokens // 10}\n📝 Текст: {used}/{max_req}",
+        f"💰 Баланс\n\n🪙 Токенов: {tokens}\n🖼️ Картинок: {tokens // 10}\n📝 Текст: {used}/{max_req}",
         reply_markup=helpers.main_menu()
     )
 
@@ -139,6 +151,6 @@ async def send_referral_info(message: types.Message):
     count = get_referral_count(user_id)
     link = f"https://t.me/Vertex1bot?start={user_id}"
     await message.answer(
-        f"👥 **Рефералы**\n\n👤 Приглашено: {count}\n🎁 +20 токенов за друга\n\n🔗 {link}",
+        f"👥 Рефералы\n\n👤 Приглашено: {count}\n🎁 +20 токенов за друга\n\n🔗 {link}",
         reply_markup=helpers.main_menu()
     )

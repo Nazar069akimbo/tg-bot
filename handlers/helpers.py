@@ -44,6 +44,7 @@ def admin_kb():
          InlineKeyboardButton(text="📥 Восстановить", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
+        [InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs")],
         [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])

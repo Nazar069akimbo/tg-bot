@@ -2,6 +2,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from datetime import datetime
 from database.db import *
+from utils.user_storage import load_profile, load_meta, load_history, clear_memory
 from . import helpers
 
 router = Router()
@@ -12,13 +13,11 @@ def get_plan_name(plan):
         "basic": "Базовый",
         "premium": "💎 Премиум",
         "premium_plus": "👑 Премиум+",
-        "premium_deluxe": "👑 Премиум+",
     }
     return plans.get(plan, "Базовый")
 
 
 async def show_profile(message: types.Message, user_id: int = None):
-    """Показать профиль. user_id можно передать явно (для callback'ов)."""
     if user_id is None:
         user_id = message.from_user.id
 
@@ -27,11 +26,14 @@ async def show_profile(message: types.Message, user_id: int = None):
     if not user:
         await message.answer("❌ Пользователь не найден", reply_markup=helpers.main_menu())
         return
-    user = dict(user)  # sqlite3.Row -> dict (у Row нет .get())
+    user = dict(user)
 
-    memory = get_user_memory(user_id)
-    name = (memory or {}).get("name") or "—"
+    profile = load_profile(user_id)
+    meta = load_meta(user_id)
+    history = load_history(user_id)
+    prefs = profile.get("preferences", {})
 
+    name = profile.get("name") or "—"
     tokens = user.get("tokens") or 0
     plan = user.get("plan") or "basic"
     plan_name = get_plan_name(plan)
@@ -57,8 +59,12 @@ async def show_profile(message: types.Message, user_id: int = None):
     used, max_req = get_text_requests(user_id)
     referral_count = get_referral_count(user_id)
 
+    hobbies = ", ".join(prefs.get("hobbies") or []) or "—"
+    colors = prefs.get("colors") or "—"
+    style = prefs.get("style") or "—"
+
     text = (
-        f"👤 **Профиль**\n\n"
+        f"👤 Профиль\n\n"
         f"🪪 Имя: {name}\n"
         f"🆔 ID: {user_id}\n"
         f"💳 Тариф: {plan_name}{premium_line}\n\n"
@@ -66,9 +72,18 @@ async def show_profile(message: types.Message, user_id: int = None):
         f"🖼️ Хватит на: {tokens // 10} картинок\n"
         f"📝 Текст: {used}/{max_req} сегодня\n"
         f"👥 Рефералов: {referral_count}\n"
-        f"{joined_line}"
+        f"{joined_line}\n\n"
+        f"🧠 Что я о тебе знаю:\n"
+        f"🎯 Хобби: {hobbies}\n"
+        f"🌈 Цвета: {colors}\n"
+        f"🎨 Стиль: {style}\n"
+        f"📚 Сообщений: {len(history)}\n"
+        f"🖼️ Картинок: {meta.get('images_count', 0)}"
     )
-    await message.answer(text, reply_markup=helpers.main_menu())
+    try:
+        await message.edit_text(text, reply_markup=helpers.profile_kb())
+    except Exception:
+        await message.answer(text, reply_markup=helpers.profile_kb())
 
 
 @router.message(Command("profile"))
@@ -78,6 +93,17 @@ async def profile_command(message: types.Message):
 
 @router.callback_query(F.data == "profile")
 async def profile_cb(callback: types.CallbackQuery):
-    # ВАЖНО: id берём из callback.from_user (callback.message.from_user — это бот)
     await show_profile(callback.message, callback.from_user.id)
     await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "forget_all")
+async def forget_all_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    clear_memory(user_id)
+    await callback.message.edit_text(
+        "🧹 Готово!\n\nЯ забыл всё, что знал о тебе: имя, хобби, историю диалогов.\n\n"
+        "Картинки остались в сохранности.",
+        reply_markup=helpers.main_menu()
+    )
+    await helpers.safe_answer(callback, "✅ Память очищена", show_alert=True)

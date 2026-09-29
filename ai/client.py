@@ -23,7 +23,6 @@ def get_openai_client():
 
 
 def _build_memory_block(user_id: int) -> str:
-    """Собирает блок памяти: имя, предпочтения, хобби, темы."""
     try:
         from utils.user_storage import load_profile
         profile = load_profile(user_id)
@@ -65,7 +64,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
 
     model = get_model_setting("text_chat") or "deepseek-v4-flash"
 
-    # === ПАМЯТЬ ===
     memory_block = _build_memory_block(user_id) if user_id else ""
     system_prompt = f"Ты — Vertex AI, умный ассистент. Отвечай кратко, до {max_output} слов."
     if memory_block:
@@ -106,7 +104,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
 
 
 def analyze_intent(user_id, text):
-    """Разбор намерения. ИИ сам восстанавливает дату/время, имя, хобби и т.д."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "chat", {}
@@ -118,7 +115,6 @@ def analyze_intent(user_id, text):
     today_str = now.strftime("%Y-%m-%d")
     tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Подтягиваем текущий профиль, чтобы ИИ знал контекст
     memory_block = _build_memory_block(user_id) if user_id else ""
 
     system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
@@ -131,24 +127,23 @@ def analyze_intent(user_id, text):
 {{"action": "действие", "params": {{...}}}}
 
 Действия:
-- generate_image: создать картинку. params: {{"prompt": "..."}}
+- generate_image: params: {{"prompt": "..."}}
 - show_prices, show_balance, show_referral, show_profile, show_help
-- set_reminder: напомнить. params: {{"text": "...", "time": "HH:MM", "date": "YYYY-MM-DD", "need_clarification": true/false, "question": "..."}}
-- list_reminders: список напоминаний
-- delete_reminder: удалить. params: {{"text": "..."}}
-- delete_all_reminders: удалить все
-- search_web: поиск. params: {{"query": "..."}}
-- update_profile: обновить профиль. params: {{"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}}
-- chat: разговор
+- set_reminder: params: {{"text": "...", "time": "HH:MM", "date": "YYYY-MM-DD", "need_clarification": true/false, "question": "..."}}
+- list_reminders
+- delete_reminder: params: {{"text": "..."}}
+- delete_all_reminders
+- search_web: params: {{"query": "..."}}
+- update_profile: params: {{"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}}
+- chat
 
 ПРАВИЛА:
-1. Если пользователь говорит "меня зовут X" / "я X" — update_profile с key="name", value=X. Это работает в любой момент диалога.
-2. Если говорит "я люблю X" / "мне нравится X" / "я занимаюсь X" — update_profile с key="hobbies", value=X.
-3. Если "мой любимый цвет X" — update_profile с key="colors", value=X.
-4. Если "мой стиль X" — update_profile с key="style", value=X.
-5. Если просит напомнить — set_reminder. Если чего-то не хватает — need_clarification: true.
-6. Если спрашивает о своём хобби/имени/предпочтениях — action="chat", но используй данные из "О ПОЛЬЗОВАТЕЛЕ".
-7. Отвечай ТОЛЬКО JSON."""
+1. "меня зовут X" / "я X" — update_profile key="name" value=X.
+2. "я люблю X" / "мне нравится X" — update_profile key="hobbies" value=X.
+3. "мой любимый цвет X" — update_profile key="colors" value=X.
+4. "мой стиль X" — update_profile key="style" value=X.
+5. "напомни..." — set_reminder. Если не хватает — need_clarification: true.
+6. Отвечай ТОЛЬКО JSON."""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ: {text[:50]}...")

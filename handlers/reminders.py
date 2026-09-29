@@ -2,6 +2,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
+from . import helpers
 from datetime import datetime, timedelta
 import logging
 import re
@@ -11,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def _build_datetime(date_str, time_str):
-    """Понимает: 'HH:MM', 'через N минут', 'YYYY-MM-DD', 'today', 'tomorrow'."""
     now = datetime.now()
     today = now.date()
 
@@ -21,7 +21,6 @@ def _build_datetime(date_str, time_str):
     time_str = str(time_str).strip().lower()
     date_str = str(date_str or "").strip().lower()
 
-    # "через N минут/часов/дней"
     m = re.match(r'через\s+(\d+)\s*(мин|минут|час|часов|дн|дней|день)', time_str)
     if m:
         amount = int(m.group(1))
@@ -33,12 +32,10 @@ def _build_datetime(date_str, time_str):
         elif unit.startswith('дн'):
             return now + timedelta(days=amount)
 
-    # "через 25" без единицы — минуты
     m = re.match(r'через\s+(\d+)$', time_str)
     if m:
         return now + timedelta(minutes=int(m.group(1)))
 
-    # "HH:MM"
     m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
     if m:
         hour = int(m.group(1))
@@ -57,6 +54,11 @@ def _build_datetime(date_str, time_str):
         else:
             try:
                 d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                if d < today:
+                    if d.month == 12:
+                        d = d.replace(year=d.year + 1, month=1)
+                    else:
+                        d = d.replace(month=d.month + 1)
                 return datetime.combine(d, time_obj)
             except ValueError:
                 return None
@@ -73,6 +75,12 @@ def reminders_kb(reminders):
     kb.inline_keyboard.append([InlineKeyboardButton(text="🗑️ Удалить все", callback_data="del_all_reminders")])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
     return kb
+
+
+def no_reminders_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+    ])
 
 
 async def create_reminder_from_ai(message: types.Message, params: dict):
@@ -109,7 +117,7 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
 
     add_reminder(user_id, text, full_time.isoformat())
     await message.answer(
-        f"⏰ **Напоминание установлено!**\n\n"
+        f"⏰ Напоминание установлено!\n\n"
         f"📝 {text}\n"
         f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
     )
@@ -117,7 +125,6 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
 
 
 async def handle_clarification(message: types.Message, text: str):
-    """Умный разбор ответа: что это — дата, время или текст."""
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
 
@@ -131,49 +138,44 @@ async def handle_clarification(message: types.Message, text: str):
     saved_date = state.get("date", "")
     question = state.get("question", "")
 
-    # Спрашиваем ИИ, что это за ответ
     from ai.client import analyze_intent
     action, params = analyze_intent(user_id, text.strip())
 
-    # Если ИИ вернул set_reminder — забираем оттуда поля
     if action == "set_reminder":
         new_text = (params.get("text") or "").strip()
         new_time = (params.get("time") or "").strip()
         new_date = (params.get("date") or "").strip()
-
-        # Мержим: не перезаписываем то, что уже есть
-        if new_text and not saved_text:
+        if new_text and not saved_text and "что напомнить" not in new_text.lower():
             saved_text = new_text
         if new_time:
             saved_time = new_time
         if new_date:
             saved_date = new_date
-
     else:
-        # ИИ не понял как напоминание — пробуем парсить сами
         stripped = text.strip().lower()
-
-        # Время: "18:03", "18 03", "6 вечера"
         m = re.search(r'(\d{1,2})[:.\s](\d{2})', stripped)
         if m and not saved_time:
             saved_time = f"{int(m.group(1)):02d}:{m.group(2)}"
         else:
-            # Дата: "завтра", "сегодня", "25", "25.09"
             if stripped in ("завтра", "tomorrow"):
                 saved_date = "tomorrow"
             elif stripped in ("сегодня", "today"):
                 saved_date = "today"
             elif re.match(r'^\d{1,2}$', stripped) and not saved_date:
-                # Число без месяца — считаем датой текущего месяца
                 day = int(stripped)
                 if 1 <= day <= 31:
                     now = datetime.now()
                     try:
-                        saved_date = now.replace(day=day).strftime("%Y-%m-%d")
+                        d = now.replace(day=day).date()
+                        if d < now.date():
+                            if d.month == 12:
+                                d = d.replace(year=d.year + 1, month=1)
+                            else:
+                                d = d.replace(month=d.month + 1)
+                        saved_date = d.strftime("%Y-%m-%d")
                     except ValueError:
-                        saved_date = None
+                        pass
             elif re.match(r'^\d{1,2}\.\d{1,2}', stripped) and not saved_date:
-                # "25.09" или "25.09.2026"
                 parts = stripped.split(".")
                 day = int(parts[0])
                 month = int(parts[1]) if len(parts) > 1 else datetime.now().month
@@ -183,24 +185,21 @@ async def handle_clarification(message: types.Message, text: str):
                 except Exception:
                     pass
 
-        # Если это ответ на "Что напомнить?" — сохраняем как текст
         if "что напомнить" in question.lower() and not saved_text:
             saved_text = text.strip()
 
-    # Пробуем завершить
     if saved_text and saved_time:
         full_time = _build_datetime(saved_date, saved_time)
         if full_time:
             add_reminder(user_id, saved_text, full_time.isoformat())
             helpers.user_pages.pop(user_id, None)
             await message.answer(
-                f"⏰ **Напоминание установлено!**\n\n"
+                f"⏰ Напоминание установлено!\n\n"
                 f"📝 {saved_text}\n"
                 f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
             )
             return
 
-    # Что-то не хватает — спрашиваем ещё раз
     if not saved_text:
         new_question = "Что напомнить?"
     elif not saved_time:
@@ -225,10 +224,14 @@ async def list_reminders_msg(message: types.Message, user_id: int = None):
         user_id = message.from_user.id
     reminders = get_user_reminders(user_id)
     if not reminders:
-        await message.answer("📭 Нет активных напоминаний", reply_markup=helpers.main_menu())
+        await message.answer(
+            "📭 У тебя пока нет напоминаний\n\n"
+            "Напиши, например: «Напомни завтра в 10 купить хлеб»",
+            reply_markup=no_reminders_kb()
+        )
         return
 
-    text = "⏰ **Напоминания (ближайшие первыми):**\n\n"
+    text = "⏰ Напоминания (ближайшие первыми):\n\n"
     for i, r in enumerate(reminders, 1):
         try:
             time_str = datetime.fromisoformat(r['time']).strftime('%d.%m %H:%M')
@@ -257,7 +260,7 @@ async def set_reminder_cmd(message: types.Message):
             return
         add_reminder(message.from_user.id, reminder_text, full_time.isoformat())
         await message.answer(
-            f"⏰ **Напоминание установлено!**\n\n"
+            f"⏰ Напоминание установлено!\n\n"
             f"📝 {reminder_text}\n"
             f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
         )
@@ -274,12 +277,24 @@ async def list_reminders_cmd(message: types.Message):
 async def my_reminders_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     reminders = get_user_reminders(user_id)
+
     if not reminders:
-        await callback.message.answer("📭 Нет активных напоминаний", reply_markup=helpers.main_menu())
+        try:
+            await callback.message.edit_text(
+                "📭 У тебя пока нет напоминаний\n\n"
+                "Напиши, например: «Напомни завтра в 10 купить хлеб»",
+                reply_markup=no_reminders_kb()
+            )
+        except Exception:
+            await callback.message.answer(
+                "📭 У тебя пока нет напоминаний\n\n"
+                "Напиши, например: «Напомни завтра в 10 купить хлеб»",
+                reply_markup=no_reminders_kb()
+            )
         await helpers.safe_answer(callback)
         return
 
-    text = "⏰ **Напоминания (ближайшие первыми):**\n\n"
+    text = "⏰ Напоминания (ближайшие первыми):\n\n"
     for i, r in enumerate(reminders, 1):
         try:
             time_str = datetime.fromisoformat(r['time']).strftime('%d.%m %H:%M')
@@ -309,5 +324,8 @@ async def del_reminder_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "del_all_reminders")
 async def del_all_reminders_cb(callback: types.CallbackQuery):
     delete_all_reminders(callback.from_user.id)
-    await callback.message.edit_text("🗑️ Все напоминания удалены", reply_markup=helpers.main_menu())
+    await callback.message.edit_text(
+        "🗑️ Все напоминания удалены",
+        reply_markup=helpers.main_menu()
+    )
     await helpers.safe_answer(callback)
