@@ -11,23 +11,26 @@ HELP_TEXT = (
     "🖼️ Создавать картинки — просто напиши, что нарисовать\n"
     "✏️ Редактировать картинки — нажми «Поправить» под картинкой\n"
     "📄 Анализировать файлы — отправь PDF, DOCX, TXT или CSV\n"
-    "🎤 Распознавать голосовые — отправь голосовое сообщение\n"
-    "🔍 Искать в интернете — команда /search запрос\n"
-    "⏰ Напоминать — команда /remind 10:00 текст\n"
+    "🎤 Распознавать голосовые — отправь голосовое\n"
+    "🔍 Искать в интернете — просто напиши «Найди погоду в Минске»\n"
+    "⏰ Напоминать — «Напомни завтра в 10 купить хлеб»\n"
     "🧠 Отвечать на вопросы — просто напиши\n\n"
     "**Команды:**\n"
     "/start — главное меню\n"
     "/profile — профиль\n"
     "/balance — баланс\n"
-    "/search — поиск\n"
-    "/remind — напоминание\n"
-    "/reminders — список напоминаний\n\n"
-    "**Тарифы и цены:**\n"
-    "💰 Токены продаются в меню «Купить токены»\n"
-    "👑 Подписки: Премиум 150⭐/мес, Премиум+ 300⭐/мес\n"
-    "🎁 Новым пользователям — 20 токенов бесплатно!\n\n"
-    "💡 10 токенов = 1 картинка\n\n"
-    "👥 Приглашай друзей по своей реферальной ссылке — получишь +20 токенов за каждого!"
+    "/prices — цены\n"
+    "/credits — купить токены\n"
+    "/reminders — список напоминаний\n"
+    "/help — эта справка\n\n"
+    "**Примеры:**\n"
+    "• «Нарисуй кота в шляпе»\n"
+    "• «Напомни завтра в 10 позвонить маме»\n"
+    "• «Найди курс доллара»\n\n"
+    "**Тарифы:**\n"
+    "💰 10 токенов = 1 картинка\n"
+    "👑 Premium — 150⭐/мес\n"
+    "🎁 Новичкам — 20 токенов бесплатно!"
 )
 
 
@@ -42,10 +45,8 @@ async def help_command(message: types.Message):
 
 @router.callback_query(F.data == "help")
 async def help_cb(callback: types.CallbackQuery):
-    # ВАЖНО: id пользователя для безопасного показа — из callback.from_user
-    text = HELP_TEXT
     try:
-        await callback.message.edit_text(text, reply_markup=helpers.main_menu())
+        await callback.message.edit_text(HELP_TEXT, reply_markup=helpers.main_menu())
     except Exception:
-        await callback.message.answer(text, reply_markup=helpers.main_menu())
+        await callback.message.answer(HELP_TEXT, reply_markup=helpers.main_menu())
     await helpers.safe_answer(callback)

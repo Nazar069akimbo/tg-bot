@@ -9,16 +9,20 @@ logger = logging.getLogger(__name__)
 user_pages = {}
 user_model = {}
 
+
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel"),
-         InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
+        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders"),
+         InlineKeyboardButton(text="🧠 Моя память", callback_data="my_memory")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+         InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+        [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
     ])
+
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -31,17 +35,19 @@ def admin_kb():
         [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
          InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
         [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
-         InlineKeyboardButton(text="📥 Восстановить из GitHub", callback_data="a_restore_github")],
+         InlineKeyboardButton(text="📥 Восстановить", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
         [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
+
 def edit_in_progress_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏹ Отмена", callback_data="cancel_edit")]
     ])
+
 
 async def safe_answer(callback: types.CallbackQuery, text: str = None, show_alert: bool = False):
     try:
@@ -54,20 +60,51 @@ async def safe_answer(callback: types.CallbackQuery, text: str = None, show_aler
     except Exception:
         pass
 
+
 def get_user_name(user_id):
     memory = get_user_memory(user_id)
     if memory and memory.get('name'):
         return memory['name']
     return None
 
+
 IMAGE_MODELS = {
-    "flux": {"name": "🖼️ Flux Schnell", "price": 10, "api_model": "flux-schnell", "type": "replicate", "description": "⚡ Быстрая, базовая"},
-    "flux_2_max": {"name": "🔥 Flux-2-Max", "price": 100, "api_model": "flux-2-max", "type": "replicate", "description": "⭐ ТОПОВОЕ КАЧЕСТВО"}
+    "flux": {"name": "🖼️ Flux Schnell", "price": 10, "api_model": "flux-schnell", "type": "replicate", "description": "⚡ Быстрая"},
+    "flux_2_max": {"name": "🔥 Flux-2-Max", "price": 100, "api_model": "flux-2-max", "type": "replicate", "description": "⭐ ТОП"}
 }
 model_stats = {"flux": 0, "flux_2_max": 0}
 
+AVAILABLE_MODELS = {
+    "image_generate": [
+        ("flux-schnell", "🖼️ Flux Schnell"),
+        ("flux-2-max", "🔥 Flux-2-Max"),
+    ],
+    "image_edit": [
+        ("flux-schnell", "⚡ Flux Schnell (img2img)"),
+        ("flux-img2img", "✏️ Flux img2img"),
+        ("sdxl-img2img", "🎨 SDXL img2img"),
+    ],
+    "prompt_enhance": [
+        ("gpt-4.1-nano", "🧠 GPT-4.1 nano"),
+        ("deepseek-v4-flash", "🧠 DeepSeek Flash"),
+    ],
+    "text_chat": [
+        ("deepseek-v4-flash", "💬 DeepSeek Flash"),
+        ("gpt-4.1-nano", "💬 GPT-4.1 nano"),
+    ],
+}
+
+TASK_NAMES = {
+    "image_generate": "🎨 Генерация картинок",
+    "image_edit": "✏️ Правка картинок",
+    "prompt_enhance": "🧠 Улучшение промпта",
+    "text_chat": "💬 Текстовый чат",
+}
+
+
 def get_model_key(user_id):
     return user_model.get(user_id, "flux")
+
 
 def get_model_config(user_id):
     key = get_model_key(user_id)

@@ -2,7 +2,6 @@ import sqlite3
 import os
 import json
 import secrets
-import time
 import threading
 import queue
 from datetime import datetime, timedelta
@@ -11,36 +10,31 @@ from contextlib import contextmanager
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# ===== ОЧЕРЕДЬ ЗАПРОСОВ (ОДИН ПОТОК) =====
+# ===== ОЧЕРЕДЬ ЗАПРОСОВ =====
 _db_queue = queue.Queue()
 _db_thread = None
 _db_running = True
 
+
 def _db_worker():
-    """Фоновый поток — выполняет все запросы к БД ПО ОЧЕРЕДИ"""
     conn = None
     while _db_running:
         try:
             task = _db_queue.get(timeout=1)
             if task is None:
                 continue
-            
             func, args, kwargs, result_queue, error_queue = task
-            
             try:
                 if conn is None:
                     conn = sqlite3.connect(DB_PATH, timeout=30)
                     conn.row_factory = sqlite3.Row
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=NORMAL")
-                
                 cursor = conn.cursor()
                 result = func(conn, cursor, *args, **kwargs)
                 conn.commit()
-                
                 if result_queue:
                     result_queue.put(result)
-                    
             except Exception as e:
                 if conn:
                     conn.rollback()
@@ -48,15 +42,14 @@ def _db_worker():
                     error_queue.put(e)
                 else:
                     print(f"❌ Ошибка БД: {e}")
-                    
             finally:
                 _db_queue.task_done()
-                
         except queue.Empty:
             continue
         except Exception as e:
             print(f"❌ Ошибка воркера БД: {e}")
             conn = None
+
 
 def _ensure_db_thread():
     global _db_thread
@@ -65,15 +58,12 @@ def _ensure_db_thread():
         _db_thread.start()
         print("✅ Поток БД запущен")
 
+
 def _execute_db(func, *args, **kwargs):
-    """Отправляет запрос в очередь и ждёт результат"""
     _ensure_db_thread()
-    
     result_queue = queue.Queue()
     error_queue = queue.Queue()
-    
     _db_queue.put((func, args, kwargs, result_queue, error_queue))
-    
     try:
         if not error_queue.empty():
             raise error_queue.get(timeout=1)
@@ -83,16 +73,15 @@ def _execute_db(func, *args, **kwargs):
     except Exception as e:
         raise e
 
+
 def db_operation(func):
-    """Декоратор для функций, работающих с БД"""
     def wrapper(*args, **kwargs):
         return _execute_db(func, *args, **kwargs)
     return wrapper
 
-# ===== КОНТЕКСТНЫЙ МЕНЕДЖЕР (ДЛЯ ПРЯМЫХ ЗАПРОСОВ) =====
+
 @contextmanager
 def db_connection():
-    """Прямое подключение к БД (для init_db и migrate_db)"""
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -106,12 +95,12 @@ def db_connection():
     finally:
         conn.close()
 
+
 # ===== ИНИЦИАЛИЗАЦИЯ =====
 def init_db():
     with db_connection() as conn:
         cursor = conn.cursor()
-        
-        # Пользователи
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -139,8 +128,7 @@ def init_db():
             total_spent INTEGER DEFAULT 0
         )
         ''')
-        
-        # Память
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_memory (
             user_id INTEGER PRIMARY KEY,
@@ -155,8 +143,7 @@ def init_db():
             updated_at TEXT
         )
         ''')
-        
-        # История картинок
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS images_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,22 +160,7 @@ def init_db():
             created_at TEXT
         )
         ''')
-        
-        # Сессии правок
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS edit_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            session_id TEXT UNIQUE,
-            original_image_id INTEGER,
-            current_image_id INTEGER,
-            is_active INTEGER DEFAULT 1,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
-        
-        # Рефералы
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,16 +171,14 @@ def init_db():
             UNIQUE(referrer_id, referred_id)
         )
         ''')
-        
-        # Админы
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             user_id INTEGER PRIMARY KEY,
             added_at TEXT
         )
         ''')
-        
-        # Платежи
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,8 +190,7 @@ def init_db():
             plan TEXT
         )
         ''')
-        
-        # Сообщения
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages_to_admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,16 +201,14 @@ def init_db():
             status TEXT DEFAULT "new"
         )
         ''')
-        
-        # Настройки
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
         ''')
-        
-        # Промокоды
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS promocodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +223,7 @@ def init_db():
             expires_at TEXT
         )
         ''')
-        
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS promocode_uses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,8 +232,7 @@ def init_db():
             used_at TEXT
         )
         ''')
-        
-        # Напоминания
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,8 +244,15 @@ def init_db():
             created_at TEXT
         )
         ''')
-        
-        # Настройки по умолчанию
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS model_settings (
+            task TEXT PRIMARY KEY,
+            model TEXT,
+            updated_at TEXT
+        )
+        ''')
+
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -293,23 +266,33 @@ def init_db():
         ]
         for key, value in default_settings:
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-        
-        # Админ
+
+        default_models = [
+            ('image_generate', 'flux-schnell'),
+            ('prompt_enhance', 'gpt-4.1-nano'),
+            ('text_chat', 'deepseek-v4-flash'),
+        ]
+        for task, model in default_models:
+            cursor.execute("INSERT OR IGNORE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)",
+                           (task, model, datetime.now().isoformat()))
+
         ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
-        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
                        (ADMIN_ID, datetime.now().isoformat()))
-        
+
         print("✅ База данных инициализирована")
+
 
 def migrate_db():
     print("✅ БД в порядке")
 
-# ===== ВСЕ ФУНКЦИИ ЧЕРЕЗ ОЧЕРЕДЬ =====
 
+# ===== ПОЛЬЗОВАТЕЛИ =====
 @db_operation
 def get_user(conn, cursor, user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()
+
 
 @db_operation
 def create_user(conn, cursor, user_id, username):
@@ -323,6 +306,7 @@ def create_user(conn, cursor, user_id, username):
     """, (user_id, username, now, now, now))
     return True
 
+
 def force_create_user(user_id, username=None):
     try:
         user = get_user(user_id)
@@ -331,8 +315,9 @@ def force_create_user(user_id, username=None):
         create_user(user_id, username or str(user_id))
         init_user_memory(user_id)
         return get_user(user_id)
-    except:
+    except Exception:
         return None
+
 
 @db_operation
 def get_tokens(conn, cursor, user_id):
@@ -340,9 +325,11 @@ def get_tokens(conn, cursor, user_id):
     row = cursor.fetchone()
     return row[0] if row else 0
 
+
 @db_operation
 def add_tokens(conn, cursor, user_id, amount):
     cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
+
 
 @db_operation
 def spend_tokens(conn, cursor, user_id, amount):
@@ -353,11 +340,13 @@ def spend_tokens(conn, cursor, user_id, amount):
         return True
     return False
 
+
 @db_operation
 def get_user_memory(conn, cursor, user_id):
     cursor.execute("SELECT * FROM user_memory WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     return dict(row) if row else None
+
 
 @db_operation
 def init_user_memory(conn, cursor, user_id):
@@ -366,21 +355,16 @@ def init_user_memory(conn, cursor, user_id):
         VALUES (?, ?, ?, ?)
     """, (user_id, datetime.now().isoformat(), datetime.now().isoformat(), json.dumps([])))
 
+
 @db_operation
 def update_user_memory(conn, cursor, user_id, data):
-    # Инлайн-инициализация без вложенного вызова (иначе дедлок очереди БД)
     cursor.execute("INSERT OR IGNORE INTO user_memory (user_id, created_at, updated_at, context_history) VALUES (?, ?, ?, ?)",
                    (user_id, datetime.now().isoformat(), datetime.now().isoformat(), json.dumps([])))
-
     set_parts = []
     values = []
     for key, value in data.items():
         set_parts.append(f"{key} = ?")
-        if isinstance(value, (dict, list)):
-            values.append(json.dumps(value))
-        else:
-            values.append(value)
-
+        values.append(json.dumps(value) if isinstance(value, (dict, list)) else value)
     if not set_parts:
         return
     set_parts.append("updated_at = ?")
@@ -389,8 +373,10 @@ def update_user_memory(conn, cursor, user_id, data):
     query = f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?"
     cursor.execute(query, values)
 
+
 def set_user_name(user_id, name):
     update_user_memory(user_id, {'name': name})
+
 
 def add_to_context(user_id, prompt, image_id=None, edit_type=None):
     memory = get_user_memory(user_id)
@@ -403,6 +389,8 @@ def add_to_context(user_id, prompt, image_id=None, edit_type=None):
         history = history[-20:]
     update_user_memory(user_id, {'context_history': json.dumps(history)})
 
+
+# ===== КАРТИНКИ =====
 @db_operation
 def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data, previous_id=None, session_id=None, edit_type=None, edit_text=None):
     if not session_id:
@@ -413,8 +401,8 @@ def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model,
         INSERT INTO images_history (user_id, prompt, enhanced_prompt, model, image_data, previous_id, session_id, edit_type, edit_text, version, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (user_id, prompt, enhanced_prompt, model, image_data, previous_id, session_id, edit_type, edit_text, version, datetime.now().isoformat()))
-    image_id = cursor.lastrowid
-    return image_id, session_id
+    return cursor.lastrowid, session_id
+
 
 @db_operation
 def get_last_image(conn, cursor, user_id):
@@ -422,12 +410,15 @@ def get_last_image(conn, cursor, user_id):
     row = cursor.fetchone()
     return dict(row) if row else None
 
+
 @db_operation
 def get_image_by_id(conn, cursor, image_id):
     cursor.execute("SELECT * FROM images_history WHERE id = ?", (image_id,))
     row = cursor.fetchone()
     return dict(row) if row else None
 
+
+# ===== ЛИМИТЫ ТЕКСТА =====
 @db_operation
 def get_text_requests(conn, cursor, user_id):
     cursor.execute("SELECT text_requests, max_text_requests FROM users WHERE user_id = ?", (user_id,))
@@ -436,33 +427,38 @@ def get_text_requests(conn, cursor, user_id):
         return 0, 10
     return row[0] if row[0] else 0, row[1] if row[1] else 10
 
+
 @db_operation
 def reset_text_requests_if_needed(conn, cursor, user_id):
     cursor.execute("SELECT text_requests_reset FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?", 
-                      (datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
+                       (datetime.now().isoformat(), user_id))
         return
     last_reset = row[0]
     if not last_reset:
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?", 
-                      (datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
+                       (datetime.now().isoformat(), user_id))
         return
     last_date = datetime.fromisoformat(last_reset)
     if last_date.date() < datetime.now().date():
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?", 
-                      (datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
+                       (datetime.now().isoformat(), user_id))
+
 
 @db_operation
 def add_text_request(conn, cursor, user_id):
     cursor.execute("UPDATE users SET text_requests = text_requests + 1 WHERE user_id = ?", (user_id,))
+
 
 def can_request_text(user_id):
     reset_text_requests_if_needed(user_id)
     used, max_req = get_text_requests(user_id)
     return used < max_req
 
+
+# ===== ТРИАЛ / РЕФЕРАЛЫ / ПРОМОКОДЫ =====
 @db_operation
 def has_trial(conn, cursor, user_id):
     cursor.execute("SELECT trial_start, trial_active FROM users WHERE user_id = ?", (user_id,))
@@ -476,10 +472,12 @@ def has_trial(conn, cursor, user_id):
     start_date = datetime.fromisoformat(trial_start)
     return (datetime.now() - start_date).days < 3
 
+
 @db_operation
 def activate_trial(conn, cursor, user_id):
     cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 20 WHERE user_id = ?",
-                  (datetime.now().isoformat(), user_id))
+                   (datetime.now().isoformat(), user_id))
+
 
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
@@ -495,15 +493,16 @@ def add_referral(conn, cursor, referrer_id, referred_id):
     if cursor.fetchone():
         return False, "Уже приглашён!"
     cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
-                  (referrer_id, referred_id, datetime.now().isoformat()))
-    # Инлайн-начисление бонуса (без вложенного db_operation, чтобы не было дедлока очереди)
+                   (referrer_id, referred_id, datetime.now().isoformat()))
     cursor.execute("UPDATE users SET tokens = tokens + 20 WHERE user_id = ?", (referrer_id,))
     return True, "✅ +20 токенов!"
+
 
 @db_operation
 def get_referral_count(conn, cursor, user_id):
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     return cursor.fetchone()[0] or 0
+
 
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
@@ -516,17 +515,20 @@ def use_promocode(conn, cursor, code, user_id):
     cursor.execute("SELECT id FROM promocode_uses WHERE promocode_id = ? AND user_id = ?", (promo['id'], user_id))
     if cursor.fetchone():
         return False, "❌ Вы уже использовали"
-    cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)", 
-                  (promo['id'], user_id, datetime.now().isoformat()))
+    cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)",
+                   (promo['id'], user_id, datetime.now().isoformat()))
     cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
     if promo['bonus_tokens'] > 0:
         cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
+
+# ===== ПЛАТЕЖИ / ПРЕМИУМ / АДМИНЫ =====
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
-                  (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
+                   (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
+
 
 @db_operation
 def complete_payment(conn, cursor, payload):
@@ -534,15 +536,18 @@ def complete_payment(conn, cursor, payload):
     cursor.execute("SELECT user_id, stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
     return cursor.fetchone()
 
+
 @db_operation
 def is_admin(conn, cursor, user_id):
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
     return cursor.fetchone() is not None
 
+
 @db_operation
 def add_admin(conn, cursor, user_id):
-    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", 
-                  (user_id, datetime.now().isoformat()))
+    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
+                   (user_id, datetime.now().isoformat()))
+
 
 @db_operation
 def add_premium(conn, cursor, user_id, days, plan, paid=False):
@@ -551,13 +556,16 @@ def add_premium(conn, cursor, user_id, days, plan, paid=False):
     if paid:
         cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
 
+
 @db_operation
 def block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
 
+
 @db_operation
 def unblock_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
+
 
 @db_operation
 def get_stats(conn, cursor):
@@ -569,10 +577,12 @@ def get_stats(conn, cursor):
     total_requests = cursor.fetchone()[0] or 0
     cursor.execute("SELECT SUM(image_requests) FROM users")
     total_images = cursor.fetchone()[0] or 0
-    cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_deluxe')")
+    cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_plus')")
     premium_users = cursor.fetchone()[0] or 0
     return total, total_tokens, total_requests, total_images, premium_users
 
+
+# ===== НАПОМИНАНИЯ =====
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str, repeat=None):
     cursor.execute("""
@@ -581,47 +591,76 @@ def add_reminder(conn, cursor, user_id, text, time_str, repeat=None):
     """, (user_id, text, time_str, repeat, datetime.now().isoformat()))
     return cursor.lastrowid
 
+
 @db_operation
 def get_user_reminders(conn, cursor, user_id):
-    cursor.execute("SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC", (user_id,))
+    cursor.execute(
+        "SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC",
+        (user_id,)
+    )
     return cursor.fetchall()
 
-@db_operation
-def get_due_reminders(conn, cursor, now_iso: str):
-    """Напоминания, у которых время наступило и которые ещё не отправлены."""
-    cursor.execute("SELECT * FROM reminders WHERE sent = 0 AND time <= ?", (now_iso,))
-    return cursor.fetchall()
 
 @db_operation
-def mark_reminder_sent(conn, cursor, reminder_id: int):
-    cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
+def delete_reminder(conn, cursor, reminder_id):
+    cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+
 
 @db_operation
-def reset_daily_reminders(conn, cursor, now_iso: str):
-    """Повторяющиеся напоминания (* в repeat) — сбрасываем на следующий день."""
-    cursor.execute("UPDATE reminders SET sent = 0 WHERE repeat = '*' AND sent = 1 AND time <= ?", (now_iso,))
+def delete_reminder_by_text(conn, cursor, user_id, text):
+    cursor.execute("DELETE FROM reminders WHERE user_id = ? AND text LIKE ?", (user_id, f"%{text}%"))
 
+
+@db_operation
+def delete_all_reminders(conn, cursor, user_id):
+    cursor.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+
+
+# ===== НАСТРОЙКИ =====
 @db_operation
 def get_setting(conn, cursor, key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()
-    if row:
-        return row[0]
-    return None
+    return row[0] if row else None
+
 
 @db_operation
 def set_setting(conn, cursor, key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
+
+# ===== МОДЕЛИ =====
+@db_operation
+def get_model_setting(conn, cursor, task):
+    cursor.execute("SELECT model FROM model_settings WHERE task = ?", (task,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+@db_operation
+def set_model_setting(conn, cursor, task, model):
+    cursor.execute("INSERT OR REPLACE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)",
+                   (task, model, datetime.now().isoformat()))
+
+
+@db_operation
+def get_all_model_settings(conn, cursor):
+    cursor.execute("SELECT task, model FROM model_settings")
+    return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup
-        GitHubBackup().backup_db()
-    except:
+        GitHubBackup().backup_all(reason='после изменения')
+    except Exception:
         pass
+
 
 def get_queue_status():
     return {"queue_size": _db_queue.qsize(), "thread_alive": _db_thread.is_alive() if _db_thread else False}
+
 
 def get_queue_info():
     size = _db_queue.qsize()
