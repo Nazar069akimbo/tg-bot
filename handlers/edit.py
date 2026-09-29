@@ -3,9 +3,11 @@ from database.db import *
 from . import helpers
 from .image import generate_image
 import logging
+import base64
 
 router = Router()
 logger = logging.getLogger(__name__)
+
 
 async def handle_edit_message(message: types.Message):
     """Обработка текста при правке картинки (состояние waiting_edit)"""
@@ -27,18 +29,30 @@ async def handle_edit_message(message: types.Message):
     edit_text = message.text.strip()
     logger.info(f"✏️ [{user_id}] Правка картинки {image_id}: {edit_text}")
 
-    # Берём оригинальный промпт из БД
-    full_prompt = f"{image.get('prompt', '')}, {edit_text}"
+    # Берём base64 исходной картинки из БД
+    init_image_b64 = None
+    try:
+        raw = image.get('image_data')
+        if raw:
+            if isinstance(raw, bytes):
+                init_image_b64 = base64.b64encode(raw).decode('utf-8')
+            else:
+                init_image_b64 = raw
+    except Exception as e:
+        logger.warning(f"⚠️ [{user_id}] Не удалось получить base64: {e}")
+
+    # Промпт: описание конечного результата + сохранение композиции
+    full_prompt = f"{image.get('prompt', '')}. Change only: {edit_text}. Keep the same composition and subject."
 
     helpers.user_pages.pop(user_id, None)
-    await generate_image(message, full_prompt)
+    await generate_image(message, full_prompt, init_image_b64=init_image_b64)
+
 
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     data = callback.data
 
-    # Проверяем, что это edit_ с числом
     if not data.startswith("edit_"):
         await callback.answer()
         return
@@ -70,6 +84,7 @@ async def edit_callback(callback: types.CallbackQuery):
         reply_markup=helpers.edit_in_progress_kb()
     )
     await callback.answer()
+
 
 @router.callback_query(F.data == "cancel_edit")
 async def cancel_edit_cb(callback: types.CallbackQuery):
