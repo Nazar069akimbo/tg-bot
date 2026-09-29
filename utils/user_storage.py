@@ -1,11 +1,15 @@
 import os
 import json
+import time
 import logging
+import threading
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 BASE_DIR = "data/users"
+_last_backup_time = {"users": 0}
+BACKUP_INTERVAL = 300  # 5 минут
 
 
 def get_user_dir(user_id: int) -> str:
@@ -27,8 +31,24 @@ def _meta_path(user_id: int) -> str:
     return os.path.join(get_user_dir(user_id), "meta.json")
 
 
-# ===== PROFILE =====
+def _backup_users(force: bool = False):
+    """Бэкап пользователей в GitHub, не чаще раза в 5 минут."""
+    now = time.time()
+    if not force and now - _last_backup_time["users"] < BACKUP_INTERVAL:
+        return
+    _last_backup_time["users"] = now
 
+    def _run():
+        try:
+            from backup import GitHubBackup
+            GitHubBackup().backup_users(reason='после изменения')
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка бэкапа пользователей: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ===== PROFILE =====
 def load_profile(user_id: int) -> dict:
     path = _profile_path(user_id)
     if not os.path.exists(path):
@@ -52,6 +72,7 @@ def save_profile(user_id: int, data: dict):
     try:
         with open(_profile_path(user_id), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
     except Exception as e:
         logger.error(f"❌ save profile [{user_id}]: {e}")
 
@@ -72,7 +93,6 @@ def update_profile_field(user_id: int, key: str, value):
 
 
 # ===== HISTORY =====
-
 def load_history(user_id: int) -> list:
     path = _history_path(user_id)
     if not os.path.exists(path):
@@ -92,6 +112,7 @@ def append_history(user_id: int, role: str, text: str):
     try:
         with open(_history_path(user_id), "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
+        _backup_users()
     except Exception as e:
         logger.error(f"❌ append_history [{user_id}]: {e}")
 
@@ -102,7 +123,6 @@ def get_recent_history(user_id: int, limit: int = 20) -> list:
 
 
 # ===== META =====
-
 def load_meta(user_id: int) -> dict:
     path = _meta_path(user_id)
     if not os.path.exists(path):
@@ -132,7 +152,6 @@ def update_meta(user_id: int, **kwargs):
 
 
 # ===== IMAGES =====
-
 def save_user_image(user_id: int, image_id: int, image_bytes: bytes) -> str:
     path = os.path.join(get_user_dir(user_id), "images", f"{image_id}.png")
     try:
@@ -143,6 +162,7 @@ def save_user_image(user_id: int, image_id: int, image_bytes: bytes) -> str:
         with open(_meta_path(user_id), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         logger.info(f"💾 [{user_id}] image: {path}")
+        _backup_users()
         return path
     except Exception as e:
         logger.error(f"❌ save image [{user_id}]: {e}")
@@ -150,7 +170,6 @@ def save_user_image(user_id: int, image_id: int, image_bytes: bytes) -> str:
 
 
 # ===== CLEAR =====
-
 def clear_memory(user_id: int):
     for path in (_history_path(user_id), _profile_path(user_id)):
         if os.path.exists(path):

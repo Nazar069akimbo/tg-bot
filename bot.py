@@ -84,6 +84,13 @@ async def main():
     logger.info("✅ База данных готова")
 
     def backup_loop():
+        # Первый бэкап — сразу при старте
+        try:
+            GitHubBackup().backup_all(reason='при старте')
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
+
+        # Дальше — раз в час
         while True:
             time.sleep(3600)
             try:
