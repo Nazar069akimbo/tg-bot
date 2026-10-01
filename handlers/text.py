@@ -1,9 +1,9 @@
 from aiogram import Router, types, F
 from database.db import *
-from ai.client import solve_problem, analyze_intent, search_web
+from ai.client import solve_problem, analyze_intent, search_web, generate_ack
 from . import helpers
 from .image import generate_image
-from utils.user_storage import update_profile_field
+from utils.user_storage import set_user_name, add_fact
 import logging
 
 router = Router()
@@ -41,9 +41,8 @@ async def handle_text(message: types.Message):
     if state.get("state") == "waiting_name":
         from .start import start_cmd
         set_user_name(user_id, text)
-        update_profile_field(user_id, "name", text)
         helpers.user_pages.pop(user_id, None)
-        await message.answer("✅ Отлично! Я запомнил тебя.")
+        await message.answer(f"Ок, {text}! Приятно познакомиться 😊")
         await start_cmd(message)
         return
 
@@ -77,25 +76,14 @@ async def handle_text(message: types.Message):
         answer = search_web(params.get('query', text))
         await status.edit_text(f"🔍 Результат:\n\n{answer}")
 
-    elif action == 'update_profile':
-        key = params.get("key")
-        value = params.get("value")
-        if key and value:
-            update_profile_field(user_id, key, value)
-            if key == "name":
-                await message.answer(f"Ок, {value}! Запомнил 😊")
-            elif key == "hobbies":
-                await message.answer(f"Круто! Запомнил, что ты любишь {value} 🎯")
-            elif key == "colors":
-                await message.answer(f"Запомнил: любимый цвет — {value} 🌈")
-            elif key == "style":
-                await message.answer(f"Понял, твой стиль — {value} 🎨")
-            elif key == "favorite_topics":
-                await message.answer(f"Запомнил, тебе интересно: {value} 💬")
-            else:
-                await message.answer(f"Запомнил: {key} = {value}")
+    elif action == 'remember':
+        fact = params.get("fact", "").strip()
+        if fact:
+            add_fact(user_id, fact)
+            ack = generate_ack(fact)
+            await message.answer(ack)
         else:
-            await message.answer("❌ Не понял, что запомнить")
+            await message.answer("Запомнил 😊")
 
     elif action == 'show_prices':
         from .payments import prices_text, prices_kb

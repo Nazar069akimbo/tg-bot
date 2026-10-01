@@ -55,10 +55,10 @@ def _build_datetime(date_str, time_str):
             try:
                 d = datetime.strptime(date_str, "%Y-%m-%d").date()
                 if d < today:
-                    if d.month == 12:
-                        d = d.replace(year=d.year + 1, month=1)
-                    else:
-                        d = d.replace(month=d.month + 1)
+                    full = datetime.combine(today, time_obj)
+                    if full < now:
+                        full += timedelta(days=1)
+                    return full
                 return datetime.combine(d, time_obj)
             except ValueError:
                 return None
@@ -91,37 +91,41 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
     need_clarification = params.get("need_clarification", False)
     question = params.get("question", "")
 
-    if need_clarification or not text or not time_str:
-        if not question:
-            if not text:
-                question = "Что напомнить?"
-            elif not time_str:
-                question = "Во сколько напомнить?"
-            else:
-                question = "Уточни, пожалуйста."
+    helpers.user_pages[user_id] = {
+        "state": "waiting_reminder_clarification",
+        "text": text,
+        "time": time_str,
+        "date": date_str,
+        "question": question
+    }
 
-        helpers.user_pages[user_id] = {
-            "state": "waiting_reminder_clarification",
-            "text": text,
-            "time": time_str,
-            "date": date_str,
-            "question": question
-        }
+    if need_clarification and question:
         await message.answer(f"❓ {question}\n\n⏹ /cancel — отмена")
         return
 
-    full_time = _build_datetime(date_str, time_str)
-    if not full_time:
-        await message.answer("❌ Не понял время. Напиши, например: «Напомни завтра в 10 купить хлеб»")
-        return
+    if text and time_str:
+        full_time = _build_datetime(date_str, time_str)
+        if full_time:
+            add_reminder(user_id, text, full_time.isoformat())
+            helpers.user_pages.pop(user_id, None)
+            await message.answer(
+                f"⏰ Напоминание установлено!\n\n"
+                f"📝 {text}\n"
+                f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+            )
+            return
 
-    add_reminder(user_id, text, full_time.isoformat())
-    await message.answer(
-        f"⏰ Напоминание установлено!\n\n"
-        f"📝 {text}\n"
-        f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
-    )
-    logger.info(f"⏰ [{user_id}] {text} на {full_time}")
+    if not text:
+        question = "Что напомнить?"
+    elif not time_str:
+        question = "Во сколько напомнить?"
+    elif not date_str:
+        question = "На какой день? Сегодня, завтра или дата?"
+    else:
+        question = "Уточни, пожалуйста."
+
+    helpers.user_pages[user_id]["question"] = question
+    await message.answer(f"❓ {question}\n\n⏹ /cancel — отмена")
 
 
 async def handle_clarification(message: types.Message, text: str):

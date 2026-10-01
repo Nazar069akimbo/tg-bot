@@ -23,6 +23,7 @@ def get_openai_client():
 
 
 def _build_memory_block(user_id: int) -> str:
+    """Собирает блок памяти: имя, факты, хобби, темы."""
     try:
         from utils.user_storage import load_profile
         profile = load_profile(user_id)
@@ -37,9 +38,13 @@ def _build_memory_block(user_id: int) -> str:
         if prefs.get("colors"):
             lines.append(f"Любимые цвета: {prefs['colors']}.")
         if prefs.get("hobbies"):
-            lines.append(f"Хобби: {', '.join(prefs['hobbies'])}.")
+            lines.append(f"Интересы: {', '.join(prefs['hobbies'])}.")
         if prefs.get("favorite_topics"):
             lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
+        if prefs.get("facts"):
+            lines.append("Факты о пользователе:")
+            for f in prefs["facts"][-10:]:
+                lines.append(f"  - {f}")
         if lines:
             return " ".join(lines)
     except Exception as e:
@@ -134,16 +139,22 @@ def analyze_intent(user_id, text):
 - delete_reminder: params: {{"text": "..."}}
 - delete_all_reminders
 - search_web: params: {{"query": "..."}}
-- update_profile: params: {{"key": "hobbies|colors|style|name|favorite_topics", "value": "..."}}
+- remember: запомнить ЛЮБОЙ факт о пользователе. params: {{"fact": "пользователь любит кофе и трактора на 5 колёсах"}}
 - chat
 
-ПРАВИЛА:
-1. "меня зовут X" / "я X" — update_profile key="name" value=X.
-2. "я люблю X" / "мне нравится X" — update_profile key="hobbies" value=X.
-3. "мой любимый цвет X" — update_profile key="colors" value=X.
-4. "мой стиль X" — update_profile key="style" value=X.
-5. "напомни..." — set_reminder. Если не хватает — need_clarification: true.
-6. Отвечай ТОЛЬКО JSON."""
+ПРАВИЛА ДЛЯ set_reminder:
+1. Если пользователь просит напомнить и не указал текст — need_clarification: true, question: "Что напомнить?"
+2. Если не указано время — need_clarification: true, question: "Во сколько напомнить?"
+3. Если не указан день — need_clarification: true, question: "На какой день? Сегодня, завтра или дата?"
+4. Только когда есть ВСЕ три поля (текст, время, день) — need_clarification: false.
+5. Если пользователь ответил на уточнение — верни обновлённые параметры с need_clarification по остатку.
+
+ПРАВИЛА ДЛЯ remember:
+- Если пользователь говорит "я люблю X", "мне нравится X", "я занимаюсь X", "у меня есть X", "я живу в X", "мне X лет" и т.д. — верни action="remember" с фактом в params.fact.
+- Факт формулируй как "пользователь любит кофе и трактора на 5 колёсах" — целым предложением.
+- НЕ используй ключи hobbies/colors/style — только fact.
+
+Отвечай ТОЛЬКО JSON, без пояснений."""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ: {text[:50]}...")
@@ -206,3 +217,32 @@ def search_web(query):
     except Exception as e:
         logger.error(f"❌ Поиск: {e}")
         return f"❌ Ошибка: {str(e)[:100]}"
+
+
+def generate_ack(fact: str) -> str:
+    """Живой ответ на запоминание факта через ИИ."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "Запомнил 😊"
+
+    model = get_model_setting("prompt_enhance") or "gpt-4.1-nano"
+    try:
+        resp = requests.post(
+            "https://openai.bothub.chat/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Ответь живо и коротко (1 предложение, до 12 слов) на то, что пользователь рассказал о себе. Без ** и markdown. Пример: 'Круто! Кофе и трактора — запомнил 😄'"},
+                    {"role": "user", "content": f"Пользователь: {fact}"}
+                ],
+                "max_tokens": 60,
+                "temperature": 0.8
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.json().get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+    except Exception as e:
+        logger.warning(f"⚠️ generate_ack: {e}")
+    return "Запомнил 😊"
