@@ -20,13 +20,11 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
-    # === УТОЧНЕНИЕ НАПОМИНАНИЯ ===
     if state.get("state") == "waiting_reminder_clarification":
         from .reminders import handle_clarification
         await handle_clarification(message, text)
         return
 
-    # === АДМИН-ВВОД ===
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add"]:
@@ -34,14 +32,12 @@ async def handle_text(message: types.Message):
         await handle_admin_input(message)
         return
 
-    # === ПРОМОКОД ===
     if state.get("state") == "waiting_promo_use":
         success, msg = use_promocode(text.upper(), user_id)
         await message.answer(msg, reply_markup=helpers.main_menu())
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === ВВОД ИМЕНИ ===
     if state.get("state") == "waiting_name":
         set_user_name(user_id, text)
         helpers.user_pages.pop(user_id, None)
@@ -50,8 +46,6 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # === АНАЛИЗ НАМЕРЕНИЯ ===
-    # Если идёт диалог напоминания — передаём состояние в ИИ
     reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
     action, params = analyze_intent(user_id, text, reminder_state=reminder_state)
 

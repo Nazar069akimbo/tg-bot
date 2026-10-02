@@ -23,7 +23,6 @@ async def start_cmd(message: types.Message):
     profile = load_profile(user_id)
     name = profile.get("name") if profile else None
 
-    # Если имени нет — спрашиваем
     if not name:
         helpers.user_pages[user_id] = {"state": "waiting_name"}
         await message.answer(

@@ -34,9 +34,19 @@ def _build_memory_block(user_id: int) -> str:
         lines = []
         if profile.get("name"):
             lines.append(f"Пользователя зовут {profile['name']}.")
-        if prefs.get("facts"):
-            for f in prefs["facts"][-10:]:
-                lines.append(f"- {f}")
+        if prefs.get("hobbies"):
+            lines.append(f"Хобби: {', '.join(prefs['hobbies'])}.")
+        if prefs.get("favorite_topics"):
+            lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
+        if prefs.get("colors"):
+            lines.append(f"Любимые цвета: {prefs['colors']}.")
+        if prefs.get("style"):
+            lines.append(f"Стиль: {prefs['style']}.")
+        facts = prefs.get("facts", [])
+        if facts:
+            lines.append("Факты, которые пользователь рассказал о себе:")
+            for f in facts[-15:]:
+                lines.append(f"  - {f}")
         if lines:
             return " ".join(lines)
     except Exception as e:
@@ -62,10 +72,18 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
     model = get_model_setting("text_chat") or "deepseek-v4-flash"
 
     memory_block = _build_memory_block(user_id) if user_id else ""
-    system_prompt = "Ты — Vertex AI, дружелюбный ассистент. Отвечай кратко, 1-3 предложения."
+
     if memory_block:
-        system_prompt += f" Ты знаешь о пользователе: {memory_block}"
-    system_prompt += " Не используй markdown и звёздочки."
+        system_prompt = (
+            f"Ты — Vertex AI, дружелюбный ассистент. Отвечай кратко, 1-3 предложения.\n\n"
+            f"ВАЖНО: ты уже знаешь о пользователе: {memory_block}\n"
+            f"ОБЯЗАТЕЛЬНО используй эти знания. Если пользователь спрашивает о своём хобби, "
+            f"интересах, предпочтениях — отвечай, опираясь на эту информацию. "
+            f"НЕ переспрашивай то, что уже знаешь.\n"
+            f"Не используй markdown и звёздочки."
+        )
+    else:
+        system_prompt = "Ты — Vertex AI, дружелюбный ассистент. Отвечай кратко, 1-3 предложения. Не используй markdown."
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -90,27 +108,21 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
             )
             choice = resp.choices[0]
             msg = choice.message
-
             content = getattr(msg, "content", None)
             if content and content.strip():
                 return content.strip()
-
             reasoning = getattr(msg, "reasoning_content", None)
             if reasoning and reasoning.strip():
                 return reasoning.strip()
-
-            logger.warning(f"⚠️ {m}: пустой ответ")
             return None
         except Exception as e:
             logger.error(f"❌ {m}: {e}")
             return None
 
-    # Пробуем основную и альтернативные модели
     for m in [model, "gpt-4.1-nano", "gpt-4.1-mini", "deepseek-v4-pro"]:
         logger.info(f"🧪 Пробуем {m}")
         answer = _try_model(m)
         if answer:
-            # Сохраняем в историю
             if user_id:
                 try:
                     from utils.user_storage import append_history
@@ -120,7 +132,6 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
                     logger.warning(f"⚠️ История [{user_id}]: {e}")
             return answer
 
-    # Все модели упали
     logger.error("❌ Все модели не ответили")
     return "😔 Не смог ответить. Попробуй ещё раз или напиши админу: " + ADMIN_EMAIL
 
@@ -167,6 +178,12 @@ def analyze_intent(user_id, text, reminder_state=None):
 - remember: params: {{"fact": "..."}}
 - chat
 
+ПРАВИЛА remember (ОЧЕНЬ ВАЖНО):
+- "я люблю X", "мне нравится X", "я увлекаюсь X", "я занимаюсь X", "моё хобби X" → action="remember", params={{"fact": "пользователь любит X"}}
+- "меня зовут X" → action="remember", params={{"fact": "пользователя зовут X"}}
+- "у меня есть X" → action="remember", params={{"fact": "у пользователя есть X"}}
+- НЕ превращай это в chat!
+
 ОСОБЫЕ ПРАВИЛА ДЛЯ set_reminder:
 1. Невалидное время — need_clarification=true, question="Во сколько напомнить? Например: 18:30"
 2. "12.00", "12:00" → time="12:00"
@@ -178,9 +195,6 @@ def analyze_intent(user_id, text, reminder_state=None):
 - Нет text → "Что напомнить?"
 - Нет time → "Во сколько напомнить?"
 - Нет date → "На какой день?"
-
-ПРАВИЛА remember:
-- "я люблю X", "меня зовут X" → remember с fact.
 
 Отвечай ТОЛЬКО JSON."""
 
