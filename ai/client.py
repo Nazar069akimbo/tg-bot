@@ -24,8 +24,8 @@ def get_openai_client():
         return None
 
 
-def _get_user_context(user_id: int) -> str:
-    """Собирает всё, что бот знает о пользователе."""
+def _get_user_context(user_id: int):
+    """Собирает всё, что бот знает о пользователе + историю."""
     try:
         from utils.user_storage import load_profile, get_recent_history
         profile = load_profile(user_id)
@@ -56,20 +56,6 @@ def _get_user_context(user_id: int) -> str:
 def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     """
     Единая функция: ИИ сам решает, что делать, и возвращает готовую инструкцию.
-    
-    Возвращает:
-    {
-      "action": "reply" | "generate_image" | "set_reminder" | "save_reminder" | "cancel_reminder" | "delete_reminder" | "delete_all_reminders" | "list_reminders" | "search_web",
-      "reply": "текст для пользователя",
-      "prompt": "...",         # для generate_image
-      "text": "...",           # для set_reminder
-      "time": "HH:MM",
-      "date": "YYYY-MM-DD",
-      "query": "...",          # для search_web
-      "fact": "...",           # для remember (запоминание)
-      "reminder_id": 123,      # для delete_reminder
-      "delete_all": true
-    }
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -105,48 +91,56 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 {context if context else "(пока ничего)"}
 {reminder_context}
 
-Верни ТОЛЬКО JSON такой структуры:
+Верни ТОЛЬКО JSON:
 {{
-  "action": "одно из действий",
-  "reply": "текст, который увидят в чате (только для action=reply)",
-  "prompt": "промпт для картинки (только для generate_image)",
-  "text": "текст напоминания (для set_reminder)",
-  "time": "HH:MM (для set_reminder)",
-  "date": "YYYY-MM-DD или today/tomorrow (для set_reminder)",
+  "action": "reply | generate_image | set_reminder | cancel_reminder | delete_reminder | delete_all_reminders | list_reminders | search_web | remember",
+  "reply": "текст для пользователя (ВСЕГДА заполняй)",
+  "prompt": "...",
+  "text": "...",
+  "time": "HH:MM",
+  "date": "YYYY-MM-DD или today/tomorrow",
   "need_clarification": true/false,
-  "question": "вопрос, если need_clarification=true",
-  "query": "запрос (для search_web)",
-  "fact": "факт о пользователе (для remember)",
-  "reminder_id": число (для delete_reminder),
-  "delete_all": true/false
+  "question": "...",
+  "query": "...",
+  "fact": "..."
 }}
 
 ДЕЙСТВИЯ:
-- reply — обычный ответ пользователю. Используй поле "reply" с готовым текстом.
-- generate_image — пользователь просит нарисовать. Поле "prompt".
-- set_reminder — установить напоминание. Поля text/time/date. Если чего-то не хватает — need_clarification=true + question.
-- cancel_reminder — отменить активный диалог напоминания.
-- delete_reminder — удалить напоминание. Поле "text" (что удалить).
-- delete_all_reminders — удалить все. delete_all=true.
+- reply — обычный ответ. Поле "reply" с текстом.
+- generate_image — картинка. Поле "prompt".
+- set_reminder — напоминание. Поля text/time/date. Если чего-то нет — need_clarification=true + question.
+- cancel_reminder — отмена диалога.
+- delete_reminder — удалить напоминание. Поле "text".
+- delete_all_reminders — удалить все.
 - list_reminders — показать список.
-- search_web — поиск в интернете. Поле "query".
-- remember — запомнить факт. Поле "fact".
+- search_web — поиск. Поле "query".
+- remember — запомнить факт. Поле "fact" И "reply" (живой ответ).
 
-ПРАВИЛА:
-1. Ты — умный ассистент. Если пользователь спрашивает о своём хобби, интересах, имени, предпочтениях — используй данные выше и отвечай в action="reply". Не отправляй в show_help / show_profile.
-2. "покажи профиль", "/profile" → action="reply" с текстом профиля (сформируй сам).
-3. "помощь", "что ты умеешь" → action="reply" с описанием возможностей.
-4. "поменяй моё имя на X", "меня зовут X" → remember с fact="имя пользователя X".
-5. "я люблю X", "я увлекаюсь X" → remember с fact.
-6. При активном диалоге напоминания — собери недостающие поля через question, либо установи, если всё есть (action="set_reminder").
-7. Если невалидное время/дата — не молчи, задай вопрос в question.
-8. Если сомневаешься — просто ответь "reply".
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+
+1. ВСЕГДА заполняй "reply" — это текст, который увидит пользователь.
+   - Если action="remember" — "Круто! Кофе и трактора — запомнил 😄" (живо, до 15 слов).
+   - Если action="reply" — твой ответ на вопрос.
+
+2. Если пользователь отвечает "сегодня" на вопрос о ДАТЕ — date="today" и сразу создавай (если есть text+time). НЕ переспрашивай то же самое.
+   "завтра" → date="tomorrow".
+   "12 сентября" → date="YYYY-09-12".
+
+3. Если пользователь написал невалидное время (25:99, 99:99) — reply="25:99 — неверное время. В сутках 24 часа." и need_clarification=true, question="Во сколько напомнить? Например: 18:30".
+
+4. Если пользователь спрашивает о своём хобби/интересах/имени — action="reply" и используй данные из "ЧТО ТЫ ЗНАЕШЬ".
+
+5. При set_reminder: если text+time+date уже есть — need_clarification=false, создаём.
+   Если чего-то нет — need_clarification=true + question.
+
+6. При remember: "я люблю X", "меня зовут X", "я увлекаюсь X" → action="remember", fact="пользователь любит X", reply="Круто! Запомнил 😊".
+
+7. Если активен диалог напоминания и пользователь ответил — обновляй поля. Если ответил не по теме — reply="Ты хотел напоминание. Продолжим?" и оставь need_clarification=true.
 
 Отвечай ТОЛЬКО JSON."""
 
     messages = [{"role": "system", "content": system_prompt}]
 
-    # История диалога
     for msg in history:
         role = "user" if msg.get("role") == "user" else "assistant"
         messages.append({"role": role, "content": msg.get("text", "")})
@@ -183,7 +177,6 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     if not raw:
         return {"action": "reply", "reply": "😔 Не смог ответить. Попробуй ещё раз или напиши админу: " + ADMIN_EMAIL}
 
-    # Парсим JSON
     json_match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not json_match:
         return {"action": "reply", "reply": raw}

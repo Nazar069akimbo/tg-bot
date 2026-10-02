@@ -20,7 +20,7 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
-    # Админ-ввод — оставляем логику в коде (там опасные операции)
+    # Админ-ввод
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add"]:
@@ -54,7 +54,6 @@ async def handle_text(message: types.Message):
             await message.answer(reply_text)
         else:
             await message.answer("Не понял. Попробуй переформулировать.")
-        # Чистим состояние напоминания
         if reminder_state:
             helpers.user_pages.pop(user_id, None)
         return
@@ -70,6 +69,7 @@ async def handle_text(message: types.Message):
         r_date = (result.get("date") or "").strip()
         need_clar = result.get("need_clarification", False)
         question = result.get("question", "")
+        reply_text = result.get("reply", "")
 
         helpers.user_pages[user_id] = {
             "state": "waiting_reminder_clarification",
@@ -79,8 +79,13 @@ async def handle_text(message: types.Message):
             "question": question
         }
 
-        if need_clar and question:
-            await message.answer(f"❓ {question}")
+        if need_clar:
+            if reply_text:
+                await message.answer(reply_text)
+            elif question:
+                await message.answer(f"❓ {question}")
+            else:
+                await message.answer("❓ Уточни, пожалуйста.")
             return
 
         # Пробуем создать
@@ -95,13 +100,19 @@ async def handle_text(message: types.Message):
                     f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
                 )
                 return
-        # Если чего-то не хватает — спрашиваем
-        await message.answer(f"❓ {question or 'Уточни, пожалуйста.'}")
+        # Не смогли — спрашиваем
+        if reply_text:
+            await message.answer(reply_text)
+        elif question:
+            await message.answer(f"❓ {question}")
+        else:
+            await message.answer("❓ Уточни, пожалуйста.")
         return
 
     if action == "cancel_reminder":
         helpers.user_pages.pop(user_id, None)
-        await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
+        reply_text = result.get("reply", "✅ Отменено")
+        await message.answer(reply_text, reply_markup=helpers.main_menu())
         return
 
     if action == "delete_reminder":
@@ -132,19 +143,16 @@ async def handle_text(message: types.Message):
 
     if action == "remember":
         fact = result.get("fact", "").strip()
+        reply_text = result.get("reply", "").strip()
         if fact:
             add_fact(user_id, fact)
-            # ИИ сам писал reply? Если да — покажем его, иначе общий
-            reply_text = result.get("reply", "")
-            if reply_text:
-                await message.answer(reply_text)
-            else:
-                await message.answer("Запомнил 😊")
+        if reply_text:
+            await message.answer(reply_text)
         else:
             await message.answer("Запомнил 😊")
         return
 
-    # Неизвестное — отвечаем как reply
+    # Неизвестное — просто отвечаем
     reply_text = result.get("reply", "")
     if reply_text:
         await message.answer(reply_text)

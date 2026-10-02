@@ -14,6 +14,17 @@ ADMIN_EMAIL = "mychannell@gmail.com"
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
+
+    # Если идёт диалог напоминания — не сбрасываем
+    state = helpers.user_pages.get(user_id, {})
+    if state.get("state") == "waiting_reminder_clarification":
+        await message.answer(
+            "⏰ У тебя есть незавершённое напоминание.\n\n"
+            f"Вопрос: {state.get('question', 'Уточни, пожалуйста.')}\n\n"
+            "Продолжи или напиши /cancel"
+        )
+        return
+
     username = message.from_user.username or ""
     user = force_create_user(user_id, username)
     if not user:
