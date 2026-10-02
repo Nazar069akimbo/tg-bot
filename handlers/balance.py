@@ -13,7 +13,10 @@ async def balance_cmd(message: types.Message, user_id: int = None):
     used, limit = get_daily_usage(user_id)
     left = limit - used
     await message.answer(
-        f"💰 Баланс\n\n🪙 Токенов: {tokens}\n🖼️ Картинок: {tokens // 10}\n📊 Запросов ИИ: {used}/{limit} (осталось {left})",
+        f"💰 Баланс\n\n"
+        f"🪙 Токенов: {tokens}\n"
+        f"📊 Дневной лимит: {used}/{limit} (осталось {left})\n\n"
+        f"💡 Токены тратятся на все запросы ИИ.",
         reply_markup=helpers.main_menu()
     )
 

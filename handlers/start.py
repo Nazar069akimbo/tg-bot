@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import *
-from utils.user_storage import load_profile
+from utils.user_storage import load_profile, set_user_name
 from . import helpers
 import logging
 
@@ -13,6 +13,7 @@ ADMIN_EMAIL = "mychannell@gmail.com"
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
+
     state = helpers.user_pages.get(user_id, {})
     if state.get("state") == "waiting_reminder_clarification":
         await message.answer("⏰ У тебя есть незавершённое напоминание.\n\nПродолжи или /cancel")
@@ -56,12 +57,13 @@ async def start_cmd(message: types.Message):
 
     tokens = get_tokens(user_id)
     used, limit = get_daily_usage(user_id)
+    left = limit - used
 
     text = (
         f"✨ Vertex AI\n\n"
         f"👋 Привет, {name}!\n"
-        f"💰 Токенов: {tokens}\n"
-        f"📊 Запросов сегодня: {used}/{limit}\n\n"
+        f"🪙 Токенов: {tokens}\n"
+        f"📊 Дневной лимит: {left}/{limit}\n\n"
         f"{trial_text}\n\n"
         f"💬 Напиши, что хочешь!\n\n"
         f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"

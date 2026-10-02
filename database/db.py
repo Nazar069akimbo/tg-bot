@@ -12,11 +12,7 @@ os.makedirs('data', exist_ok=True)
 
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
 
-PLAN_LIMITS = {
-    "basic": 20,
-    "premium": 100,
-    "premium_plus": 300,
-}
+DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
 
 _db_queue = queue.Queue()
 _db_thread = None
@@ -115,16 +111,10 @@ def init_db():
             tokens INTEGER DEFAULT 0,
             trial_start TEXT,
             trial_active INTEGER DEFAULT 0,
-            text_requests INTEGER DEFAULT 0,
-            max_text_requests INTEGER DEFAULT 10,
-            text_requests_reset TEXT,
             is_blocked INTEGER DEFAULT 0,
             plan TEXT DEFAULT "basic",
             premium_until TEXT,
-            total_requests INTEGER DEFAULT 0,
-            image_requests INTEGER DEFAULT 0,
-            last_image_reset TEXT,
-            daily_requests INTEGER DEFAULT 20,
+            daily_requests INTEGER DEFAULT 30,
             daily_requests_used INTEGER DEFAULT 0,
             daily_reset TEXT,
             paid_premium INTEGER DEFAULT 0
@@ -301,12 +291,15 @@ def migrate_db():
     with db_connection() as conn:
         cursor = conn.cursor()
         for col, typ, default in [
-            ("daily_requests", "INTEGER", "20"),
+            ("daily_requests", "INTEGER", "30"),
             ("daily_requests_used", "INTEGER", "0"),
             ("daily_reset", "TEXT", None),
         ]:
             try:
-                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typ} DEFAULT {default}" if default else f"ALTER TABLE users ADD COLUMN {col} {typ}")
+                if default:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typ} DEFAULT {default}")
+                else:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
             except Exception:
                 pass
         print("✅ БД в порядке")
@@ -365,32 +358,38 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
-# ===== ДНЕВНЫЕ ЛИМИТЫ =====
+# ===== ДНЕВНЫЕ ЛИМИТЫ (ТОКЕНЫ) =====
 @db_operation
 def get_daily_usage(conn, cursor, user_id):
-    cursor.execute("SELECT daily_requests, daily_requests_used, daily_reset, plan FROM users WHERE user_id = ?", (user_id,))
+    """Возвращает (использовано_токенов, лимит_токенов)."""
+    cursor.execute("SELECT daily_requests_used, daily_reset, plan FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
-        return 0, 20
-    limit = row[0] or 20
-    used = row[1] or 0
-    last_reset = row[2]
-    plan = row[3] or "basic"
+        return 0, 30
+    used = row[0] or 0
+    last_reset = row[1]
+    plan = row[2] or "basic"
+
+    limit = DAILY_LIMITS.get(plan, 30)
+
     today = datetime.now().date().isoformat()
     if last_reset != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
         return 0, limit
+
     return used, limit
 
 
 @db_operation
 def spend_daily_requests(conn, cursor, user_id, amount):
-    cursor.execute("SELECT daily_requests, daily_requests_used FROM users WHERE user_id = ?", (user_id,))
+    """Списывает amount токенов. Возвращает True, если хватило."""
+    cursor.execute("SELECT daily_requests_used, plan FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
         return False
-    limit = row[0] or 20
-    used = row[1] or 0
+    used = row[0] or 0
+    plan = row[1] or "basic"
+    limit = DAILY_LIMITS.get(plan, 30)
     if used + amount > limit:
         return False
     cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + ? WHERE user_id = ?", (amount, user_id))
@@ -506,7 +505,7 @@ def add_admin(conn, cursor, user_id):
 @db_operation
 def add_premium(conn, cursor, user_id, days, plan, paid=False):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
-    new_limit = PLAN_LIMITS.get(plan, 20)
+    new_limit = DAILY_LIMITS.get(plan, 30)
     cursor.execute("UPDATE users SET premium_until = ?, plan = ?, daily_requests = ? WHERE user_id = ?",
                    (new_date, plan, new_limit, user_id))
     if paid:

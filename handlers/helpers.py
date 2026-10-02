@@ -21,9 +21,18 @@ def main_menu():
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders")],
+        [InlineKeyboardButton(text="⚙️ Сменить модель", callback_data="change_model")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
         [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
+    ])
+
+
+def change_model_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧠 Текст", callback_data="change_model_text")],
+        [InlineKeyboardButton(text="🎨 Картинки", callback_data="change_model_image")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
     ])
 
 
@@ -85,10 +94,10 @@ AVAILABLE_MODELS = {
     "image_generate": [
         ("flux-schnell", "⚡ Flux Schnell", 10, "free"),
         ("gpt-image-1-mini", "🖼️ GPT Image Mini", 10, "free"),
-        ("gpt-image-1.5", "🖼️ GPT Image 1.5", 40, "free"),
-        ("gpt-image-2.5", "🎨 GPT Image 2.5", 35, "free"),
-        ("qwen-image-2512", "🟣 Qwen Image", 230, "premium"),
-        ("seedream-5-lite", "🌸 Seedream Lite", 150, "premium"),
+        ("gpt-image-2.5", "🎨 GPT Image 2.5", 35, "premium"),
+        ("gpt-image-1.5", "🖼️ GPT Image 1.5", 40, "premium"),
+        ("seedream-5-lite", "🌸 Seedream Lite", 135, "premium"),
+        ("qwen-image-2512", "🟣 Qwen Image", 200, "premium_plus"),
     ],
 }
 
@@ -97,13 +106,14 @@ MODEL_COSTS = {
     "gemini-2.5-flash-lite": 2, "qwen-3.6-flash": 2, "gpt-4.1-mini": 2,
     "claude-haiku": 3, "deepseek-v4-pro": 4,
     "flux-schnell": 10, "gpt-image-1-mini": 10,
-    "gpt-image-1.5": 40, "gpt-image-2.5": 35,
-    "qwen-image-2512": 230, "seedream-5-lite": 150,
+    "gpt-image-2.5": 35, "gpt-image-1.5": 40,
+    "seedream-5-lite": 135, "qwen-image-2512": 200,
 }
 
 MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
 
-PLAN_LIMITS = {"basic": 20, "premium": 100, "premium_plus": 300}
+DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
+
 PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
 
 MODEL_MIN_LEVEL = {
@@ -111,8 +121,8 @@ MODEL_MIN_LEVEL = {
     "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 1,
     "claude-haiku": 2, "deepseek-v4-pro": 2,
     "flux-schnell": 0, "gpt-image-1-mini": 0,
-    "gpt-image-1.5": 0, "gpt-image-2.5": 0,
-    "qwen-image-2512": 1, "seedream-5-lite": 1,
+    "gpt-image-2.5": 1, "gpt-image-1.5": 1,
+    "seedream-5-lite": 1, "qwen-image-2512": 2,
 }
 
 
@@ -123,12 +133,9 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
 
     for model_id, model_name, cost, min_plan in models:
         mark = "✅ " if model_id == current else ""
-        cost_str = f" ({cost} з.)" if task == "text_chat" else f" ({cost} ток.)"
+        cost_str = f" ({cost} ток.)"
         required_level = MODEL_MIN_LEVEL.get(model_id, 0)
-        if required_level > user_level:
-            icon = " 🔒"
-        else:
-            icon = ""
+        icon = " 🔒" if required_level > user_level else ""
         kb.inline_keyboard.append([
             InlineKeyboardButton(
                 text=f"{mark}{model_name}{cost_str}{icon}",
@@ -144,10 +151,10 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
 IMAGE_MODELS = {
     "flux-schnell": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
     "gpt-image-1-mini": {"name": "🖼️ GPT Image Mini", "price": 10, "api_model": "gpt-image-1-mini"},
-    "gpt-image-1.5": {"name": "🖼️ GPT Image 1.5", "price": 40, "api_model": "gpt-image-1.5"},
     "gpt-image-2.5": {"name": "🎨 GPT Image 2.5", "price": 35, "api_model": "gpt-image-2.5"},
-    "qwen-image-2512": {"name": "🟣 Qwen Image", "price": 230, "api_model": "qwen-image-2512"},
-    "seedream-5-lite": {"name": "🌸 Seedream Lite", "price": 150, "api_model": "seedream-5-lite"},
+    "gpt-image-1.5": {"name": "🖼️ GPT Image 1.5", "price": 40, "api_model": "gpt-image-1.5"},
+    "seedream-5-lite": {"name": "🌸 Seedream Lite", "price": 135, "api_model": "seedream-5-lite"},
+    "qwen-image-2512": {"name": "🟣 Qwen Image", "price": 200, "api_model": "qwen-image-2512"},
 }
 
 

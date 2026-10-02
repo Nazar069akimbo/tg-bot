@@ -14,7 +14,7 @@ PROMPT_MODEL = "gpt-4.1-nano"
 
 
 async def generate_image(message: types.Message, prompt=None, user_id: int = None):
-    logger.info(f"🖼️ generate_image ВЫЗВАН: user_id={user_id}, prompt={prompt[:50] if prompt else None}")
+    logger.info(f"🖼️ generate_image ВЫЗВАН: user_id={user_id}")
 
     if user_id is None:
         user_id = message.from_user.id
@@ -22,7 +22,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         prompt = message.text
 
     ask_model = get_setting(f"ask_image_model_{user_id}") != "no"
-    logger.info(f"🖼️ ask_model={ask_model}, user_id={user_id}")
 
     if ask_model:
         user = get_user(user_id)
@@ -31,21 +30,17 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         balance = limit - used
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
-        logger.info(f"🖼️ Показываю выбор модели, current={current_model}, user_id={user_id}")
         await message.answer(
-            f"🎨 Выбери модель ({balance}/{limit} запросов):",
+            f"🎨 Выбери модель ({balance}/{limit} токенов):",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_image_model", "pending_prompt": prompt}
         return
 
-    # Проверка доступа
     user = get_user(user_id)
     plan = dict(user).get("plan", "basic") if user else "basic"
     current_model = get_model_setting("image_generate") or "flux-schnell"
     image_cost = helpers.MODEL_COSTS.get(current_model, 10)
-
-    logger.info(f"🖼️ Проверка: model={current_model}, cost={image_cost}")
 
     user_level = helpers.PLAN_LEVEL.get(plan, 0)
     required = helpers.MODEL_MIN_LEVEL.get(current_model, 0)
@@ -55,20 +50,18 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         return
 
     used, limit = get_daily_usage(user_id)
-    if used + 1 > limit:
-        await message.answer(f"🔒 Лимит исчерпан ({used}/{limit}).")
-        return
-
-    tokens = get_tokens(user_id)
-    if tokens < image_cost:
-        await message.answer(f"❌ Нужно {image_cost} токенов, у тебя {tokens}")
+    if used + image_cost > limit:
+        await message.answer(
+            f"🔒 Не хватает токенов: {used}/{limit}.\n"
+            f"Эта модель стоит {image_cost} токенов.\n\n"
+            f"💎 Premium даёт 100 токенов/день: /credits"
+        )
         return
 
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
 
-    logger.info(f"🖼️ Списание запроса и запуск генерации")
-    spend_daily_requests(user_id, 1)
+    spend_daily_requests(user_id, image_cost)
 
     status_msg = await message.answer("🎨 Рисую картинку...")
 
@@ -102,8 +95,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             timeout=120
         )
 
-        logger.info(f"🖼️ Статус ответа: {img_resp.status_code}")
-        logger.info(f"🖼️ Ответ: {img_resp.text[:300]}")
+        logger.info(f"🖼️ Статус: {img_resp.status_code}")
 
         img_data = None
         if img_resp.status_code == 200:
@@ -118,8 +110,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                         img_data = img_response.content
                 except Exception as e:
                     logger.error(f"❌ Скачивание: {e}")
-        else:
-            logger.error(f"❌ Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
             try:
@@ -137,7 +127,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             except Exception as e:
                 logger.warning(f"⚠️ Водяной знак: {e}")
 
-            spend_tokens(user_id, image_cost)
             new_tokens = get_tokens(user_id)
 
             image_id = None
@@ -163,7 +152,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов | 🪙 {new_tokens}",
+                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов",
                 reply_markup=keyboard
             )
             await status_msg.delete()
@@ -183,9 +172,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 @router.callback_query(F.data == "back_to_main")
 async def back_main_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    tokens = get_tokens(user_id)
     name = helpers.get_user_name(user_id) or "друг"
-    text = f"✨ Vertex AI\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}\n\n📧 Проблемы? Пиши: mychannell@gmail.com"
+    text = f"✨ Vertex AI\n\n👋 Привет, {name}!\n\n📧 Проблемы? Пиши: mychannell@gmail.com"
     try:
         await callback.message.edit_text(text, reply_markup=helpers.main_menu())
     except Exception:

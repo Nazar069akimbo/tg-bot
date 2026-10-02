@@ -50,7 +50,7 @@ async def handle_text(message: types.Message):
         current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
         await message.answer(
-            f"🧠 Выбери модель ({balance}/{limit} запросов):",
+            f"🧠 Выбери модель ({balance}/{limit} токенов):",
             reply_markup=helpers.model_choice_kb("text_chat", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_model_choice", "pending_text": text}
@@ -79,7 +79,11 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
 
     if used + cost > limit:
-        await message.answer(f"🔒 Лимит на сегодня исчерпан ({used}/{limit}).")
+        await message.answer(
+            f"🔒 Лимит на сегодня исчерпан ({used}/{limit} токенов).\n"
+            f"Эта модель стоит {cost} токенов.\n\n"
+            f"💎 Premium даёт 100 токенов/день: /credits"
+        )
         return
 
     spend_daily_requests(user_id, cost)
@@ -259,4 +263,61 @@ async def always_model_cb(callback: types.CallbackQuery):
             await callback.message.edit_text("✅ Больше не спрашиваю.")
         except Exception:
             pass
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "change_model")
+async def change_model_cb(callback: types.CallbackQuery):
+    try:
+        await callback.message.edit_text(
+            "⚙️ Смена модели\n\nВыбери, что менять:",
+            reply_markup=helpers.change_model_kb()
+        )
+    except Exception:
+        await callback.message.answer(
+            "⚙️ Смена модели\n\nВыбери, что менять:",
+            reply_markup=helpers.change_model_kb()
+        )
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "change_model_text")
+async def change_model_text_cb(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    plan = dict(user).get("plan", "basic") if user else "basic"
+    used, limit = get_daily_usage(callback.from_user.id)
+    balance = limit - used
+    current = get_model_setting("text_chat") or "gpt-4.1-nano"
+
+    try:
+        await callback.message.edit_text(
+            f"🧠 Выбери текстовую модель ({balance}/{limit} токенов):",
+            reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
+        )
+    except Exception:
+        await callback.message.answer(
+            f"🧠 Выбери текстовую модель ({balance}/{limit} токенов):",
+            reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
+        )
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "change_model_image")
+async def change_model_image_cb(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    plan = dict(user).get("plan", "basic") if user else "basic"
+    used, limit = get_daily_usage(callback.from_user.id)
+    balance = limit - used
+    current = get_model_setting("image_generate") or "flux-schnell"
+
+    try:
+        await callback.message.edit_text(
+            f"🎨 Выбери модель для картинок ({balance}/{limit} токенов):",
+            reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
+        )
+    except Exception:
+        await callback.message.answer(
+            f"🎨 Выбери модель для картинок ({balance}/{limit} токенов):",
+            reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
+        )
     await helpers.safe_answer(callback)
