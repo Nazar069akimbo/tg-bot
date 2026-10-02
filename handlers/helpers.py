@@ -6,6 +6,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+ADMIN_EMAIL = "mychannell@gmail.com"
+
 user_pages = {}
 user_model = {}
 

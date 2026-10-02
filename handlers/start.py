@@ -8,6 +8,8 @@ import logging
 router = Router()
 logger = logging.getLogger(__name__)
 
+ADMIN_EMAIL = "mychannell@gmail.com"
+
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -35,6 +37,7 @@ async def start_cmd(message: types.Message):
             "• ⏰ Напоминать о важном\n"
             "• 🧠 Запоминать факты о тебе\n\n"
             "Просто напиши, что хочешь!\n\n"
+            f"📧 Если что-то не работает — напиши админу: {ADMIN_EMAIL}\n\n"
             "Как мне тебя называть?"
         )
         return
@@ -58,12 +61,13 @@ async def start_cmd(message: types.Message):
 
     text = (
         f"✨ Vertex AI\n\n"
-        f"👋 С возвращением, {name}!\n"
+        f"👋 Привет, {name}!\n"
         f"💰 Токенов: {tokens}\n"
         f"🖼️ 10 токенов = 1 картинка\n"
         f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
         f"{trial_text}\n\n"
-        f"💬 Просто напиши, что хочешь!"
+        f"💬 Просто напиши, что хочешь!\n\n"
+        f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"
     )
     await message.answer(text, reply_markup=helpers.main_menu())
     logger.info(f"✅ [{user_id}] Бот запущен")
