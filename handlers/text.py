@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from database.db import *
-from ai.client import solve_problem, analyze_intent, search_web, generate_ack
+from ai.client import smart_reply, search_web
 from . import helpers
 from .image import generate_image
 from utils.user_storage import set_user_name, add_fact
@@ -20,11 +20,7 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
-    if state.get("state") == "waiting_reminder_clarification":
-        from .reminders import handle_clarification
-        await handle_clarification(message, text)
-        return
-
+    # Админ-ввод — оставляем логику в коде (там опасные операции)
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add"]:
@@ -46,100 +42,111 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
+    # === ИИ САМ РЕШАЕТ ===
     reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
-    action, params = analyze_intent(user_id, text, reminder_state=reminder_state)
+    result = smart_reply(user_id, text, reminder_state=reminder_state)
 
-    if action == 'generate_image':
-        await generate_image(message, params.get('prompt', text))
+    action = result.get("action", "reply")
 
-    elif action == 'set_reminder':
-        from .reminders import create_reminder_from_ai
-        await create_reminder_from_ai(message, params)
+    if action == "reply":
+        reply_text = result.get("reply", "")
+        if reply_text:
+            await message.answer(reply_text)
+        else:
+            await message.answer("Не понял. Попробуй переформулировать.")
+        # Чистим состояние напоминания
+        if reminder_state:
+            helpers.user_pages.pop(user_id, None)
+        return
 
-    elif action == 'list_reminders':
-        from .reminders import list_reminders_msg
-        await list_reminders_msg(message)
+    if action == "generate_image":
+        prompt = result.get("prompt", text)
+        await generate_image(message, prompt)
+        return
 
-    elif action == 'delete_reminder':
-        target = params.get("text", "")
+    if action == "set_reminder":
+        r_text = (result.get("text") or "").strip()
+        r_time = (result.get("time") or "").strip()
+        r_date = (result.get("date") or "").strip()
+        need_clar = result.get("need_clarification", False)
+        question = result.get("question", "")
+
+        helpers.user_pages[user_id] = {
+            "state": "waiting_reminder_clarification",
+            "text": r_text,
+            "time": r_time,
+            "date": r_date,
+            "question": question
+        }
+
+        if need_clar and question:
+            await message.answer(f"❓ {question}")
+            return
+
+        # Пробуем создать
+        if r_text and r_time:
+            full_time = helpers.build_reminder_time(r_date, r_time)
+            if full_time:
+                add_reminder(user_id, r_text, full_time.isoformat())
+                helpers.user_pages.pop(user_id, None)
+                await message.answer(
+                    f"⏰ Напоминание установлено!\n\n"
+                    f"📝 {r_text}\n"
+                    f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+                )
+                return
+        # Если чего-то не хватает — спрашиваем
+        await message.answer(f"❓ {question or 'Уточни, пожалуйста.'}")
+        return
+
+    if action == "cancel_reminder":
+        helpers.user_pages.pop(user_id, None)
+        await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
+        return
+
+    if action == "delete_reminder":
+        target = result.get("text", "")
         if target:
             delete_reminder_by_text(user_id, target)
             await message.answer(f"✅ Удалено: {target}")
         else:
             await message.answer("❌ Не понял, какое напоминание удалить")
-
-    elif action == 'delete_all_reminders':
-        delete_all_reminders(user_id)
-        await message.answer("🗑️ Все напоминания удалены")
-
-    elif action == 'search_web':
-        status = await message.answer("🔍 Ищу...")
-        answer = search_web(params.get('query', text))
-        await status.edit_text(f"🔍 Результат:\n\n{answer}")
-
-    elif action == 'remember':
-        fact = params.get("fact", "").strip()
-        if fact:
-            add_fact(user_id, fact)
-            ack = generate_ack(fact)
-            await message.answer(ack)
-        else:
-            await message.answer("Запомнил 😊")
-
-    elif action == 'show_prices':
-        from .payments import prices_text, prices_kb
-        await message.answer(prices_text(), reply_markup=prices_kb())
-
-    elif action == 'show_balance':
-        await balance_cmd(message)
-
-    elif action == 'show_referral':
-        await send_referral_info(message)
-
-    elif action == 'show_profile':
-        from .profile import show_profile
-        await show_profile(message)
-
-    elif action == 'show_help':
-        from .help import show_help
-        await show_help(message)
-
-    else:
-        await generate_text(message)
-
-
-async def generate_text(message: types.Message):
-    user_id = message.from_user.id
-    if not can_request_text(user_id):
-        await message.answer("🔒 Лимит запросов исчерпан!")
         return
 
-    status_msg = await message.answer("🤔 Думаю...")
-    try:
-        answer = solve_problem(message.text, "chat", False, user_id=user_id)
-        add_text_request(user_id)
-        used, max_req = get_text_requests(user_id)
-        add_to_context(user_id, message.text)
-        await status_msg.edit_text(f"🧠 {answer}\n\n📝 Осталось: {max_req - used}/{max_req}")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+    if action == "delete_all_reminders":
+        delete_all_reminders(user_id)
+        await message.answer("🗑️ Все напоминания удалены")
+        return
 
+    if action == "list_reminders":
+        from .reminders import list_reminders_msg
+        await list_reminders_msg(message)
+        return
 
-async def balance_cmd(message: types.Message):
-    user_id = message.from_user.id
-    tokens = get_tokens(user_id)
-    used, max_req = get_text_requests(user_id)
-    await message.answer(
-        f"💰 Баланс\n\n🪙 Токенов: {tokens}\n🖼️ Картинок: {tokens // 10}\n📝 Текст: {used}/{max_req}",
-        reply_markup=helpers.main_menu()
-    )
+    if action == "search_web":
+        query = result.get("query", text)
+        status = await message.answer("🔍 Ищу...")
+        answer = search_web(query)
+        await status.edit_text(f"🔍 {answer}")
+        return
 
+    if action == "remember":
+        fact = result.get("fact", "").strip()
+        if fact:
+            add_fact(user_id, fact)
+            # ИИ сам писал reply? Если да — покажем его, иначе общий
+            reply_text = result.get("reply", "")
+            if reply_text:
+                await message.answer(reply_text)
+            else:
+                await message.answer("Запомнил 😊")
+        else:
+            await message.answer("Запомнил 😊")
+        return
 
-async def send_referral_info(message: types.Message):
-    user_id = message.from_user.id
-    count = get_referral_count(user_id)
-    link = f"https://t.me/Vertex1bot?start={user_id}"
-    await message.answer(
-        f"👥 Рефералы\n\n👤 Приглашено: {count}\n🎁 +20 токенов за друга\n\n🔗 {link}",
-        reply_markup=helpers.main_menu()
-    )
+    # Неизвестное — отвечаем как reply
+    reply_text = result.get("reply", "")
+    if reply_text:
+        await message.answer(reply_text)
+    else:
+        await message.answer("Не понял. Попробуй ещё раз.")

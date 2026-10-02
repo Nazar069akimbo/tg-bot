@@ -2,6 +2,8 @@ from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from database.db import *
+from datetime import datetime, timedelta
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -112,3 +114,62 @@ def get_model_key(user_id):
 def get_model_config(user_id):
     key = get_model_key(user_id)
     return IMAGE_MODELS.get(key, IMAGE_MODELS["flux"])
+
+
+def build_reminder_time(date_str, time_str):
+    """Единая функция для парсинга даты/времени напоминания."""
+    now = datetime.now()
+    today = now.date()
+
+    if not time_str:
+        return None
+
+    time_str = str(time_str).strip().lower()
+    date_str = str(date_str or "").strip().lower()
+
+    # "через N минут/часов/дней"
+    m = re.match(r'через\s+(\d+)\s*(мин|минут|час|часов|дн|дней|день)', time_str)
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2)
+        if unit.startswith('мин'):
+            return now + timedelta(minutes=amount)
+        if unit.startswith('час'):
+            return now + timedelta(hours=amount)
+        if unit.startswith('дн'):
+            return now + timedelta(days=amount)
+
+    m = re.match(r'через\s+(\d+)$', time_str)
+    if m:
+        return now + timedelta(minutes=int(m.group(1)))
+
+    # "12.00", "12:00", "12,00"
+    time_str = time_str.replace(".", ":").replace(",", ":")
+    m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        time_obj = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+
+        if date_str in (None, "", "today", "сегодня"):
+            full = datetime.combine(today, time_obj)
+            if full < now:
+                full += timedelta(days=1)
+            return full
+        elif date_str in ("tomorrow", "завтра"):
+            return datetime.combine(today + timedelta(days=1), time_obj)
+        else:
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                if d < today:
+                    full = datetime.combine(today, time_obj)
+                    if full < now:
+                        full += timedelta(days=1)
+                    return full
+                return datetime.combine(d, time_obj)
+            except ValueError:
+                return None
+
+    return None
