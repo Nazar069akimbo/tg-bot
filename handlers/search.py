@@ -16,4 +16,4 @@ async def search_command(message: types.Message):
 
     status = await message.answer(f"🔍 Ищу: {query}...")
     result = search_web(query)
-    await status.edit_text(f"🔍 **Результат:**\n\n{result}")
+    await status.edit_text(f"🔍 Результат:\n\n{result}")

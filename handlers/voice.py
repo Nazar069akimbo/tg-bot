@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from database.db import *
-from ai.client import solve_problem
+from ai.client import smart_reply
 from openai import OpenAI
 import os, logging
 
@@ -8,6 +8,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv('OPENAI_API_KEY')
+
 
 @router.message(F.voice)
 async def handle_voice(message: types.Message):
@@ -31,9 +32,11 @@ async def handle_voice(message: types.Message):
         )
 
         text = transcript.text
-        await status.edit_text(f"🎤 **Распознано:**\n{text}")
+        await status.edit_text(f"🎤 Распознано:\n{text}")
 
-        answer = solve_problem(text, "chat", False)
+        # ИИ отвечает
+        result = smart_reply(user_id, text)
+        answer = result.get("reply", "Не понял.")
         await message.answer(answer)
         add_to_context(user_id, text)
 
