@@ -21,9 +21,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     if not prompt:
         prompt = message.text
 
-    # Проверка: спрашивать ли модель
     ask_model = get_setting(f"ask_image_model_{user_id}") != "no"
-    logger.info(f"🖼️ ask_model={ask_model}")
+    logger.info(f"🖼️ ask_model={ask_model}, user_id={user_id}")
 
     if ask_model:
         user = get_user(user_id)
@@ -32,7 +31,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         balance = limit - used
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
-        logger.info(f"🖼️ Показываю выбор модели, current={current_model}")
+        logger.info(f"🖼️ Показываю выбор модели, current={current_model}, user_id={user_id}")
         await message.answer(
             f"🎨 Выбери модель ({balance}/{limit} запросов):",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
@@ -55,13 +54,11 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} только на Premium.\nОформи: /credits")
         return
 
-    # Проверка лимита
     used, limit = get_daily_usage(user_id)
     if used + 1 > limit:
         await message.answer(f"🔒 Лимит исчерпан ({used}/{limit}).")
         return
 
-    # Проверка токенов
     tokens = get_tokens(user_id)
     if tokens < image_cost:
         await message.answer(f"❌ Нужно {image_cost} токенов, у тебя {tokens}")
@@ -76,7 +73,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     status_msg = await message.answer("🎨 Рисую картинку...")
 
     try:
-        # Улучшение промпта
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -126,7 +122,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             logger.error(f"❌ Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
-            # Водяной знак
             try:
                 img = Image.open(BytesIO(img_data))
                 draw = ImageDraw.Draw(img)

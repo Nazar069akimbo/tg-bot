@@ -63,14 +63,15 @@ async def safe_answer(callback: types.CallbackQuery, text: str = None, show_aler
 
 
 def get_user_name(user_id):
-    memory = get_user_memory(user_id)
-    if memory and memory.get('name'):
-        return memory['name']
-    return None
+    try:
+        from utils.user_storage import load_profile
+        profile = load_profile(user_id)
+        return profile.get("name") if profile else None
+    except Exception:
+        return None
 
 
 # ===== МОДЕЛИ =====
-# (id, имя, стоимость, min_plan)
 AVAILABLE_MODELS = {
     "text_chat": [
         ("gpt-4.1-nano", "⚡ GPT-4.1 nano", 1, "free"),

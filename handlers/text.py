@@ -106,7 +106,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
 
     if action == "generate_image":
         logger.info(f"🎨 [{user_id}] Передаю в generate_image: {result.get('prompt', text)[:50]}")
-        await generate_image(message, result.get("prompt", text))
+        await generate_image(message, result.get("prompt", text), user_id)
         return
 
     if action == "set_reminder":
