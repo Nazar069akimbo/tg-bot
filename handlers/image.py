@@ -14,6 +14,8 @@ PROMPT_MODEL = "gpt-4.1-nano"
 
 
 async def generate_image(message: types.Message, prompt=None, user_id: int = None):
+    logger.info(f"🖼️ generate_image ВЫЗВАН: user_id={user_id}, prompt={prompt[:50] if prompt else None}")
+
     if user_id is None:
         user_id = message.from_user.id
     if not prompt:
@@ -21,6 +23,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 
     # Проверка: спрашивать ли модель
     ask_model = get_setting(f"ask_image_model_{user_id}") != "no"
+    logger.info(f"🖼️ ask_model={ask_model}")
+
     if ask_model:
         user = get_user(user_id)
         plan = dict(user).get("plan", "basic") if user else "basic"
@@ -28,6 +32,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         balance = limit - used
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
+        logger.info(f"🖼️ Показываю выбор модели, current={current_model}")
         await message.answer(
             f"🎨 Выбери модель ({balance}/{limit} запросов):",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
@@ -40,6 +45,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     plan = dict(user).get("plan", "basic") if user else "basic"
     current_model = get_model_setting("image_generate") or "flux-schnell"
     image_cost = helpers.MODEL_COSTS.get(current_model, 10)
+
+    logger.info(f"🖼️ Проверка: model={current_model}, cost={image_cost}")
 
     user_level = helpers.PLAN_LEVEL.get(plan, 0)
     required = helpers.MODEL_MIN_LEVEL.get(current_model, 0)
@@ -63,7 +70,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
 
-    logger.info(f"🖼️ [{user_id}] Модель: {current_model}, prompt: {prompt[:50]}")
+    logger.info(f"🖼️ Списание запроса и запуск генерации")
     spend_daily_requests(user_id, 1)
 
     status_msg = await message.answer("🎨 Рисую картинку...")
@@ -87,7 +94,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
 
-        logger.info(f"🖼️ [{user_id}] Запрос к Replicate: {current_model}")
+        logger.info(f"🖼️ Запрос к Replicate: model={current_model}")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -99,7 +106,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             timeout=120
         )
 
-        logger.info(f"🖼️ [{user_id}] Статус: {img_resp.status_code}")
+        logger.info(f"🖼️ Статус ответа: {img_resp.status_code}")
+        logger.info(f"🖼️ Ответ: {img_resp.text[:300]}")
 
         img_data = None
         if img_resp.status_code == 200:
@@ -118,6 +126,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             logger.error(f"❌ Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
+            # Водяной знак
             try:
                 img = Image.open(BytesIO(img_data))
                 draw = ImageDraw.Draw(img)
@@ -163,12 +172,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 reply_markup=keyboard
             )
             await status_msg.delete()
+            logger.info(f"✅ [{user_id}] Картинка отправлена")
             return
 
         await status_msg.edit_text(f"❌ Не удалось. Код: {img_resp.status_code}")
 
     except Exception as e:
-        logger.error(f"❌ [{user_id}] Ошибка: {e}")
+        logger.error(f"❌ [{user_id}] Ошибка: {e}", exc_info=True)
         try:
             await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
         except Exception:

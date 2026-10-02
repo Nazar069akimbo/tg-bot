@@ -96,6 +96,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         pass
 
     action = result.get("action", "reply")
+    logger.info(f"📤 [{user_id}] action={action}, reply={result.get('reply', '')[:60]}")
 
     if action == "reply":
         reply_text = result.get("reply", "")
@@ -105,6 +106,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
 
     if action == "generate_image":
+        logger.info(f"🎨 [{user_id}] Передаю в generate_image: {result.get('prompt', text)[:50]}")
         await generate_image(message, result.get("prompt", text))
         return
 
@@ -185,7 +187,9 @@ async def pick_model_cb(callback: types.CallbackQuery):
     task = parts[1]
     model_id = parts[2]
 
-    # === ПРОВЕРКА ДОСТУПА ===
+    logger.info(f"🎯 pick_model: task={task}, model={model_id}")
+
+    # Проверка доступа
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
     user_level = helpers.PLAN_LEVEL.get(plan, 0)
@@ -196,24 +200,28 @@ async def pick_model_cb(callback: types.CallbackQuery):
         return
 
     set_model_setting(task, model_id)
+    logger.info(f"✅ Модель сохранена: {task} = {model_id}")
 
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")
     pending_prompt = state.get("pending_prompt")
 
+    logger.info(f"📦 pending_text={bool(pending_text)}, pending_prompt={bool(pending_prompt)}")
+
     if pending_text:
         helpers.user_pages.pop(callback.from_user.id, None)
         try:
             await callback.message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ delete: {e}")
         await process_text(callback.message, callback.from_user.id, pending_text, {})
     elif pending_prompt:
+        logger.info(f"🎨 Запускаю generate_image: {pending_prompt[:50]}")
         helpers.user_pages.pop(callback.from_user.id, None)
         try:
             await callback.message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ delete: {e}")
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
         try:
