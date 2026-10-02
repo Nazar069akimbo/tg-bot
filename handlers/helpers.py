@@ -77,16 +77,17 @@ AVAILABLE_MODELS = {
         ("deepseek-v4-flash", "💰 DeepSeek Flash", 1, "free"),
         ("gemini-2.5-flash-lite", "🌐 Gemini Flash Lite", 2, "premium"),
         ("qwen-3.6-flash", "🟣 Qwen Flash", 2, "premium"),
-        ("gpt-4.1-mini", "🧠 GPT-4.1 mini", 2, "premium"),
+        ("gpt-4.1-mini", "🧠 GPT-4.1 Mini", 2, "premium"),
         ("claude-haiku", "🎭 Claude Haiku", 3, "premium_plus"),
         ("deepseek-v4-pro", "💎 DeepSeek Pro", 4, "premium_plus"),
     ],
     "image_generate": [
         ("flux-schnell", "⚡ Flux Schnell", 10, "free"),
-        ("sdxl", "🎨 SDXL", 75, "free"),
-        ("flux-2-max", "🔥 Flux 2 Max", 125, "free"),
-        ("dall-e-3", "🖼️ DALL-E 3", 570, "free"),
-        ("midjourney", "🖌️ Midjourney", 800, "free"),
+        ("gpt-image-1-mini", "🖼️ GPT Image Mini", 10, "free"),
+        ("gpt-image-1.5", "🖼️ GPT Image 1.5", 40, "free"),
+        ("gpt-image-2.5", "🎨 GPT Image 2.5", 35, "free"),
+        ("qwen-image-2512", "🟣 Qwen Image", 230, "premium"),
+        ("seedream-5-lite", "🌸 Seedream Lite", 150, "premium"),
     ],
 }
 
@@ -94,8 +95,9 @@ MODEL_COSTS = {
     "gpt-4.1-nano": 1, "deepseek-v4-flash": 1,
     "gemini-2.5-flash-lite": 2, "qwen-3.6-flash": 2, "gpt-4.1-mini": 2,
     "claude-haiku": 3, "deepseek-v4-pro": 4,
-    "flux-schnell": 10, "sdxl": 75, "flux-2-max": 125,
-    "dall-e-3": 570, "midjourney": 800,
+    "flux-schnell": 10, "gpt-image-1-mini": 10,
+    "gpt-image-1.5": 40, "gpt-image-2.5": 35,
+    "qwen-image-2512": 230, "seedream-5-lite": 150,
 }
 
 MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
@@ -103,21 +105,13 @@ MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MOD
 PLAN_LIMITS = {"basic": 20, "premium": 100, "premium_plus": 300}
 PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
 
-# Все картинки — free (0). Текстовые — по тарифам.
 MODEL_MIN_LEVEL = {
-    "gpt-4.1-nano": 0,
-    "deepseek-v4-flash": 0,
-    "gemini-2.5-flash-lite": 1,
-    "qwen-3.6-flash": 1,
-    "gpt-4.1-mini": 1,
-    "claude-haiku": 2,
-    "deepseek-v4-pro": 2,
-    # Картинки — всем
-    "flux-schnell": 0,
-    "sdxl": 0,
-    "flux-2-max": 0,
-    "dall-e-3": 0,
-    "midjourney": 0,
+    "gpt-4.1-nano": 0, "deepseek-v4-flash": 0,
+    "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 1,
+    "claude-haiku": 2, "deepseek-v4-pro": 2,
+    "flux-schnell": 0, "gpt-image-1-mini": 0,
+    "gpt-image-1.5": 0, "gpt-image-2.5": 0,
+    "qwen-image-2512": 1, "seedream-5-lite": 1,
 }
 
 
@@ -148,10 +142,11 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
 
 IMAGE_MODELS = {
     "flux-schnell": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
-    "sdxl": {"name": "🎨 SDXL", "price": 75, "api_model": "sdxl"},
-    "flux-2-max": {"name": "🔥 Flux 2 Max", "price": 125, "api_model": "flux-2-max"},
-    "dall-e-3": {"name": "🖼️ DALL-E 3", "price": 570, "api_model": "dall-e-3"},
-    "midjourney": {"name": "🖌️ Midjourney", "price": 800, "api_model": "midjourney"},
+    "gpt-image-1-mini": {"name": "🖼️ GPT Image Mini", "price": 10, "api_model": "gpt-image-1-mini"},
+    "gpt-image-1.5": {"name": "🖼️ GPT Image 1.5", "price": 40, "api_model": "gpt-image-1.5"},
+    "gpt-image-2.5": {"name": "🎨 GPT Image 2.5", "price": 35, "api_model": "gpt-image-2.5"},
+    "qwen-image-2512": {"name": "🟣 Qwen Image", "price": 230, "api_model": "qwen-image-2512"},
+    "seedream-5-lite": {"name": "🌸 Seedream Lite", "price": 150, "api_model": "seedream-5-lite"},
 }
 
 
