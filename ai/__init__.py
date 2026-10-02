@@ -1,1 +1,1 @@
-from .client import solve_problem
+from .client import smart_reply, search_web
