@@ -80,7 +80,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
 
     if used + cost > limit:
-        await message.answer(f"🔒 Лимит на сегодня исчерпан ({used}/{limit}).\nПопробуй модель подешевле или подожди до завтра.")
+        await message.answer(f"🔒 Лимит на сегодня исчерпан ({used}/{limit}).")
         return
 
     spend_daily_requests(user_id, cost)
@@ -99,10 +99,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
 
     if action == "reply":
         reply_text = result.get("reply", "")
-        if reply_text:
-            await message.answer(reply_text)
-        else:
-            await message.answer("Не понял.")
+        await message.answer(reply_text or "Не понял.")
         if reminder_state:
             helpers.user_pages.pop(user_id, None)
         return
@@ -187,6 +184,17 @@ async def pick_model_cb(callback: types.CallbackQuery):
         return
     task = parts[1]
     model_id = parts[2]
+
+    # === ПРОВЕРКА ДОСТУПА ===
+    user = get_user(callback.from_user.id)
+    plan = dict(user).get("plan", "basic") if user else "basic"
+    user_level = helpers.PLAN_LEVEL.get(plan, 0)
+    required = helpers.MODEL_MIN_LEVEL.get(model_id, 0)
+
+    if required > user_level:
+        await helpers.safe_answer(callback, "🔒 Модель доступна только на Premium", show_alert=True)
+        return
+
     set_model_setting(task, model_id)
 
     state = helpers.user_pages.get(callback.from_user.id, {})
@@ -195,14 +203,23 @@ async def pick_model_cb(callback: types.CallbackQuery):
 
     if pending_text:
         helpers.user_pages.pop(callback.from_user.id, None)
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await process_text(callback.message, callback.from_user.id, pending_text, {})
     elif pending_prompt:
         helpers.user_pages.pop(callback.from_user.id, None)
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
-        await callback.message.edit_text(f"✅ Модель: {helpers.MODEL_NAMES.get(model_id, model_id)}")
+        try:
+            await callback.message.edit_text(f"✅ Модель: {helpers.MODEL_NAMES.get(model_id, model_id)}")
+        except Exception:
+            pass
     await helpers.safe_answer(callback)
 
 
@@ -219,12 +236,21 @@ async def always_model_cb(callback: types.CallbackQuery):
 
     if pending_text:
         helpers.user_pages.pop(callback.from_user.id, None)
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await process_text(callback.message, callback.from_user.id, pending_text, {})
     elif pending_prompt:
         helpers.user_pages.pop(callback.from_user.id, None)
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
-        await callback.message.edit_text("✅ Больше не спрашиваю. Изменить: /settings")
+        try:
+            await callback.message.edit_text("✅ Больше не спрашиваю.")
+        except Exception:
+            pass
     await helpers.safe_answer(callback)

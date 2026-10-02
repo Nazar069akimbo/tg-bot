@@ -29,16 +29,15 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
         await message.answer(
-            f"🎨 Выбери модель для картинки ({balance}/{limit} запросов):",
+            f"🎨 Выбери модель ({balance}/{limit} запросов):",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_image_model", "pending_prompt": prompt}
         return
 
-    # Проверка лимита
+    # Проверка доступа
     user = get_user(user_id)
     plan = dict(user).get("plan", "basic") if user else "basic"
-    used, limit = get_daily_usage(user_id)
     current_model = get_model_setting("image_generate") or "flux-schnell"
     image_cost = helpers.MODEL_COSTS.get(current_model, 10)
 
@@ -49,8 +48,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} только на Premium.\nОформи: /credits")
         return
 
-    if used + image_cost > limit:
-        await message.answer(f"🔒 Лимит исчерпан ({used}/{limit}). Для картинки нужно {image_cost} зап.")
+    # Проверка лимита
+    used, limit = get_daily_usage(user_id)
+    if used + 1 > limit:
+        await message.answer(f"🔒 Лимит исчерпан ({used}/{limit}).")
         return
 
     # Проверка токенов
@@ -62,7 +63,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
 
-    spend_daily_requests(user_id, image_cost)
+    logger.info(f"🖼️ [{user_id}] Модель: {current_model}, prompt: {prompt[:50]}")
+    spend_daily_requests(user_id, 1)
 
     status_msg = await message.answer("🎨 Рисую картинку...")
 
@@ -85,17 +87,19 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
 
-        api_model = current_model
+        logger.info(f"🖼️ [{user_id}] Запрос к Replicate: {current_model}")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}"},
             json={
-                "model": api_model,
+                "model": current_model,
                 "input": {"prompt": enhanced, "aspect_ratio": "1:1", "output_format": "webp"},
                 "bothub": {"include_usage": True, "return_base64": False}
             },
             timeout=120
         )
+
+        logger.info(f"🖼️ [{user_id}] Статус: {img_resp.status_code}")
 
         img_data = None
         if img_resp.status_code == 200:
@@ -110,9 +114,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                         img_data = img_response.content
                 except Exception as e:
                     logger.error(f"❌ Скачивание: {e}")
+        else:
+            logger.error(f"❌ Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
-            # Водяной знак
             try:
                 img = Image.open(BytesIO(img_data))
                 draw = ImageDraw.Draw(img)
@@ -135,7 +140,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             try:
                 image_id, session_id = save_image_to_history(
                     user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
-                    model=api_model, image_data=img_data
+                    model=current_model, image_data=img_data
                 )
                 try:
                     from utils.user_storage import save_user_image, update_meta
@@ -154,13 +159,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(api_model, api_model)}\n💰 -{image_cost} токенов | 🪙 {new_tokens}",
+                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов | 🪙 {new_tokens}",
                 reply_markup=keyboard
             )
             await status_msg.delete()
             return
 
-        await status_msg.edit_text("❌ Не удалось. Попробуйте позже.")
+        await status_msg.edit_text(f"❌ Не удалось. Код: {img_resp.status_code}")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}")
@@ -197,7 +202,7 @@ async def regenerate_cb(callback: types.CallbackQuery):
                 await generate_image(callback.message, prompt, user_id)
                 await callback.answer()
                 return
-    await callback.answer("❌ Не найден предыдущий запрос", show_alert=True)
+    await callback.answer("❌ Не найден запрос", show_alert=True)
 
 
 @router.callback_query(F.data == "make_sticker")

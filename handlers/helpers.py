@@ -83,10 +83,10 @@ AVAILABLE_MODELS = {
     ],
     "image_generate": [
         ("flux-schnell", "⚡ Flux Schnell", 10, "free"),
-        ("sdxl", "🎨 SDXL", 75, "premium"),
-        ("flux-2-max", "🔥 Flux 2 Max", 125, "premium"),
-        ("dall-e-3", "🖼️ DALL-E 3", 570, "premium_plus"),
-        ("midjourney", "🖌️ Midjourney", 800, "premium_plus"),
+        ("sdxl", "🎨 SDXL", 75, "free"),
+        ("flux-2-max", "🔥 Flux 2 Max", 125, "free"),
+        ("dall-e-3", "🖼️ DALL-E 3", 570, "free"),
+        ("midjourney", "🖌️ Midjourney", 800, "free"),
     ],
 }
 
@@ -103,11 +103,21 @@ MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MOD
 PLAN_LIMITS = {"basic": 20, "premium": 100, "premium_plus": 300}
 PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
 
+# Все картинки — free (0). Текстовые — по тарифам.
 MODEL_MIN_LEVEL = {
-    "gpt-4.1-nano": 0, "deepseek-v4-flash": 0, "flux-schnell": 0,
-    "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 1,
-    "sdxl": 1, "flux-2-max": 1,
-    "claude-haiku": 2, "deepseek-v4-pro": 2, "dall-e-3": 2, "midjourney": 2,
+    "gpt-4.1-nano": 0,
+    "deepseek-v4-flash": 0,
+    "gemini-2.5-flash-lite": 1,
+    "qwen-3.6-flash": 1,
+    "gpt-4.1-mini": 1,
+    "claude-haiku": 2,
+    "deepseek-v4-pro": 2,
+    # Картинки — всем
+    "flux-schnell": 0,
+    "sdxl": 0,
+    "flux-2-max": 0,
+    "dall-e-3": 0,
+    "midjourney": 0,
 }
 
 
@@ -137,17 +147,17 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
 
 
 IMAGE_MODELS = {
-    "flux": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
+    "flux-schnell": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
     "sdxl": {"name": "🎨 SDXL", "price": 75, "api_model": "sdxl"},
-    "flux_2_max": {"name": "🔥 Flux 2 Max", "price": 125, "api_model": "flux-2-max"},
-    "dall_e_3": {"name": "🖼️ DALL-E 3", "price": 570, "api_model": "dall-e-3"},
+    "flux-2-max": {"name": "🔥 Flux 2 Max", "price": 125, "api_model": "flux-2-max"},
+    "dall-e-3": {"name": "🖼️ DALL-E 3", "price": 570, "api_model": "dall-e-3"},
     "midjourney": {"name": "🖌️ Midjourney", "price": 800, "api_model": "midjourney"},
 }
 
 
 def get_model_config(user_id):
-    key = user_model.get(user_id, "flux")
-    return IMAGE_MODELS.get(key, IMAGE_MODELS["flux"])
+    key = get_model_setting("image_generate") or "flux-schnell"
+    return IMAGE_MODELS.get(key, IMAGE_MODELS["flux-schnell"])
 
 
 def build_reminder_time(date_str, time_str):
