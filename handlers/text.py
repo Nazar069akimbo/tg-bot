@@ -40,7 +40,6 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # Проверка: спрашивать ли модель
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
@@ -178,9 +177,9 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     await message.answer(result.get("reply", "Не понял."))
 
 
-@router.callback_query(F.data.startswith("pickmodel_"))
+@router.callback_query(F.data.startswith("pickmodel|"))
 async def pick_model_cb(callback: types.CallbackQuery):
-    parts = callback.data.split("_", 2)
+    parts = callback.data.split("|")
     if len(parts) < 3:
         await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
         return
@@ -189,7 +188,6 @@ async def pick_model_cb(callback: types.CallbackQuery):
 
     logger.info(f"🎯 pick_model: task={task}, model={model_id}")
 
-    # Проверка доступа
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
     user_level = helpers.PLAN_LEVEL.get(plan, 0)
@@ -231,9 +229,9 @@ async def pick_model_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-@router.callback_query(F.data.startswith("always_"))
+@router.callback_query(F.data.startswith("always|"))
 async def always_model_cb(callback: types.CallbackQuery):
-    task = callback.data.replace("always_", "")
+    task = callback.data.replace("always|", "")
     set_setting(f"ask_model_{callback.from_user.id}", "no")
     if task == "image_generate":
         set_setting(f"ask_image_model_{callback.from_user.id}", "no")

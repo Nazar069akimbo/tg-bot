@@ -131,11 +131,11 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
         kb.inline_keyboard.append([
             InlineKeyboardButton(
                 text=f"{mark}{model_name}{cost_str}{icon}",
-                callback_data=f"pickmodel_{task}_{model_id}"
+                callback_data=f"pickmodel|{task}|{model_id}"
             )
         ])
     kb.inline_keyboard.append([
-        InlineKeyboardButton(text="🔒 Больше не спрашивать", callback_data=f"always_{task}")
+        InlineKeyboardButton(text="🔒 Больше не спрашивать", callback_data=f"always|{task}")
     ])
     return kb
 
