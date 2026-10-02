@@ -375,7 +375,7 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
         return
     try:
         balance = await callback.bot.get_my_star_balance()
-        rub = balance * 0.45
+        rub = balance * 2.0
         text = (
             f"⭐ БАЛАНС STARS\n\n"
             f"На счету: {balance} Stars\n"
@@ -629,7 +629,7 @@ async def handle_admin_input(message: types.Message):
             price_rub = int(parts[1])
             tokens = int(parts[2])
             days = int(parts[3]) if len(parts) > 3 else 0
-            stars = round(price_rub / 0.45)
+            stars = round(price_rub / 2.0)
             update_tariff(state["tariff_id"], name=name, price_rub=price_rub, tokens=tokens, stars=stars, days=days)
             await message.answer(f"✅ Тариф обновлён: {name} — {price_rub}₽", reply_markup=helpers.admin_kb())
         except Exception as e:
@@ -648,7 +648,7 @@ async def handle_admin_input(message: types.Message):
             price_rub = int(parts[1])
             tokens = int(parts[2])
             days = int(parts[3]) if len(parts) > 3 else 0
-            stars = round(price_rub / 0.45)
+            stars = round(price_rub / 2.0)
             add_tariff(state["kind"], name, price_rub, stars, tokens, days)
             await message.answer(f"✅ Тариф добавлен: {name} — {price_rub}₽", reply_markup=helpers.admin_kb())
         except Exception as e:
