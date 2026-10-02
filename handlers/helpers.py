@@ -37,26 +37,18 @@ def profile_kb():
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
-         InlineKeyboardButton(text="📈 Модели", callback_data="a_model_stats")],
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
-         InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
-         InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
-         InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages")],
-        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
-         InlineKeyboardButton(text="📥 Восстановить", callback_data="a_restore_github")],
-        [InlineKeyboardButton(text="💰 Цены", callback_data="a_edit_prices"),
+         InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
+        [InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens"),
+         InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
+        [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"),
+         InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
+        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"),
+         InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
+        [InlineKeyboardButton(text="📥 Восстановить", callback_data="a_restore_github"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
-        [InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs")],
-        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
+        [InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs"),
+         InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ])
-
-
-def edit_in_progress_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏹ Отмена", callback_data="cancel_edit")]
     ])
 
 
@@ -66,8 +58,6 @@ async def safe_answer(callback: types.CallbackQuery, text: str = None, show_aler
             await callback.answer(text, show_alert=show_alert)
         else:
             await callback.answer()
-    except TelegramBadRequest:
-        pass
     except Exception:
         pass
 
@@ -79,84 +69,117 @@ def get_user_name(user_id):
     return None
 
 
-IMAGE_MODELS = {
-    "flux": {"name": "🖼️ Flux Schnell", "price": 10, "api_model": "flux-schnell", "type": "replicate", "description": "⚡ Быстрая"},
-    "flux_2_max": {"name": "🔥 Flux-2-Max", "price": 100, "api_model": "flux-2-max", "type": "replicate", "description": "⭐ ТОП"}
-}
-model_stats = {"flux": 0, "flux_2_max": 0}
-
+# ===== МОДЕЛИ =====
+# (id, имя, стоимость, min_plan)
 AVAILABLE_MODELS = {
-    "image_generate": [
-        ("flux-schnell", "🖼️ Flux Schnell"),
-        ("flux-2-max", "🔥 Flux-2-Max"),
-    ],
-    "prompt_enhance": [
-        ("gpt-4.1-nano", "🧠 GPT-4.1 nano"),
-        ("deepseek-v4-flash", "🧠 DeepSeek Flash"),
-    ],
     "text_chat": [
-        ("deepseek-v4-flash", "💬 DeepSeek Flash"),
-        ("gpt-4.1-nano", "💬 GPT-4.1 nano"),
+        ("gpt-4.1-nano", "⚡ GPT-4.1 nano", 1, "free"),
+        ("deepseek-v4-flash", "💰 DeepSeek Flash", 1, "free"),
+        ("gemini-2.5-flash-lite", "🌐 Gemini Flash Lite", 2, "premium"),
+        ("qwen-3.6-flash", "🟣 Qwen Flash", 2, "premium"),
+        ("gpt-4.1-mini", "🧠 GPT-4.1 mini", 2, "premium"),
+        ("claude-haiku", "🎭 Claude Haiku", 3, "premium_plus"),
+        ("deepseek-v4-pro", "💎 DeepSeek Pro", 4, "premium_plus"),
+    ],
+    "image_generate": [
+        ("flux-schnell", "⚡ Flux Schnell", 10, "free"),
+        ("sdxl", "🎨 SDXL", 75, "premium"),
+        ("flux-2-max", "🔥 Flux 2 Max", 125, "premium"),
+        ("dall-e-3", "🖼️ DALL-E 3", 570, "premium_plus"),
+        ("midjourney", "🖌️ Midjourney", 800, "premium_plus"),
     ],
 }
 
-TASK_NAMES = {
-    "image_generate": "🎨 Генерация картинок",
-    "prompt_enhance": "🧠 Улучшение промпта",
-    "text_chat": "💬 Текстовый чат",
+MODEL_COSTS = {
+    "gpt-4.1-nano": 1, "deepseek-v4-flash": 1,
+    "gemini-2.5-flash-lite": 2, "qwen-3.6-flash": 2, "gpt-4.1-mini": 2,
+    "claude-haiku": 3, "deepseek-v4-pro": 4,
+    "flux-schnell": 10, "sdxl": 75, "flux-2-max": 125,
+    "dall-e-3": 570, "midjourney": 800,
+}
+
+MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
+
+PLAN_LIMITS = {"basic": 20, "premium": 100, "premium_plus": 300}
+PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
+
+MODEL_MIN_LEVEL = {
+    "gpt-4.1-nano": 0, "deepseek-v4-flash": 0, "flux-schnell": 0,
+    "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 1,
+    "sdxl": 1, "flux-2-max": 1,
+    "claude-haiku": 2, "deepseek-v4-pro": 2, "dall-e-3": 2, "midjourney": 2,
 }
 
 
-def get_model_key(user_id):
-    return user_model.get(user_id, "flux")
+def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_balance: int = 0):
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    models = AVAILABLE_MODELS.get(task, [])
+    user_level = PLAN_LEVEL.get(plan, 0)
+
+    for model_id, model_name, cost, min_plan in models:
+        mark = "✅ " if model_id == current else ""
+        cost_str = f" ({cost} з.)" if task == "text_chat" else f" ({cost} ток.)"
+        required_level = MODEL_MIN_LEVEL.get(model_id, 0)
+        if required_level > user_level:
+            icon = " 🔒"
+        else:
+            icon = ""
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{mark}{model_name}{cost_str}{icon}",
+                callback_data=f"pickmodel_{task}_{model_id}"
+            )
+        ])
+    kb.inline_keyboard.append([
+        InlineKeyboardButton(text="🔒 Больше не спрашивать", callback_data=f"always_{task}")
+    ])
+    return kb
+
+
+IMAGE_MODELS = {
+    "flux": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
+    "sdxl": {"name": "🎨 SDXL", "price": 75, "api_model": "sdxl"},
+    "flux_2_max": {"name": "🔥 Flux 2 Max", "price": 125, "api_model": "flux-2-max"},
+    "dall_e_3": {"name": "🖼️ DALL-E 3", "price": 570, "api_model": "dall-e-3"},
+    "midjourney": {"name": "🖌️ Midjourney", "price": 800, "api_model": "midjourney"},
+}
 
 
 def get_model_config(user_id):
-    key = get_model_key(user_id)
+    key = user_model.get(user_id, "flux")
     return IMAGE_MODELS.get(key, IMAGE_MODELS["flux"])
 
 
 def build_reminder_time(date_str, time_str):
-    """Единая функция для парсинга даты/времени напоминания."""
     now = datetime.now()
     today = now.date()
-
     if not time_str:
         return None
-
     time_str = str(time_str).strip().lower()
     date_str = str(date_str or "").strip().lower()
 
-    # "через N минут/часов/дней"
     m = re.match(r'через\s+(\d+)\s*(мин|минут|час|часов|дн|дней|день)', time_str)
     if m:
         amount = int(m.group(1))
         unit = m.group(2)
-        if unit.startswith('мин'):
-            return now + timedelta(minutes=amount)
-        if unit.startswith('час'):
-            return now + timedelta(hours=amount)
-        if unit.startswith('дн'):
-            return now + timedelta(days=amount)
+        if unit.startswith('мин'): return now + timedelta(minutes=amount)
+        if unit.startswith('час'): return now + timedelta(hours=amount)
+        if unit.startswith('дн'): return now + timedelta(days=amount)
 
     m = re.match(r'через\s+(\d+)$', time_str)
     if m:
         return now + timedelta(minutes=int(m.group(1)))
 
-    # "12.00", "12:00", "12,00"
     time_str = time_str.replace(".", ":").replace(",", ":")
     m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
     if m:
-        hour = int(m.group(1))
-        minute = int(m.group(2))
+        hour, minute = int(m.group(1)), int(m.group(2))
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             return None
         time_obj = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
-
         if date_str in (None, "", "today", "сегодня"):
             full = datetime.combine(today, time_obj)
-            if full < now:
-                full += timedelta(days=1)
+            if full < now: full += timedelta(days=1)
             return full
         elif date_str in ("tomorrow", "завтра"):
             return datetime.combine(today + timedelta(days=1), time_obj)
@@ -165,11 +188,9 @@ def build_reminder_time(date_str, time_str):
                 d = datetime.strptime(date_str, "%Y-%m-%d").date()
                 if d < today:
                     full = datetime.combine(today, time_obj)
-                    if full < now:
-                        full += timedelta(days=1)
+                    if full < now: full += timedelta(days=1)
                     return full
                 return datetime.combine(d, time_obj)
             except ValueError:
                 return None
-
     return None

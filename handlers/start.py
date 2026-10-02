@@ -1,36 +1,25 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import *
-from utils.user_storage import load_profile, set_user_name
+from utils.user_storage import load_profile
 from . import helpers
 import logging
 
 router = Router()
 logger = logging.getLogger(__name__)
-
 ADMIN_EMAIL = "mychannell@gmail.com"
 
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-
-    # Если идёт диалог напоминания — не сбрасываем
     state = helpers.user_pages.get(user_id, {})
     if state.get("state") == "waiting_reminder_clarification":
-        await message.answer(
-            "⏰ У тебя есть незавершённое напоминание.\n\n"
-            f"Вопрос: {state.get('question', 'Уточни, пожалуйста.')}\n\n"
-            "Продолжи или напиши /cancel"
-        )
+        await message.answer("⏰ У тебя есть незавершённое напоминание.\n\nПродолжи или /cancel")
         return
 
     username = message.from_user.username or ""
-    user = force_create_user(user_id, username)
-    if not user:
-        await message.answer("❌ Ошибка регистрации.")
-        return
-
+    force_create_user(user_id, username)
     profile = load_profile(user_id)
     name = profile.get("name") if profile else None
 
@@ -41,13 +30,12 @@ async def start_cmd(message: types.Message):
             "✨ Я умею:\n"
             "• 🖼️ Генерировать картинки\n"
             "• 🎨 Делать стикеры\n"
-            "• 📄 Анализировать файлы (PDF, DOCX, TXT, CSV)\n"
+            "• 📄 Анализировать файлы\n"
             "• 🎤 Распознавать голосовые\n"
             "• 🔍 Искать в интернете\n"
-            "• ⏰ Напоминать о важном\n"
-            "• 🧠 Запоминать факты о тебе\n\n"
-            "Просто напиши, что хочешь!\n\n"
-            f"📧 Если что-то не работает — напиши админу: {ADMIN_EMAIL}\n\n"
+            "• ⏰ Напоминать\n"
+            "• 🧠 Запоминать факты\n\n"
+            f"📧 Проблемы? Пиши: {ADMIN_EMAIL}\n\n"
             "Как мне тебя называть?"
         )
         return
@@ -67,17 +55,15 @@ async def start_cmd(message: types.Message):
         trial_text = ""
 
     tokens = get_tokens(user_id)
-    used, max_req = get_text_requests(user_id)
+    used, limit = get_daily_usage(user_id)
 
     text = (
         f"✨ Vertex AI\n\n"
         f"👋 Привет, {name}!\n"
         f"💰 Токенов: {tokens}\n"
-        f"🖼️ 10 токенов = 1 картинка\n"
-        f"📝 Текст: {used}/{max_req} запросов сегодня\n\n"
+        f"📊 Запросов сегодня: {used}/{limit}\n\n"
         f"{trial_text}\n\n"
-        f"💬 Просто напиши, что хочешь!\n\n"
+        f"💬 Напиши, что хочешь!\n\n"
         f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"
     )
     await message.answer(text, reply_markup=helpers.main_menu())
-    logger.info(f"✅ [{user_id}] Бот запущен")

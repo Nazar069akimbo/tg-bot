@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import random
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -11,23 +10,6 @@ from database.db import get_setting, get_model_setting
 logger = logging.getLogger(__name__)
 
 ADMIN_EMAIL = "mychannell@gmail.com"
-
-# Живые фразы для статуса «Думаю...»
-THINKING_PHRASES = [
-    "Думаю",
-    "Анализирую",
-    "Обрабатываю",
-    "Секунду",
-    "Разбираюсь",
-    "Смотрю",
-    "Прикидываю",
-    "Читаю",
-    "Обрабатываю запрос",
-]
-
-
-def get_thinking_phrase():
-    return random.choice(THINKING_PHRASES)
 
 
 def get_openai_client():
@@ -50,14 +32,6 @@ def _get_user_context(user_id: int):
         lines = []
         if profile.get("name"):
             lines.append(f"Имя: {profile['name']}")
-        if prefs.get("hobbies"):
-            lines.append(f"Хобби: {', '.join(prefs['hobbies'])}")
-        if prefs.get("favorite_topics"):
-            lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}")
-        if prefs.get("colors"):
-            lines.append(f"Любимые цвета: {prefs['colors']}")
-        if prefs.get("style"):
-            lines.append(f"Стиль: {prefs['style']}")
         facts = prefs.get("facts", [])
         if facts:
             lines.append("Факты:")
@@ -79,7 +53,6 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     if not client:
         return {"action": "reply", "reply": "⚠️ Сервис недоступен. Напиши админу: " + ADMIN_EMAIL}
 
-    # GPT-4.1 nano — быстрая и дешёвая
     model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
     context, history = _get_user_context(user_id)
@@ -92,84 +65,58 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     reminder_context = ""
     if reminder_state:
         reminder_context = f"""
-АКТИВНЫЙ ДИАЛОГ НАПОМИНАНИЯ:
-Собрано: text={reminder_state.get('text', '')!r}, time={reminder_state.get('time', '')!r}, date={reminder_state.get('date', '')!r}
+АКТИВНЫЙ ДИАЛОГ НАПОМИНАНИЯ (НЕ переспрашивай уже заполненные поля!):
+- text: {reminder_state.get('text', '')!r}
+- time: {reminder_state.get('time', '')!r}
+- date: {reminder_state.get('date', '')!r}
 Последний вопрос: {reminder_state.get('question', '')!r}
 """
 
-    system_prompt = f"""Ты — Vertex AI, умный Telegram-ассистент. Ты САМ решаешь, что делать, и возвращаешь JSON.
+    system_prompt = f"""Ты — Vertex AI, умный Telegram-ассистент. Верни ТОЛЬКО JSON.
 
 СЕЙЧАС: {now_str}
 СЕГОДНЯ: {today_str}, ЗАВТРА: {tomorrow_str}
 
-ЧТО ТЫ ЗНАЕШЬ О ПОЛЬЗОВАТЕЛЕ:
+О ПОЛЬЗОВАТЕЛЕ:
 {context if context else "(пока ничего)"}
 {reminder_context}
 
-Верни ТОЛЬКО JSON:
+Формат JSON:
 {{
   "action": "reply | generate_image | set_reminder | cancel_reminder | delete_reminder | delete_all_reminders | list_reminders | search_web | remember",
   "reply": "текст для пользователя (ВСЕГДА заполняй)",
-  "prompt": "...",
-  "text": "...",
-  "time": "HH:MM",
-  "date": "YYYY-MM-DD или today/tomorrow",
-  "need_clarification": true/false,
-  "question": "...",
-  "query": "...",
-  "fact": "..."
+  "prompt": "...", "text": "...", "time": "HH:MM", "date": "YYYY-MM-DD",
+  "need_clarification": true/false, "question": "...",
+  "query": "...", "fact": "..."
 }}
 
 ДЕЙСТВИЯ:
-- reply — обычный ответ. Поле "reply".
+- reply — ответ. Поле "reply".
 - generate_image — картинка. Поле "prompt".
 - set_reminder — напоминание. Поля text/time/date.
-- cancel_reminder — отмена диалога.
-- delete_reminder — удалить. Поле "text".
-- delete_all_reminders — удалить все.
-- list_reminders — показать список.
+- remember — запомнить. Поле "fact" И "reply" (живой ответ).
 - search_web — поиск. Поле "query".
-- remember — запомнить. Поле "fact" И "reply".
+- delete_reminder / delete_all_reminders / list_reminders / cancel_reminder.
 
-КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-
-1. ВСЕГДА заполняй "reply" — живой текст для пользователя. Например:
-   - remember → "Круто! Кофе и трактора — запомнил 😄"
-   - set_reminder с уточнением → "Ок, осталось уточнить время. Во сколько напомнить?"
-   - reply → твой ответ.
-
-2. Если пользователь указал невалидное время (например 24:61, 25:99, 99:99) — 
-   action="reply", reply="24:61 — такого времени не существует. В сутках 24 часа, а минут 60. Во сколько напомнить?", 
-   и напоминание НЕ создавай. Если это был диалог напоминания — need_clarification=true.
-
-3. Если пользователь отвечает "сегодня"/"завтра" на вопрос о дате — сразу date="today"/"tomorrow", не переспрашивай.
-
-4. Если спрашивает о своём хобби/интересах/имени — action="reply", используй данные из "ЧТО ТЫ ЗНАЕШЬ".
-
-5. При set_reminder: если text+time+date есть — need_clarification=false. Если чего-то нет — need_clarification=true + question.
-
-6. При remember: "я люблю X", "меня зовут X", "я увлекаюсь X" → action="remember", fact="пользователь любит X", reply="Круто! Запомнил 😊".
-
-7. Если пользователь ответил не по теме во время диалога напоминания — reply="Ты хотел напоминание. Продолжим?" и need_clarification=true.
+ПРАВИЛА:
+1. ВСЕГДА заполняй "reply" — живой текст.
+2. При активном напоминании — не переспрашивай уже собранные поля.
+3. Невалидное время (24:61) → reply="24:61 — такого времени не существует. В сутках 24 часа." + need_clarification=true.
+4. "сегодня" → date="today", "завтра" → date="tomorrow".
+5. Вопросы о хобби/имени/интересах → action="reply", используй "О ПОЛЬЗОВАТЕЛЕ".
+6. remember: "я люблю X" → fact="пользователь любит X", reply="Круто! Запомнил 😊".
 
 Отвечай ТОЛЬКО JSON."""
 
     messages = [{"role": "system", "content": system_prompt}]
-
     for msg in history:
         role = "user" if msg.get("role") == "user" else "assistant"
         messages.append({"role": role, "content": msg.get("text", "")})
-
     messages.append({"role": "user", "content": text})
 
     def _try_model(m):
         try:
-            resp = client.chat.completions.create(
-                model=m,
-                messages=messages,
-                max_tokens=600,
-                temperature=0.3
-            )
+            resp = client.chat.completions.create(model=m, messages=messages, max_tokens=600, temperature=0.3)
             choice = resp.choices[0]
             msg_obj = choice.message
             content = getattr(msg_obj, "content", None)
@@ -184,7 +131,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
             return None
 
     raw = None
-    for m in [model, "deepseek-v4-flash", "gpt-4.1-mini"]:
+    for m in [model, "gpt-4.1-nano", "deepseek-v4-flash", "gpt-4.1-mini"]:
         raw = _try_model(m)
         if raw:
             break
@@ -198,10 +145,10 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 
     try:
         data = json.loads(json_match.group())
-        logger.info(f"🧠 [{user_id}] smart_reply: {data}")
+        logger.info(f"🧠 [{user_id}] {data}")
         return data
     except Exception as e:
-        logger.error(f"❌ JSON parse: {e}")
+        logger.error(f"❌ JSON: {e}")
         return {"action": "reply", "reply": raw}
 
 
@@ -209,9 +156,7 @@ def search_web(query):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "⚠️ Сервис недоступен"
-
     model = get_model_setting("text_chat") or "gpt-4.1-nano"
-
     try:
         resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
@@ -219,18 +164,17 @@ def search_web(query):
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": "Ты — поисковый ассистент. Найди актуальную информацию и дай краткий ответ."},
+                    {"role": "system", "content": "Ты — поисковый ассистент. Найди актуальную информацию."},
                     {"role": "user", "content": query}
                 ],
-                "max_tokens": 500,
-                "temperature": 0.3
+                "max_tokens": 500, "temperature": 0.3
             },
             timeout=30
         )
         if resp.status_code == 200:
             content = resp.json().get('choices', [{}])[0].get('message', {}).get('content', '')
-            return content.strip() if content else "Не нашёл информации."
+            return content.strip() if content else "Не нашёл."
         return f"❌ Ошибка: {resp.status_code}"
     except Exception as e:
         logger.error(f"❌ Поиск: {e}")
-        return "Не смог найти информацию."
+        return "Не смог найти."

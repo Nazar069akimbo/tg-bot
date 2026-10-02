@@ -13,24 +13,11 @@ from .reminders import router as reminders_router
 from .inline import router as inline_router
 from .profile import router as profile_router
 from .help import router as help_router
-from .memory import router as memory_router
 from .helpers import user_pages, user_model
 
 routers = [
-    start_router,
-    balance_router,
-    image_router,
-    text_router,
-    admin_router,
-    payments_router,
-    referral_router,
-    promocode_router,
-    file_router,
-    voice_router,
-    search_router,
-    reminders_router,
-    inline_router,
-    profile_router,
-    help_router,
-    memory_router,
+    start_router, balance_router, image_router, text_router,
+    admin_router, payments_router, referral_router, promocode_router,
+    file_router, voice_router, search_router, reminders_router,
+    inline_router, profile_router, help_router,
 ]

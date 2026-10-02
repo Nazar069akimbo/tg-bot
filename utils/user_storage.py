@@ -18,26 +18,13 @@ def _safe_name(name: str) -> str:
     if not name:
         return ""
     safe = re.sub(r'[^\w\s\-]', '', name, flags=re.UNICODE).strip()
-    safe = safe.replace(" ", "_")
-    return safe[:50]
+    return safe.replace(" ", "_")[:50]
 
 
 def _find_user_dir(user_id: int) -> str:
-    """
-    Ищет папку пользователя:
-    1. По ID (data/users/<user_id>/)
-    2. По имени из profile.json в папке по ID
-    3. По имени из старой папки
-    Возвращает путь или None, если не найдено.
-    """
-    # 1. Папка по ID
     id_dir = os.path.join(BASE_DIR, str(user_id))
-    if os.path.exists(os.path.join(id_dir, "_id.txt")):
-        return id_dir
     if os.path.exists(os.path.join(id_dir, "profile.json")):
         return id_dir
-
-    # 2. Ищем папку, где _id.txt = user_id
     if os.path.exists(BASE_DIR):
         for name in os.listdir(BASE_DIR):
             candidate = os.path.join(BASE_DIR, name)
@@ -51,137 +38,82 @@ def _find_user_dir(user_id: int) -> str:
                             return candidate
                 except Exception:
                     pass
-
     return None
 
 
-def get_user_dir(user_id: int, name: str = None) -> str:
-    """Возвращает папку пользователя. Создаёт, если нет."""
+def get_user_dir(user_id: int) -> str:
     existing = _find_user_dir(user_id)
     if existing:
         return existing
-
-    # Если знаем имя — используем его
-    folder = None
-    if name:
-        safe = _safe_name(name)
-        if safe:
-            folder = safe
-
-    if not folder:
-        folder = str(user_id)
-
-    path = os.path.join(BASE_DIR, folder)
+    path = os.path.join(BASE_DIR, str(user_id))
     os.makedirs(path, exist_ok=True)
     os.makedirs(os.path.join(path, "images"), exist_ok=True)
-
     try:
         with open(os.path.join(path, "_id.txt"), "w", encoding="utf-8") as f:
             f.write(str(user_id))
     except Exception:
         pass
-
     return path
 
 
-def _profile_path(user_id: int) -> str:
-    return os.path.join(get_user_dir(user_id), "profile.json")
+def _profile_path(user_id): return os.path.join(get_user_dir(user_id), "profile.json")
+def _history_path(user_id): return os.path.join(get_user_dir(user_id), "history.json")
+def _meta_path(user_id): return os.path.join(get_user_dir(user_id), "meta.json")
 
 
-def _history_path(user_id: int) -> str:
-    return os.path.join(get_user_dir(user_id), "history.json")
-
-
-def _meta_path(user_id: int) -> str:
-    return os.path.join(get_user_dir(user_id), "meta.json")
-
-
-def _backup_users(force: bool = False):
+def _backup_users(force=False):
     now = time.time()
     if not force and now - _last_backup_time["users"] < BACKUP_INTERVAL:
         return
     _last_backup_time["users"] = now
-
     def _run():
         try:
             from backup import GitHubBackup
-            GitHubBackup().backup_users(reason='после изменения')
+            GitHubBackup().backup_users(reason='изменение')
         except Exception as e:
-            logger.warning(f"⚠️ Ошибка бэкапа: {e}")
-
+            logger.warning(f"⚠️ Бэкап: {e}")
     threading.Thread(target=_run, daemon=True).start()
 
 
-# ===== PROFILE =====
-def load_profile(user_id: int) -> dict:
+def load_profile(user_id):
     path = _profile_path(user_id)
     if not os.path.exists(path):
-        return {
-            "user_id": user_id,
-            "name": None,
-            "preferences": {
-                "style": None,
-                "colors": None,
-                "hobbies": [],
-                "favorite_topics": [],
-                "facts": []
-            },
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        }
+        return {"user_id": user_id, "name": None, "preferences": {"facts": []},
+                "created_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()}
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            data.setdefault("preferences", {})
-            data["preferences"].setdefault("facts", [])
+            data.setdefault("preferences", {}).setdefault("facts", [])
             return data
-    except Exception as e:
-        logger.error(f"❌ profile.json [{user_id}]: {e}")
+    except Exception:
         return {}
 
 
-def save_profile(user_id: int, data: dict):
+def save_profile(user_id, data):
     data["updated_at"] = datetime.now().isoformat()
     try:
         with open(_profile_path(user_id), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         _backup_users()
     except Exception as e:
-        logger.error(f"❌ save profile [{user_id}]: {e}")
+        logger.error(f"❌ save_profile: {e}")
 
 
-def set_user_name(user_id: int, name: str):
-    """Устанавливает имя. Если папка по ID — переименовывает в имя."""
+def set_user_name(user_id, name):
     profile = load_profile(user_id)
     profile["name"] = name
-
+    save_profile(user_id, profile)
     old_dir = get_user_dir(user_id)
     new_folder = _safe_name(name) or str(user_id)
     new_dir = os.path.join(BASE_DIR, new_folder)
-
-    # Переименовываем папку, если имя изменилось и новой папки ещё нет
-    if old_dir != new_dir:
-        if os.path.exists(new_dir):
-            # Папка с таким именем уже есть — не трогаем
-            logger.info(f"📁 Папка {new_dir} уже существует, не переименовываем")
-        else:
-            try:
-                shutil.move(old_dir, new_dir)
-                logger.info(f"📁 [{user_id}] папка переименована: {old_dir} → {new_dir}")
-            except Exception as e:
-                logger.warning(f"⚠️ Не удалось переименовать: {e}")
-
-    # Сохраняем профиль в новой папке
-    try:
-        path = os.path.join(get_user_dir(user_id), "profile.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(profile, f, ensure_ascii=False, indent=2)
-        _backup_users()
-    except Exception as e:
-        logger.error(f"❌ set_user_name [{user_id}]: {e}")
+    if old_dir != new_dir and not os.path.exists(new_dir):
+        try:
+            shutil.move(old_dir, new_dir)
+        except Exception as e:
+            logger.warning(f"⚠️ Переименование: {e}")
 
 
-def add_fact(user_id: int, fact: str):
+def add_fact(user_id, fact):
     profile = load_profile(user_id)
     facts = profile.setdefault("preferences", {}).setdefault("facts", [])
     if fact not in facts:
@@ -191,8 +123,7 @@ def add_fact(user_id: int, fact: str):
     save_profile(user_id, profile)
 
 
-# ===== HISTORY =====
-def load_history(user_id: int) -> list:
+def load_history(user_id):
     path = _history_path(user_id)
     if not os.path.exists(path):
         return []
@@ -203,7 +134,7 @@ def load_history(user_id: int) -> list:
         return []
 
 
-def append_history(user_id: int, role: str, text: str):
+def append_history(user_id, role, text):
     history = load_history(user_id)
     history.append({"role": role, "text": text, "timestamp": datetime.now().isoformat()})
     if len(history) > 100:
@@ -213,28 +144,26 @@ def append_history(user_id: int, role: str, text: str):
             json.dump(history, f, ensure_ascii=False, indent=2)
         _backup_users()
     except Exception as e:
-        logger.error(f"❌ append_history [{user_id}]: {e}")
+        logger.error(f"❌ append_history: {e}")
 
 
-def get_recent_history(user_id: int, limit: int = 20) -> list:
+def get_recent_history(user_id, limit=10):
     history = load_history(user_id)
     return history[-limit:] if len(history) > limit else history
 
 
-# ===== META =====
-def load_meta(user_id: int) -> dict:
+def load_meta(user_id):
     path = _meta_path(user_id)
     if not os.path.exists(path):
-        return {"user_id": user_id, "images_count": 0, "tokens_spent": 0,
-                "last_topics": [], "created_at": datetime.now().isoformat()}
+        return {"user_id": user_id, "images_count": 0, "last_topics": []}
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"user_id": user_id, "images_count": 0, "tokens_spent": 0, "last_topics": []}
+        return {"user_id": user_id, "images_count": 0, "last_topics": []}
 
 
-def update_meta(user_id: int, **kwargs):
+def update_meta(user_id, **kwargs):
     meta = load_meta(user_id)
     for k, v in kwargs.items():
         if k == "last_topics" and isinstance(v, list):
@@ -246,12 +175,11 @@ def update_meta(user_id: int, **kwargs):
     try:
         with open(_meta_path(user_id), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"❌ update_meta [{user_id}]: {e}")
+    except Exception:
+        pass
 
 
-# ===== IMAGES =====
-def save_user_image(user_id: int, image_id: int, image_bytes: bytes) -> str:
+def save_user_image(user_id, image_id, image_bytes):
     path = os.path.join(get_user_dir(user_id), "images", f"{image_id}.png")
     try:
         with open(path, "wb") as f:
@@ -263,20 +191,11 @@ def save_user_image(user_id: int, image_id: int, image_bytes: bytes) -> str:
         _backup_users()
         return path
     except Exception as e:
-        logger.error(f"❌ save image [{user_id}]: {e}")
+        logger.error(f"❌ save_user_image: {e}")
         return ""
 
 
-# ===== CLEAR =====
-def clear_memory(user_id: int):
+def clear_memory(user_id):
     for path in (_history_path(user_id), _profile_path(user_id)):
         if os.path.exists(path):
             os.remove(path)
-    logger.info(f"🧹 [{user_id}] память очищена")
-
-
-def update_profile_field(user_id: int, key: str, value):
-    if key == "name":
-        set_user_name(user_id, value)
-    else:
-        add_fact(user_id, f"пользователь: {key} = {value}")

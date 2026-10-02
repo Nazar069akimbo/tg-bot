@@ -10,8 +10,13 @@ from contextlib import contextmanager
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
-# Часовой пояс: пользователь в UTC+3, сервер в UTC
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
+
+PLAN_LIMITS = {
+    "basic": 20,
+    "premium": 100,
+    "premium_plus": 300,
+}
 
 _db_queue = queue.Queue()
 _db_thread = None
@@ -119,14 +124,10 @@ def init_db():
             total_requests INTEGER DEFAULT 0,
             image_requests INTEGER DEFAULT 0,
             last_image_reset TEXT,
-            referral_bonus_images INTEGER DEFAULT 0,
-            referral_bonus_requests INTEGER DEFAULT 0,
-            paid_premium INTEGER DEFAULT 0,
-            bonus_images INTEGER DEFAULT 0,
-            bonus_requests INTEGER DEFAULT 0,
-            last_checkin TEXT,
-            checkin_streak INTEGER DEFAULT 0,
-            total_spent INTEGER DEFAULT 0
+            daily_requests INTEGER DEFAULT 20,
+            daily_requests_used INTEGER DEFAULT 0,
+            daily_reset TEXT,
+            paid_premium INTEGER DEFAULT 0
         )
         ''')
 
@@ -134,12 +135,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS user_memory (
             user_id INTEGER PRIMARY KEY,
             name TEXT,
-            favorite_style TEXT,
-            favorite_colors TEXT,
-            preferred_model TEXT,
-            last_prompt TEXT,
             context_history TEXT,
-            preferences TEXT,
             created_at TEXT,
             updated_at TEXT
         )
@@ -153,11 +149,7 @@ def init_db():
             enhanced_prompt TEXT,
             model TEXT,
             image_data TEXT,
-            previous_id INTEGER,
             session_id TEXT,
-            edit_type TEXT,
-            edit_text TEXT,
-            version INTEGER DEFAULT 1,
             created_at TEXT
         )
         ''')
@@ -168,7 +160,6 @@ def init_db():
             referrer_id INTEGER,
             referred_id INTEGER,
             joined TEXT,
-            bonus_given INTEGER DEFAULT 0,
             UNIQUE(referrer_id, referred_id)
         )
         ''')
@@ -215,11 +206,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT UNIQUE,
             bonus_tokens INTEGER DEFAULT 0,
-            bonus_images INTEGER DEFAULT 0,
-            bonus_requests INTEGER DEFAULT 0,
             max_uses INTEGER DEFAULT 1,
             used INTEGER DEFAULT 0,
-            created_by INTEGER,
             created_at TEXT,
             expires_at TEXT
         )
@@ -241,7 +229,6 @@ def init_db():
             text TEXT,
             time TEXT,
             sent INTEGER DEFAULT 0,
-            repeat TEXT,
             created_at TEXT
         )
         ''')
@@ -273,19 +260,14 @@ def init_db():
             ('free_output_words', '50'),
             ('premium_input_chars', '3000'),
             ('premium_output_words', '300'),
-            ('premium_deluxe_input_chars', '5000'),
-            ('premium_deluxe_output_words', '500'),
-            ('image_limit_free', '3'),
-            ('image_limit_premium', '20'),
-            ('image_limit_premium_deluxe', '50')
         ]
         for key, value in default_settings:
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
         default_models = [
+            ('text_chat', 'gpt-4.1-nano'),
             ('image_generate', 'flux-schnell'),
             ('prompt_enhance', 'gpt-4.1-nano'),
-            ('text_chat', 'deepseek-v4-flash'),
         ]
         for task, model in default_models:
             cursor.execute("INSERT OR IGNORE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)",
@@ -294,13 +276,13 @@ def init_db():
         cursor.execute("SELECT COUNT(*) FROM tariffs")
         if cursor.fetchone()[0] == 0:
             defaults = [
-                ('tokens', 'Старт', 100, 225, 900, 0, 1),
-                ('tokens', 'Базовый', 200, 450, 1800, 0, 2),
-                ('tokens', 'Выгодный', 300, 650, 2700, 0, 3),
-                ('tokens', 'Профи', 400, 900, 3600, 0, 4),
-                ('tokens', 'Максимум', 500, 1100, 4500, 0, 5),
-                ('premium', 'Premium', 150, 335, 3000, 30, 1),
-                ('premium', 'Premium+', 300, 670, 8000, 30, 2),
+                ('tokens', 'Старт', 100, 50, 900, 0, 1),
+                ('tokens', 'Базовый', 200, 100, 1800, 0, 2),
+                ('tokens', 'Выгодный', 300, 150, 2700, 0, 3),
+                ('tokens', 'Профи', 400, 200, 3600, 0, 4),
+                ('tokens', 'Максимум', 500, 250, 4500, 0, 5),
+                ('premium', 'Premium', 300, 150, 3000, 30, 1),
+                ('premium', 'Premium+', 600, 300, 8000, 30, 2),
             ]
             for kind, name, price_rub, stars, tokens, days, order in defaults:
                 cursor.execute(
@@ -316,7 +298,18 @@ def init_db():
 
 
 def migrate_db():
-    print("✅ БД в порядке")
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        for col, typ, default in [
+            ("daily_requests", "INTEGER", "20"),
+            ("daily_requests_used", "INTEGER", "0"),
+            ("daily_reset", "TEXT", None),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typ} DEFAULT {default}" if default else f"ALTER TABLE users ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
+        print("✅ БД в порядке")
 
 
 # ===== ПОЛЬЗОВАТЕЛИ =====
@@ -333,7 +326,7 @@ def create_user(conn, cursor, user_id, username):
         return True
     now = datetime.now().isoformat()
     cursor.execute("""
-        INSERT INTO users (user_id, username, joined, trial_start, trial_active, last_image_reset)
+        INSERT INTO users (user_id, username, joined, trial_start, trial_active, daily_reset)
         VALUES (?, ?, ?, ?, 0, ?)
     """, (user_id, username, now, now, now))
     return True
@@ -345,7 +338,6 @@ def force_create_user(user_id, username=None):
         if user:
             return user
         create_user(user_id, username or str(user_id))
-        init_user_memory(user_id)
         return get_user(user_id)
     except Exception:
         return None
@@ -373,65 +365,46 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
+# ===== ДНЕВНЫЕ ЛИМИТЫ =====
 @db_operation
-def get_user_memory(conn, cursor, user_id):
-    cursor.execute("SELECT * FROM user_memory WHERE user_id = ?", (user_id,))
+def get_daily_usage(conn, cursor, user_id):
+    cursor.execute("SELECT daily_requests, daily_requests_used, daily_reset, plan FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return 0, 20
+    limit = row[0] or 20
+    used = row[1] or 0
+    last_reset = row[2]
+    plan = row[3] or "basic"
+    today = datetime.now().date().isoformat()
+    if last_reset != today:
+        cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
+        return 0, limit
+    return used, limit
 
 
 @db_operation
-def init_user_memory(conn, cursor, user_id):
-    cursor.execute("""
-        INSERT OR IGNORE INTO user_memory (user_id, created_at, updated_at, context_history)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, datetime.now().isoformat(), datetime.now().isoformat(), json.dumps([])))
-
-
-@db_operation
-def update_user_memory(conn, cursor, user_id, data):
-    cursor.execute("INSERT OR IGNORE INTO user_memory (user_id, created_at, updated_at, context_history) VALUES (?, ?, ?, ?)",
-                   (user_id, datetime.now().isoformat(), datetime.now().isoformat(), json.dumps([])))
-    set_parts = []
-    values = []
-    for key, value in data.items():
-        set_parts.append(f"{key} = ?")
-        values.append(json.dumps(value) if isinstance(value, (dict, list)) else value)
-    if not set_parts:
-        return
-    set_parts.append("updated_at = ?")
-    values.append(datetime.now().isoformat())
-    values.append(user_id)
-    cursor.execute(f"UPDATE user_memory SET {', '.join(set_parts)} WHERE user_id = ?", values)
-
-
-def set_user_name(user_id, name):
-    update_user_memory(user_id, {'name': name})
-
-
-def add_to_context(user_id, prompt, image_id=None, edit_type=None):
-    memory = get_user_memory(user_id)
-    if not memory:
-        init_user_memory(user_id)
-        memory = get_user_memory(user_id)
-    history = json.loads(memory.get('context_history', '[]')) if memory else []
-    history.append({'prompt': prompt, 'image_id': image_id, 'edit_type': edit_type, 'timestamp': datetime.now().isoformat()})
-    if len(history) > 20:
-        history = history[-20:]
-    update_user_memory(user_id, {'context_history': json.dumps(history)})
+def spend_daily_requests(conn, cursor, user_id, amount):
+    cursor.execute("SELECT daily_requests, daily_requests_used FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+    limit = row[0] or 20
+    used = row[1] or 0
+    if used + amount > limit:
+        return False
+    cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + ? WHERE user_id = ?", (amount, user_id))
+    return True
 
 
 # ===== КАРТИНКИ =====
 @db_operation
-def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data, previous_id=None, session_id=None, edit_type=None, edit_text=None):
-    if not session_id:
-        session_id = secrets.token_hex(8)
-    cursor.execute("SELECT COUNT(*) + 1 FROM images_history WHERE user_id = ? AND session_id = ?", (user_id, session_id))
-    version = cursor.fetchone()[0] or 1
+def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data):
+    session_id = secrets.token_hex(8)
     cursor.execute("""
-        INSERT INTO images_history (user_id, prompt, enhanced_prompt, model, image_data, previous_id, session_id, edit_type, edit_text, version, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, prompt, enhanced_prompt, model, image_data, previous_id, session_id, edit_type, edit_text, version, datetime.now().isoformat()))
+        INSERT INTO images_history (user_id, prompt, enhanced_prompt, model, image_data, session_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, prompt, enhanced_prompt, model, image_data, session_id, datetime.now().isoformat()))
     return cursor.lastrowid, session_id
 
 
@@ -440,53 +413,6 @@ def get_last_image(conn, cursor, user_id):
     cursor.execute("SELECT * FROM images_history WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,))
     row = cursor.fetchone()
     return dict(row) if row else None
-
-
-@db_operation
-def get_image_by_id(conn, cursor, image_id):
-    cursor.execute("SELECT * FROM images_history WHERE id = ?", (image_id,))
-    row = cursor.fetchone()
-    return dict(row) if row else None
-
-
-# ===== ЛИМИТЫ =====
-@db_operation
-def get_text_requests(conn, cursor, user_id):
-    cursor.execute("SELECT text_requests, max_text_requests FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        return 0, 10
-    return row[0] if row[0] else 0, row[1] if row[1] else 10
-
-
-@db_operation
-def reset_text_requests_if_needed(conn, cursor, user_id):
-    cursor.execute("SELECT text_requests_reset FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
-                       (datetime.now().isoformat(), user_id))
-        return
-    last_reset = row[0]
-    if not last_reset:
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
-                       (datetime.now().isoformat(), user_id))
-        return
-    last_date = datetime.fromisoformat(last_reset)
-    if last_date.date() < datetime.now().date():
-        cursor.execute("UPDATE users SET text_requests = 0, text_requests_reset = ? WHERE user_id = ?",
-                       (datetime.now().isoformat(), user_id))
-
-
-@db_operation
-def add_text_request(conn, cursor, user_id):
-    cursor.execute("UPDATE users SET text_requests = text_requests + 1 WHERE user_id = ?", (user_id,))
-
-
-def can_request_text(user_id):
-    reset_text_requests_if_needed(user_id)
-    used, max_req = get_text_requests(user_id)
-    return used < max_req
 
 
 # ===== ТРИАЛ / РЕФЕРАЛЫ / ПРОМОКОДЫ =====
@@ -514,9 +440,6 @@ def activate_trial(conn, cursor, user_id):
 def add_referral(conn, cursor, referrer_id, referred_id):
     if referrer_id == referred_id:
         return False, "Нельзя пригласить себя!"
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referrer_id,))
-    if not cursor.fetchone():
-        return False, "Реферер не найден!"
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referred_id,))
     if not cursor.fetchone():
         return False, "Пользователь не найден!"
@@ -583,7 +506,9 @@ def add_admin(conn, cursor, user_id):
 @db_operation
 def add_premium(conn, cursor, user_id, days, plan, paid=False):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
-    cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?", (new_date, plan, user_id))
+    new_limit = PLAN_LIMITS.get(plan, 20)
+    cursor.execute("UPDATE users SET premium_until = ?, plan = ?, daily_requests = ? WHERE user_id = ?",
+                   (new_date, plan, new_limit, user_id))
     if paid:
         cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
 
@@ -604,44 +529,28 @@ def get_stats(conn, cursor):
     total = cursor.fetchone()[0] or 0
     cursor.execute("SELECT SUM(tokens) FROM users")
     total_tokens = cursor.fetchone()[0] or 0
-    cursor.execute("SELECT SUM(total_requests) FROM users")
-    total_requests = cursor.fetchone()[0] or 0
-    cursor.execute("SELECT SUM(image_requests) FROM users")
-    total_images = cursor.fetchone()[0] or 0
     cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_plus')")
     premium_users = cursor.fetchone()[0] or 0
-    return total, total_tokens, total_requests, total_images, premium_users
+    return total, total_tokens, premium_users
 
 
 # ===== НАПОМИНАНИЯ =====
 @db_operation
-def add_reminder(conn, cursor, user_id, text, time_str, repeat=None):
-    """
-    Сохраняет напоминание.
-    Время приходит в локальном поясе пользователя (UTC+3),
-    а хранится в UTC, чтобы воркер на Render сработал правильно.
-    """
+def add_reminder(conn, cursor, user_id, text, time_str):
     try:
         dt_local = datetime.fromisoformat(time_str)
         dt_utc = dt_local - timedelta(hours=TIMEZONE_OFFSET)
         time_str = dt_utc.isoformat()
     except Exception as e:
-        print(f"⚠️ Не удалось сдвинуть время: {e}")
-
-    cursor.execute("""
-        INSERT INTO reminders (user_id, text, time, repeat, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (user_id, text, time_str, repeat, datetime.now().isoformat()))
+        print(f"⚠️ Сдвиг времени: {e}")
+    cursor.execute("INSERT INTO reminders (user_id, text, time, created_at) VALUES (?, ?, ?, ?)",
+                   (user_id, text, time_str, datetime.now().isoformat()))
     return cursor.lastrowid
 
 
 @db_operation
 def get_user_reminders(conn, cursor, user_id):
-    """Возвращает напоминания, переводя время обратно в локальный пояс."""
-    cursor.execute(
-        "SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC",
-        (user_id,)
-    )
+    cursor.execute("SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC", (user_id,))
     rows = cursor.fetchall()
     result = []
     for r in rows:
@@ -716,10 +625,8 @@ def get_tariffs(conn, cursor, kind=None):
 
 @db_operation
 def add_tariff(conn, cursor, kind, name, price_rub, stars, tokens, days=0):
-    cursor.execute(
-        "INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
-        (kind, name, price_rub, stars, tokens, days)
-    )
+    cursor.execute("INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
+                   (kind, name, price_rub, stars, tokens, days))
 
 
 @db_operation
@@ -756,16 +663,7 @@ def do_backup():
         pass
 
 
-def get_queue_status():
-    return {"queue_size": _db_queue.qsize(), "thread_alive": _db_thread.is_alive() if _db_thread else False}
-
-
 def get_queue_info():
     size = _db_queue.qsize()
     status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
-    return f"""
-📊 Статус очереди БД
-━━━━━━━━━━━━━━━━━━━━━━━
-📦 Очередь: {size} задач
-🔄 Поток: {status}
-"""
+    return f"📊 Очередь БД: {size} задач, поток: {status}"
