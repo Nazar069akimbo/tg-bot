@@ -23,7 +23,6 @@ def get_openai_client():
 
 
 def _build_memory_block(user_id: int) -> str:
-    """Собирает блок памяти: имя, факты, хобби, темы."""
     try:
         from utils.user_storage import load_profile
         profile = load_profile(user_id)
@@ -39,8 +38,6 @@ def _build_memory_block(user_id: int) -> str:
             lines.append(f"Любимые цвета: {prefs['colors']}.")
         if prefs.get("hobbies"):
             lines.append(f"Интересы: {', '.join(prefs['hobbies'])}.")
-        if prefs.get("favorite_topics"):
-            lines.append(f"Любимые темы: {', '.join(prefs['favorite_topics'])}.")
         if prefs.get("facts"):
             lines.append("Факты о пользователе:")
             for f in prefs["facts"][-10:]:
@@ -108,7 +105,11 @@ def solve_problem(question, mode="chat", is_premium=False, user_id=None):
         return f"⚠️ Ошибка: {str(e)[:100]}"
 
 
-def analyze_intent(user_id, text):
+def analyze_intent(user_id, text, reminder_state=None):
+    """
+    Разбор намерения. Если reminder_state передан — ИИ ведёт диалог
+    по сбору напоминания, задаёт свои вопросы и решает, что ещё нужно.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "chat", {}
@@ -116,17 +117,27 @@ def analyze_intent(user_id, text):
     model = get_model_setting("prompt_enhance") or "gpt-4.1-nano"
 
     now = datetime.now()
-    now_str = now.strftime("%Y-%m-%d %H:%M")
+    now_str = now.strftime("%Y-%m-%d %H:%M (%A)")
     today_str = now.strftime("%Y-%m-%d")
     tomorrow_str = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime("%Y-%m-%d")
 
     memory_block = _build_memory_block(user_id) if user_id else ""
 
+    # Контекст активного напоминания
+    reminder_context = ""
+    if reminder_state:
+        reminder_context = f"""
+АКТИВНЫЙ ДИАЛОГ НАПОМИНАНИЯ:
+Собрано: text={reminder_state.get('text', '')!r}, time={reminder_state.get('time', '')!r}, date={reminder_state.get('date', '')!r}
+Последний вопрос бота: {reminder_state.get('question', '')!r}
+"""
+
     system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Определи, что хочет пользователь.
 
-СЕЙЧАС: {now_str} ({today_str}).
-ЗАВТРА: {tomorrow_str}.
+СЕЙЧАС: {now_str}.
+СЕГОДНЯ: {today_str}. ЗАВТРА: {tomorrow_str}.
 {f"О ПОЛЬЗОВАТЕЛЕ: {memory_block}" if memory_block else ""}
+{reminder_context}
 
 Верни ТОЛЬКО JSON:
 {{"action": "действие", "params": {{...}}}}
@@ -135,26 +146,50 @@ def analyze_intent(user_id, text):
 - generate_image: params: {{"prompt": "..."}}
 - show_prices, show_balance, show_referral, show_profile, show_help
 - set_reminder: params: {{"text": "...", "time": "HH:MM", "date": "YYYY-MM-DD", "need_clarification": true/false, "question": "..."}}
-- list_reminders
-- delete_reminder: params: {{"text": "..."}}
-- delete_all_reminders
+- cancel_reminder: отменить активный диалог напоминания
+- list_reminders, delete_reminder: params: {{"text": "..."}}, delete_all_reminders
 - search_web: params: {{"query": "..."}}
-- remember: запомнить ЛЮБОЙ факт о пользователе. params: {{"fact": "пользователь любит кофе и трактора на 5 колёсах"}}
+- remember: запомнить любой факт. params: {{"fact": "..."}}
 - chat
 
-ПРАВИЛА ДЛЯ set_reminder:
-1. Если пользователь просит напомнить и не указал текст — need_clarification: true, question: "Что напомнить?"
-2. Если не указано время — need_clarification: true, question: "Во сколько напомнить?"
-3. Если не указан день — need_clarification: true, question: "На какой день? Сегодня, завтра или дата?"
-4. Только когда есть ВСЕ три поля (текст, время, день) — need_clarification: false.
-5. Если пользователь ответил на уточнение — верни обновлённые параметры с need_clarification по остатку.
+═══════════════════════════════
+ОСОБЫЕ ПРАВИЛА ДЛЯ set_reminder (ЕСЛИ ЕСТЬ АКТИВНЫЙ ДИАЛОГ):
+═══════════════════════════════
 
-ПРАВИЛА ДЛЯ remember:
-- Если пользователь говорит "я люблю X", "мне нравится X", "я занимаюсь X", "у меня есть X", "я живу в X", "мне X лет" и т.д. — верни action="remember" с фактом в params.fact.
-- Факт формулируй как "пользователь любит кофе и трактора на 5 колёсах" — целым предложением.
-- НЕ используй ключи hobbies/colors/style — только fact.
+Если пользователь отвечает на твой вопрос — обнови параметры.
+Собери ВСЕ три поля: text (что), time (во сколько), date (когда).
 
-Отвечай ТОЛЬКО JSON, без пояснений."""
+ПРАВИЛА ПАРСИНГА ВРЕМЕНИ:
+- "12.00", "12:00", "в 12" → time="12:00"
+- "56:25" — НЕВАЛИДНО (56 часов не бывает). Если пользователь написал ерунду — верни need_clarification=true и question="Не понял время. Во сколько напомнить? Например: 18:30"
+- "45.68" — НЕВАЛИДНО. Верни need_clarification=true и question="Не понял. Напиши: название | время | день"
+
+ПРАВИЛА ПАРСИНГА ДАТЫ:
+- "завтра", "tomorrow" → date="tomorrow"
+- "сегодня", "today" → date="today"
+- "12 сентября" → date="2026-09-12" (текущий год, если дата в будущем; иначе следующий год)
+- "34 сентября" — НЕВАЛИДНО (в сентябре 30 дней). Верни need_clarification=true и question="В сентябре 30 дней. Уточни дату."
+- Если пользователь написал "12 сентября в 12.00 помыть посуду" — сразу извлеки всё и need_clarification=false.
+
+ПРАВИЛА ТЕКСТА:
+- Если пользователь уже сказал "напомни помыть посуду" — text="помыть посуду".
+- Если он отвечает "25" на вопрос "что напомнить?" — text="25" (это его выбор).
+- Если пользователь написал "привет" вместо ответа на вопрос — это НЕ ответ. Верни action="chat", а в params добавь need_clarification=true и question="Ты хотел(а) напоминание? Продолжим: что напомнить?"
+
+ПОРЯДОК ВОПРОСОВ (задавай ТОЛЬКО если поле пустое):
+1. Если нет text → question="Что напомнить?"
+2. Если нет time → question="Во сколько напомнить? Например: 18:30"
+3. Если нет date → question="На какой день? Сегодня, завтра или дата?"
+
+Если пользователь пишет бессмыслицу — НЕ продолжай диалог. Скажи: "Не понял. Напиши, например: «Напомни завтра в 10 помыть посуду»" и need_clarification=true.
+
+═══════════════════════════════
+ОСТАЛЬНЫЕ ДЕЙСТВИЯ
+═══════════════════════════════
+- "меня зовут X" → remember, fact="пользователь: имя X"
+- "я люблю X" → remember, fact="пользователь любит X"
+- Если пользователь просит отменить напоминание — cancel_reminder.
+- Отвечай ТОЛЬКО JSON, без пояснений."""
 
     try:
         logger.info(f"🧠 [{user_id}] Анализ: {text[:50]}...")
@@ -167,8 +202,8 @@ def analyze_intent(user_id, text):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Запрос: {text}"}
                 ],
-                "max_tokens": 300,
-                "temperature": 0.1
+                "max_tokens": 400,
+                "temperature": 0.2
             },
             timeout=15
         )
@@ -220,7 +255,6 @@ def search_web(query):
 
 
 def generate_ack(fact: str) -> str:
-    """Живой ответ на запоминание факта через ИИ."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "Запомнил 😊"
@@ -233,7 +267,7 @@ def generate_ack(fact: str) -> str:
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": "Ответь живо и коротко (1 предложение, до 12 слов) на то, что пользователь рассказал о себе. Без ** и markdown. Пример: 'Круто! Кофе и трактора — запомнил 😄'"},
+                    {"role": "system", "content": "Ответь живо и коротко (1 предложение, до 12 слов) на то, что пользователь рассказал о себе. Без ** и markdown."},
                     {"role": "user", "content": f"Пользователь: {fact}"}
                 ],
                 "max_tokens": 60,

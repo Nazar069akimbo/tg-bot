@@ -51,7 +51,9 @@ async def handle_text(message: types.Message):
         return
 
     # === АНАЛИЗ НАМЕРЕНИЯ ===
-    action, params = analyze_intent(user_id, text)
+    # Если идёт диалог напоминания — передаём состояние в ИИ
+    reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
+    action, params = analyze_intent(user_id, text, reminder_state=reminder_state)
 
     if action == 'generate_image':
         await generate_image(message, params.get('prompt', text))

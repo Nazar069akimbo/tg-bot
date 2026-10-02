@@ -36,6 +36,8 @@ def _build_datetime(date_str, time_str):
     if m:
         return now + timedelta(minutes=int(m.group(1)))
 
+    # "12.00", "12:00", "12,00"
+    time_str = time_str.replace(".", ":").replace(",", ":")
     m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
     if m:
         hour = int(m.group(1))
@@ -99,10 +101,12 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
         "question": question
     }
 
+    # Если ИИ просит уточнить — задаём его вопрос
     if need_clarification and question:
         await message.answer(f"❓ {question}\n\n⏹ /cancel — отмена")
         return
 
+    # Если всё есть — создаём
     if text and time_str:
         full_time = _build_datetime(date_str, time_str)
         if full_time:
@@ -115,6 +119,7 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
             )
             return
 
+    # Если чего-то не хватает — спрашиваем сами (fallback)
     if not text:
         question = "Что напомнить?"
     elif not time_str:
@@ -129,6 +134,9 @@ async def create_reminder_from_ai(message: types.Message, params: dict):
 
 
 async def handle_clarification(message: types.Message, text: str):
+    """
+    ИИ полностью управляет диалогом: отвечает, спрашивает, решает, что собрано.
+    """
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
 
@@ -137,90 +145,57 @@ async def handle_clarification(message: types.Message, text: str):
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    saved_text = state.get("text", "")
-    saved_time = state.get("time", "")
-    saved_date = state.get("date", "")
-    question = state.get("question", "")
-
+    # Передаём текущее состояние в ИИ — он сам решит, что делать
     from ai.client import analyze_intent
-    action, params = analyze_intent(user_id, text.strip())
+    action, params = analyze_intent(user_id, text.strip(), reminder_state=state)
+
+    if action == "cancel_reminder":
+        helpers.user_pages.pop(user_id, None)
+        await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
+        return
 
     if action == "set_reminder":
-        new_text = (params.get("text") or "").strip()
-        new_time = (params.get("time") or "").strip()
-        new_date = (params.get("date") or "").strip()
-        if new_text and not saved_text and "что напомнить" not in new_text.lower():
-            saved_text = new_text
-        if new_time:
-            saved_time = new_time
-        if new_date:
-            saved_date = new_date
-    else:
-        stripped = text.strip().lower()
-        m = re.search(r'(\d{1,2})[:.\s](\d{2})', stripped)
-        if m and not saved_time:
-            saved_time = f"{int(m.group(1)):02d}:{m.group(2)}"
-        else:
-            if stripped in ("завтра", "tomorrow"):
-                saved_date = "tomorrow"
-            elif stripped in ("сегодня", "today"):
-                saved_date = "today"
-            elif re.match(r'^\d{1,2}$', stripped) and not saved_date:
-                day = int(stripped)
-                if 1 <= day <= 31:
-                    now = datetime.now()
-                    try:
-                        d = now.replace(day=day).date()
-                        if d < now.date():
-                            if d.month == 12:
-                                d = d.replace(year=d.year + 1, month=1)
-                            else:
-                                d = d.replace(month=d.month + 1)
-                        saved_date = d.strftime("%Y-%m-%d")
-                    except ValueError:
-                        pass
-            elif re.match(r'^\d{1,2}\.\d{1,2}', stripped) and not saved_date:
-                parts = stripped.split(".")
-                day = int(parts[0])
-                month = int(parts[1]) if len(parts) > 1 else datetime.now().month
-                year = int(parts[2]) if len(parts) > 2 else datetime.now().year
-                try:
-                    saved_date = f"{year:04d}-{month:02d}-{day:02d}"
-                except Exception:
-                    pass
+        text_v = (params.get("text") or state.get("text") or "").strip()
+        time_v = (params.get("time") or state.get("time") or "").strip()
+        date_v = (params.get("date") or state.get("date") or "").strip()
+        need_clarification = params.get("need_clarification", False)
+        question = params.get("question", "")
 
-        if "что напомнить" in question.lower() and not saved_text:
-            saved_text = text.strip()
+        # Обновляем состояние
+        helpers.user_pages[user_id] = {
+            "state": "waiting_reminder_clarification",
+            "text": text_v,
+            "time": time_v,
+            "date": date_v,
+            "question": question
+        }
 
-    if saved_text and saved_time:
-        full_time = _build_datetime(saved_date, saved_time)
-        if full_time:
-            add_reminder(user_id, saved_text, full_time.isoformat())
-            helpers.user_pages.pop(user_id, None)
-            await message.answer(
-                f"⏰ Напоминание установлено!\n\n"
-                f"📝 {saved_text}\n"
-                f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
-            )
+        if need_clarification and question:
+            await message.answer(f"❓ {question}\n\n⏹ /cancel — отмена")
             return
 
-    if not saved_text:
-        new_question = "Что напомнить?"
-    elif not saved_time:
-        new_question = "Во сколько напомнить? (например, 18:03)"
-    elif not saved_date:
-        new_question = "На какой день? (сегодня, завтра или дата)"
-    else:
-        new_question = "Уточни, пожалуйста."
+        if text_v and time_v:
+            full_time = _build_datetime(date_v, time_v)
+            if full_time:
+                add_reminder(user_id, text_v, full_time.isoformat())
+                helpers.user_pages.pop(user_id, None)
+                await message.answer(
+                    f"⏰ Напоминание установлено!\n\n"
+                    f"📝 {text_v}\n"
+                    f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+                )
+                return
 
-    helpers.user_pages[user_id] = {
-        "state": "waiting_reminder_clarification",
-        "text": saved_text,
-        "time": saved_time,
-        "date": saved_date,
-        "question": new_question
-    }
-    await message.answer(f"❓ {new_question}\n\n⏹ /cancel — отмена")
+    elif action == "chat":
+        # ИИ понял, что это НЕ про напоминание — просто отвечаем
+        helpers.user_pages.pop(user_id, None)
+        from .text import generate_text
+        await generate_text(message)
+        return
+
+    # Не поняли — повторяем вопрос
+    q = state.get("question", "Уточни, пожалуйста.")
+    await message.answer(f"❓ {q}\n\n⏹ /cancel — отмена")
 
 
 async def list_reminders_msg(message: types.Message, user_id: int = None):
