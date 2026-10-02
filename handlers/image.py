@@ -2,7 +2,7 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from . import helpers
-import logging, requests, os, json, random
+import logging, requests, os, json, asyncio
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,31 +12,37 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv('OPENAI_API_KEY')
 PROMPT_MODEL = "gpt-4.1-nano"
 
-# Случайные вариации для кнопки «Ещё»
-VARIATIONS = [
-    "in a different style, cinematic lighting",
-    "with soft pastel colors, dreamy atmosphere",
-    "with bold neon colors, cyberpunk vibe",
-    "in watercolor style, artistic brushstrokes",
-    "as a sticker, kawaii chibi style, white outline",
-    "in 3D render, Pixar style, soft shadows",
-    "as pixel art, retro 8-bit style",
-    "with dramatic lighting, high contrast",
-    "in anime style, detailed lineart",
-    "as a flat vector illustration, minimalist",
-    "with golden hour lighting, warm tones",
-    "in monochrome with one accent color",
+# Фразы для анимации ожидания картинки
+IMAGE_STATUS_TEXTS = [
+    "🎨 Рисую...",
+    "🖌️ Добавляю детали...",
+    "🌈 Раскрашиваю...",
+    "✨ Почти готово...",
 ]
 
-STICKER_PROMPT = "as a sticker, die-cut, white border, vibrant colors, centered composition"
+
+async def animate_image_status(msg: types.Message, stop_event: asyncio.Event):
+    """Меняет подпись/текст каждые 3 сек, пока не остановят."""
+    i = 1
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=3.0)
+            break
+        except asyncio.TimeoutError:
+            pass
+        if stop_event.is_set():
+            break
+        try:
+            if msg.photo or msg.animation:
+                await msg.edit_caption(caption=IMAGE_STATUS_TEXTS[i % len(IMAGE_STATUS_TEXTS)])
+            else:
+                await msg.edit_text(IMAGE_STATUS_TEXTS[i % len(IMAGE_STATUS_TEXTS)])
+            i += 1
+        except Exception:
+            pass
 
 
-def _get_variation(times: int = 1) -> str:
-    """Берёт случайную вариацию (можно несколько подряд)."""
-    return ", ".join(random.sample(VARIATIONS, min(times, len(VARIATIONS))))
-
-
-async def generate_image(message: types.Message, prompt=None, user_id: int = None, variation: bool = False, sticker: bool = False):
+async def generate_image(message: types.Message, prompt=None, user_id: int = None):
     if user_id is None:
         user_id = message.from_user.id
 
@@ -54,17 +60,26 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
 
-    status_msg = await message.answer("🎨 Генерирую картинку...")
+    # Анимированный статус
+    gif_id = None
+    try:
+        gif_id = get_setting("image_gif_file_id")
+    except Exception:
+        pass
+
+    if gif_id:
+        try:
+            status_msg = await message.answer_animation(gif_id, caption=IMAGE_STATUS_TEXTS[0])
+        except Exception:
+            status_msg = await message.answer(IMAGE_STATUS_TEXTS[0])
+    else:
+        status_msg = await message.answer(IMAGE_STATUS_TEXTS[0])
+
+    stop_event = asyncio.Event()
+    anim_task = asyncio.create_task(animate_image_status(status_msg, stop_event))
 
     try:
-        # ===== 1. УЛУЧШЕНИЕ ПРОМПТА + ВАРИАЦИЯ =====
-        base_prompt = prompt
-        if variation:
-            base_prompt = f"{prompt}, {_get_variation(2)}"
-        if sticker:
-            base_prompt = f"{prompt}, {STICKER_PROMPT}"
-
-        logger.info(f"🔄 [{user_id}] Улучшение промпта (variation={variation}, sticker={sticker})...")
+        # 1. УЛУЧШЕНИЕ ПРОМПТА
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -72,28 +87,22 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 "model": PROMPT_MODEL,
                 "messages": [
                     {"role": "system", "content": "Create detailed English prompt for image generation. Only the prompt!"},
-                    {"role": "user", "content": f"Prompt for: {base_prompt}"}
+                    {"role": "user", "content": f"Prompt for: {prompt}"}
                 ],
                 "max_tokens": 200
             },
             timeout=30
         )
-        enhanced = base_prompt
+        enhanced = prompt
         if prompt_resp.status_code == 200:
-            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', base_prompt).strip('"')
-            logger.info(f"✅ [{user_id}] Промпт улучшен: {enhanced[:60]}...")
+            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
 
-        # ===== 2. ГЕНЕРАЦИЯ =====
-        logger.info(f"🔄 [{user_id}] Запрос к Replicate...")
-
+        # 2. ГЕНЕРАЦИЯ
         replicate_input = {
             "prompt": enhanced,
             "aspect_ratio": "1:1",
             "output_format": "webp"
         }
-        # Стикерпак — квадратный, с прозрачным фоном
-        if sticker:
-            replicate_input["aspect_ratio"] = "1:1"
 
         try:
             img_resp = requests.post(
@@ -107,12 +116,18 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 timeout=120
             )
         except requests.exceptions.Timeout:
-            logger.error(f"❌ [{user_id}] Таймаут Replicate")
-            await status_msg.edit_text("⏳ Генерация занимает больше времени. Попробуйте ещё раз.")
+            stop_event.set()
+            try:
+                await status_msg.edit_text("⏳ Генерация занимает больше времени. Попробуйте ещё раз.")
+            except Exception:
+                pass
             return
         except Exception as e:
-            logger.error(f"❌ [{user_id}] Ошибка Replicate: {e}")
-            await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+            stop_event.set()
+            try:
+                await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+            except Exception:
+                pass
             return
 
         img_data = None
@@ -126,14 +141,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     img_response = requests.get(img_url, timeout=30)
                     if img_response.status_code == 200 and len(img_response.content) > 1000:
                         img_data = img_response.content
-                        logger.info(f"✅ [{user_id}] Картинка: {len(img_data)} байт")
                 except Exception as e:
-                    logger.error(f"❌ [{user_id}] Скачивание: {e}")
+                    logger.error(f"❌ Скачивание: {e}")
         else:
-            logger.error(f"❌ [{user_id}] Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
+            logger.error(f"❌ Replicate: {img_resp.status_code} - {img_resp.text[:200]}")
 
         if img_data:
-            # ===== 3. ВОДЯНОЙ ЗНАК =====
+            # 3. ВОДЯНОЙ ЗНАК
             try:
                 img = Image.open(BytesIO(img_data))
                 draw = ImageDraw.Draw(img)
@@ -147,13 +161,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 output.seek(0)
                 img_data = output.getvalue()
             except Exception as e:
-                logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
+                logger.warning(f"⚠️ Водяной знак: {e}")
 
-            # ===== 4. СПИСЫВАЕМ ТОКЕНЫ =====
+            # 4. СПИСЫВАЕМ ТОКЕНЫ
             spend_tokens(user_id, price)
             new_tokens = get_tokens(user_id)
 
-            # ===== 5. СОХРАНЯЕМ В БД + ПАПКУ =====
+            # 5. СОХРАНЯЕМ
             image_id = None
             try:
                 image_id, session_id = save_image_to_history(
@@ -164,18 +178,23 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     image_data=img_data
                 )
                 add_to_context(user_id, prompt, image_id, None)
-
                 try:
                     from utils.user_storage import save_user_image, update_meta
                     save_user_image(user_id, image_id, img_data)
                     update_meta(user_id, last_topics=[prompt[:50]])
                 except Exception as e:
-                    logger.warning(f"⚠️ [{user_id}] Папка: {e}")
-
+                    logger.warning(f"⚠️ Папка: {e}")
             except Exception as e:
-                logger.warning(f"⚠️ [{user_id}] БД: {e}")
+                logger.warning(f"⚠️ БД: {e}")
 
-            # ===== 6. ОТПРАВЛЯЕМ =====
+            # Останавливаем анимацию
+            stop_event.set()
+            try:
+                await asyncio.wait_for(anim_task, timeout=1.0)
+            except Exception:
+                pass
+
+            # 6. ОТПРАВЛЯЕМ
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Ещё", callback_data="regenerate"),
                  InlineKeyboardButton(text="🎨 Стикер", callback_data="make_sticker")],
@@ -184,17 +203,28 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 
             await message.answer_photo(
                 BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ **Твоя картинка**\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens}",
+                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {model_config['name']}\n💰 -{price} токенов | 🪙 {new_tokens}",
                 reply_markup=keyboard
             )
-            await status_msg.delete()
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
             return
 
-        await status_msg.edit_text("❌ Не удалось получить картинку. Попробуйте позже.")
+        stop_event.set()
+        try:
+            await status_msg.edit_text("❌ Не удалось получить картинку. Попробуйте позже.")
+        except Exception:
+            pass
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        stop_event.set()
+        try:
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data == "back_to_main")
@@ -202,7 +232,12 @@ async def back_main_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     tokens = get_tokens(user_id)
     name = helpers.get_user_name(user_id) or "друг"
-    text = f"✨ **Vertex AI**\n\n👋 Привет, {name}!\n💰 Токенов: {tokens}"
+    text = (
+        f"✨ Vertex AI\n\n"
+        f"👋 Привет, {name}!\n"
+        f"💰 Токенов: {tokens}\n\n"
+        f"📧 Проблемы? Пиши: mychannell@gmail.com"
+    )
     try:
         await callback.message.edit_text(text, reply_markup=helpers.main_menu())
     except Exception:
@@ -212,7 +247,6 @@ async def back_main_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "regenerate")
 async def regenerate_cb(callback: types.CallbackQuery):
-    """Ещё — тот же промпт, но со случайной вариацией."""
     user_id = callback.from_user.id
     memory = get_user_memory(user_id)
     if memory and memory.get('context_history'):
@@ -222,7 +256,7 @@ async def regenerate_cb(callback: types.CallbackQuery):
             prompt = last.get('prompt', '')
             if prompt:
                 await callback.message.answer("🔄 Генерирую вариацию...")
-                await generate_image(callback.message, prompt, user_id, variation=True)
+                await generate_image(callback.message, prompt, user_id)
                 await callback.answer()
                 return
     await callback.answer("❌ Не найден предыдущий запрос", show_alert=True)
@@ -230,7 +264,6 @@ async def regenerate_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "make_sticker")
 async def make_sticker_cb(callback: types.CallbackQuery):
-    """Стикер — тот же промпт, но в стиле стикера."""
     user_id = callback.from_user.id
     memory = get_user_memory(user_id)
     if memory and memory.get('context_history'):
@@ -240,7 +273,7 @@ async def make_sticker_cb(callback: types.CallbackQuery):
             prompt = last.get('prompt', '')
             if prompt:
                 await callback.message.answer("🎨 Делаю стикер...")
-                await generate_image(callback.message, prompt, user_id, sticker=True)
+                await generate_image(callback.message, f"{prompt}, as a sticker, white border", user_id)
                 await callback.answer()
                 return
     await callback.answer("❌ Не найден предыдущий запрос", show_alert=True)
