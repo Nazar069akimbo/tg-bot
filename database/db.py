@@ -10,6 +10,9 @@ from contextlib import contextmanager
 DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
+# Часовой пояс: пользователь в UTC+3, сервер в UTC
+TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
+
 _db_queue = queue.Queue()
 _db_thread = None
 _db_running = True
@@ -613,6 +616,18 @@ def get_stats(conn, cursor):
 # ===== НАПОМИНАНИЯ =====
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str, repeat=None):
+    """
+    Сохраняет напоминание.
+    Время приходит в локальном поясе пользователя (UTC+3),
+    а хранится в UTC, чтобы воркер на Render сработал правильно.
+    """
+    try:
+        dt_local = datetime.fromisoformat(time_str)
+        dt_utc = dt_local - timedelta(hours=TIMEZONE_OFFSET)
+        time_str = dt_utc.isoformat()
+    except Exception as e:
+        print(f"⚠️ Не удалось сдвинуть время: {e}")
+
     cursor.execute("""
         INSERT INTO reminders (user_id, text, time, repeat, created_at)
         VALUES (?, ?, ?, ?, ?)
@@ -622,11 +637,23 @@ def add_reminder(conn, cursor, user_id, text, time_str, repeat=None):
 
 @db_operation
 def get_user_reminders(conn, cursor, user_id):
+    """Возвращает напоминания, переводя время обратно в локальный пояс."""
     cursor.execute(
         "SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC",
         (user_id,)
     )
-    return cursor.fetchall()
+    rows = cursor.fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            dt_utc = datetime.fromisoformat(d['time'])
+            dt_local = dt_utc + timedelta(hours=TIMEZONE_OFFSET)
+            d['time_local'] = dt_local.isoformat()
+        except Exception:
+            d['time_local'] = d['time']
+        result.append(d)
+    return result
 
 
 @db_operation

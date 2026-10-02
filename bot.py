@@ -52,18 +52,18 @@ def run_flask():
 
 
 async def reminder_worker():
-    """Фоновый воркер: отправляет наступившие напоминания."""
+    """Фоновый воркер: отправляет наступившие напоминания (сравнивает с UTC)."""
     while True:
         await asyncio.sleep(30)
         try:
             with db_connection() as conn:
                 cursor = conn.cursor()
-                now = datetime.now().isoformat()
-                cursor.execute("SELECT id, user_id, text FROM reminders WHERE sent = 0 AND time <= ?", (now,))
+                now_utc = datetime.utcnow().isoformat()
+                cursor.execute("SELECT id, user_id, text FROM reminders WHERE sent = 0 AND time <= ?", (now_utc,))
                 rows = cursor.fetchall()
                 for row in rows:
                     try:
-                        await bot.send_message(row['user_id'], f"⏰ **Напоминание:**\n{row['text']}")
+                        await bot.send_message(row['user_id'], f"⏰ Напоминание:\n{row['text']}")
                         cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (row['id'],))
                         logger.info(f"✅ Напоминание {row['id']} отправлено {row['user_id']}")
                     except Exception as e:
@@ -84,13 +84,11 @@ async def main():
     logger.info("✅ База данных готова")
 
     def backup_loop():
-        # Первый бэкап — сразу при старте
         try:
             GitHubBackup().backup_all(reason='при старте')
         except Exception as e:
             logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
 
-        # Дальше — раз в час
         while True:
             time.sleep(3600)
             try:

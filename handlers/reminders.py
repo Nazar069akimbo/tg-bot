@@ -238,9 +238,9 @@ async def list_reminders_msg(message: types.Message, user_id: int = None):
     text = "⏰ Напоминания (ближайшие первыми):\n\n"
     for i, r in enumerate(reminders, 1):
         try:
-            time_str = datetime.fromisoformat(r['time']).strftime('%d.%m %H:%M')
+            time_str = datetime.fromisoformat(r.get('time_local', r['time'])).strftime('%d.%m %H:%M')
         except Exception:
-            time_str = r['time']
+            time_str = r.get('time_local', r['time'])
         text += f"{i}. 🕐 {time_str} — {r['text']}\n"
 
     await message.answer(text, reply_markup=reminders_kb(reminders))
@@ -301,9 +301,9 @@ async def my_reminders_cb(callback: types.CallbackQuery):
     text = "⏰ Напоминания (ближайшие первыми):\n\n"
     for i, r in enumerate(reminders, 1):
         try:
-            time_str = datetime.fromisoformat(r['time']).strftime('%d.%m %H:%M')
+            time_str = datetime.fromisoformat(r.get('time_local', r['time'])).strftime('%d.%m %H:%M')
         except Exception:
-            time_str = r['time']
+            time_str = r.get('time_local', r['time'])
         text += f"{i}. 🕐 {time_str} — {r['text']}\n"
 
     try:
