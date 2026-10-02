@@ -1,10 +1,11 @@
 from aiogram import Router, types, F
 from database.db import *
-from ai.client import smart_reply, search_web
+from ai.client import smart_reply, search_web, get_thinking_phrase
 from . import helpers
 from .image import generate_image
 from utils.user_storage import set_user_name, add_fact
 import logging
+import asyncio
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -42,9 +43,19 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
+    # === ЖИВОЙ СТАТУС «Думаю...» ===
+    phrase = get_thinking_phrase()
+    status_msg = await message.answer(f"{phrase}...")
+
     # === ИИ САМ РЕШАЕТ ===
     reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
     result = smart_reply(user_id, text, reminder_state=reminder_state)
+
+    # Удаляем статус
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
 
     action = result.get("action", "reply")
 
@@ -100,7 +111,6 @@ async def handle_text(message: types.Message):
                     f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
                 )
                 return
-        # Не смогли — спрашиваем
         if reply_text:
             await message.answer(reply_text)
         elif question:
@@ -136,9 +146,9 @@ async def handle_text(message: types.Message):
 
     if action == "search_web":
         query = result.get("query", text)
-        status = await message.answer("🔍 Ищу...")
+        search_status = await message.answer("🔍 Ищу...")
         answer = search_web(query)
-        await status.edit_text(f"🔍 {answer}")
+        await search_status.edit_text(f"🔍 {answer}")
         return
 
     if action == "remember":
@@ -152,7 +162,7 @@ async def handle_text(message: types.Message):
             await message.answer("Запомнил 😊")
         return
 
-    # Неизвестное — просто отвечаем
+    # Неизвестное
     reply_text = result.get("reply", "")
     if reply_text:
         await message.answer(reply_text)

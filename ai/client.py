@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import random
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -10,6 +11,23 @@ from database.db import get_setting, get_model_setting
 logger = logging.getLogger(__name__)
 
 ADMIN_EMAIL = "mychannell@gmail.com"
+
+# Живые фразы для статуса «Думаю...»
+THINKING_PHRASES = [
+    "Думаю",
+    "Анализирую",
+    "Обрабатываю",
+    "Секунду",
+    "Разбираюсь",
+    "Смотрю",
+    "Прикидываю",
+    "Читаю",
+    "Обрабатываю запрос",
+]
+
+
+def get_thinking_phrase():
+    return random.choice(THINKING_PHRASES)
 
 
 def get_openai_client():
@@ -25,7 +43,6 @@ def get_openai_client():
 
 
 def _get_user_context(user_id: int):
-    """Собирает всё, что бот знает о пользователе + историю."""
     try:
         from utils.user_storage import load_profile, get_recent_history
         profile = load_profile(user_id)
@@ -54,9 +71,6 @@ def _get_user_context(user_id: int):
 
 
 def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
-    """
-    Единая функция: ИИ сам решает, что делать, и возвращает готовую инструкцию.
-    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return {"action": "reply", "reply": "⚠️ Сервис недоступен. Напиши админу: " + ADMIN_EMAIL}
@@ -65,7 +79,8 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     if not client:
         return {"action": "reply", "reply": "⚠️ Сервис недоступен. Напиши админу: " + ADMIN_EMAIL}
 
-    model = get_model_setting("text_chat") or "deepseek-v4-flash"
+    # GPT-4.1 nano — быстрая и дешёвая
+    model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
     context, history = _get_user_context(user_id)
 
@@ -106,36 +121,36 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 }}
 
 ДЕЙСТВИЯ:
-- reply — обычный ответ. Поле "reply" с текстом.
+- reply — обычный ответ. Поле "reply".
 - generate_image — картинка. Поле "prompt".
-- set_reminder — напоминание. Поля text/time/date. Если чего-то нет — need_clarification=true + question.
+- set_reminder — напоминание. Поля text/time/date.
 - cancel_reminder — отмена диалога.
-- delete_reminder — удалить напоминание. Поле "text".
+- delete_reminder — удалить. Поле "text".
 - delete_all_reminders — удалить все.
 - list_reminders — показать список.
 - search_web — поиск. Поле "query".
-- remember — запомнить факт. Поле "fact" И "reply" (живой ответ).
+- remember — запомнить. Поле "fact" И "reply".
 
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
 
-1. ВСЕГДА заполняй "reply" — это текст, который увидит пользователь.
-   - Если action="remember" — "Круто! Кофе и трактора — запомнил 😄" (живо, до 15 слов).
-   - Если action="reply" — твой ответ на вопрос.
+1. ВСЕГДА заполняй "reply" — живой текст для пользователя. Например:
+   - remember → "Круто! Кофе и трактора — запомнил 😄"
+   - set_reminder с уточнением → "Ок, осталось уточнить время. Во сколько напомнить?"
+   - reply → твой ответ.
 
-2. Если пользователь отвечает "сегодня" на вопрос о ДАТЕ — date="today" и сразу создавай (если есть text+time). НЕ переспрашивай то же самое.
-   "завтра" → date="tomorrow".
-   "12 сентября" → date="YYYY-09-12".
+2. Если пользователь указал невалидное время (например 24:61, 25:99, 99:99) — 
+   action="reply", reply="24:61 — такого времени не существует. В сутках 24 часа, а минут 60. Во сколько напомнить?", 
+   и напоминание НЕ создавай. Если это был диалог напоминания — need_clarification=true.
 
-3. Если пользователь написал невалидное время (25:99, 99:99) — reply="25:99 — неверное время. В сутках 24 часа." и need_clarification=true, question="Во сколько напомнить? Например: 18:30".
+3. Если пользователь отвечает "сегодня"/"завтра" на вопрос о дате — сразу date="today"/"tomorrow", не переспрашивай.
 
-4. Если пользователь спрашивает о своём хобби/интересах/имени — action="reply" и используй данные из "ЧТО ТЫ ЗНАЕШЬ".
+4. Если спрашивает о своём хобби/интересах/имени — action="reply", используй данные из "ЧТО ТЫ ЗНАЕШЬ".
 
-5. При set_reminder: если text+time+date уже есть — need_clarification=false, создаём.
-   Если чего-то нет — need_clarification=true + question.
+5. При set_reminder: если text+time+date есть — need_clarification=false. Если чего-то нет — need_clarification=true + question.
 
 6. При remember: "я люблю X", "меня зовут X", "я увлекаюсь X" → action="remember", fact="пользователь любит X", reply="Круто! Запомнил 😊".
 
-7. Если активен диалог напоминания и пользователь ответил — обновляй поля. Если ответил не по теме — reply="Ты хотел напоминание. Продолжим?" и оставь need_clarification=true.
+7. Если пользователь ответил не по теме во время диалога напоминания — reply="Ты хотел напоминание. Продолжим?" и need_clarification=true.
 
 Отвечай ТОЛЬКО JSON."""
 
@@ -169,7 +184,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
             return None
 
     raw = None
-    for m in [model, "gpt-4.1-nano", "gpt-4.1-mini", "deepseek-v4-pro"]:
+    for m in [model, "deepseek-v4-flash", "gpt-4.1-mini"]:
         raw = _try_model(m)
         if raw:
             break
@@ -195,7 +210,7 @@ def search_web(query):
     if not api_key:
         return "⚠️ Сервис недоступен"
 
-    model = get_model_setting("text_chat") or "deepseek-v4-flash"
+    model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
     try:
         resp = requests.post(
