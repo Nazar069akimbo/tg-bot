@@ -83,7 +83,6 @@ def get_user_name(user_id):
         return None
 
 
-# ===== МОДЕЛИ =====
 AVAILABLE_MODELS = {
     "text_chat": [
         ("gpt-4.1-nano", "⚡ GPT-4.1 nano", 1, "free"),
@@ -116,8 +115,8 @@ MODEL_COSTS = {
 MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
 
 DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
-DAILY_TEXT_LIMITS = {"basic": 10, "premium": 100, "premium_plus": 300}
-DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 9999, "premium_plus": 9999}
+DAILY_TEXT_LIMITS = {"basic": 10, "premium": 10, "premium_plus": 10}
+DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 2, "premium_plus": 2}
 
 PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
 
@@ -131,16 +130,36 @@ MODEL_MIN_LEVEL = {
 }
 
 
+def can_use_model(user_id, model_id):
+    """Проверяет, может ли пользователь использовать модель."""
+    balance = get_tokens(user_id)
+    if balance > 0:
+        return True
+    user = get_user(user_id)
+    plan = dict(user).get("plan", "basic") if user else "basic"
+    user_level = PLAN_LEVEL.get(plan, 0)
+    required = MODEL_MIN_LEVEL.get(model_id, 0)
+    return required <= user_level
+
+
 def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_balance: int = 0):
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     models = AVAILABLE_MODELS.get(task, [])
     user_level = PLAN_LEVEL.get(plan, 0)
+    has_tokens = user_balance > 0
 
     for model_id, model_name, cost, min_plan in models:
         mark = "✅ " if model_id == current else ""
         cost_str = f" ({cost} ток.)"
         required_level = MODEL_MIN_LEVEL.get(model_id, 0)
-        icon = " 🔒" if required_level > user_level else ""
+
+        if has_tokens:
+            icon = ""
+        elif required_level > user_level:
+            icon = " 🔒"
+        else:
+            icon = ""
+
         kb.inline_keyboard.append([
             InlineKeyboardButton(
                 text=f"{mark}{model_name}{cost_str}{icon}",
@@ -215,7 +234,6 @@ def build_reminder_time(date_str, time_str):
 
 
 def load_settings_from_db():
-    """Загружает цены и лимиты из БД при старте."""
     from database.db import get_setting
     try:
         for model_id in list(MODEL_COSTS.keys()):
