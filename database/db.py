@@ -12,8 +12,8 @@ os.makedirs('data', exist_ok=True)
 
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
 DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
-DAILY_TEXT_LIMITS = {"basic": 10, "premium": 100, "premium_plus": 300}
-DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 9999, "premium_plus": 9999}
+DAILY_TEXT_LIMITS = {"basic": 10, "premium": 10, "premium_plus": 10}
+DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 2, "premium_plus": 2}
 
 _db_queue = queue.Queue()
 _db_thread = None
@@ -285,6 +285,13 @@ def init_db():
         )
         ''')
 
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS subscription_notifications (
+            user_id INTEGER PRIMARY KEY,
+            last_notified TEXT
+        )
+        ''')
+
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -420,8 +427,7 @@ def get_text_tokens_today(conn, cursor, user_id):
     if last_reset != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
         used = 0
-    limit = DAILY_TEXT_LIMITS.get(plan, 10)
-    return max(0, limit - used), limit
+    return max(0, 10 - used), 10
 
 
 @db_operation
@@ -447,8 +453,7 @@ def get_week_images_used(conn, cursor, user_id):
     if week_start != monday:
         cursor.execute("UPDATE users SET week_images_used = 0, week_start = ? WHERE user_id = ?", (monday, user_id))
         used = 0
-    limits = DAILY_IMAGE_LIMITS
-    return used, limits.get(plan, 2)
+    return used, 2
 
 
 @db_operation
@@ -572,9 +577,7 @@ def add_admin(conn, cursor, user_id):
 @db_operation
 def add_premium(conn, cursor, user_id, days, plan, paid=False):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
-    new_limit = DAILY_LIMITS.get(plan, 30)
-    cursor.execute("UPDATE users SET premium_until = ?, plan = ?, daily_requests = ? WHERE user_id = ?",
-                   (new_date, plan, new_limit, user_id))
+    cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?", (new_date, plan, user_id))
     if paid:
         cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
     _schedule_db_backup()
@@ -599,6 +602,38 @@ def get_stats(conn, cursor):
     cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_plus')")
     premium_users = cursor.fetchone()[0] or 0
     return total, total_tokens, premium_users
+
+
+# ===== ПОДПИСКИ (уведомления) =====
+@db_operation
+def get_expiring_subscriptions(conn, cursor):
+    """Возвращает пользователей, у которых подписка истекает через 3 дня."""
+    now = datetime.now()
+    in_3_days = (now + timedelta(days=3)).isoformat()
+    in_4_days = (now + timedelta(days=4)).isoformat()
+    cursor.execute("""
+        SELECT user_id, plan, premium_until FROM users
+        WHERE plan IN ('premium', 'premium_plus')
+        AND premium_until > ? AND premium_until <= ?
+    """, (now.isoformat(), in_4_days))
+    return cursor.fetchall()
+
+
+@db_operation
+def mark_subscription_notified(conn, cursor, user_id):
+    today = datetime.now().date().isoformat()
+    cursor.execute("INSERT OR REPLACE INTO subscription_notifications (user_id, last_notified) VALUES (?, ?)",
+                   (user_id, today))
+
+
+@db_operation
+def was_subscription_notified_today(conn, cursor, user_id):
+    today = datetime.now().date().isoformat()
+    cursor.execute("SELECT last_notified FROM subscription_notifications WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+    return row[0] == today
 
 
 # ===== НАПОМИНАНИЯ =====

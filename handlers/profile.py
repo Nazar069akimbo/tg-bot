@@ -22,8 +22,6 @@ async def show_profile(message: types.Message, user_id: int = None):
     name = profile.get("name") or "—"
     tokens = user.get("tokens") or 0
     plan = user.get("plan") or "basic"
-    used, limit = get_daily_usage(user_id)
-    left = limit - used
     referral_count = get_referral_count(user_id)
 
     text = (
@@ -32,7 +30,6 @@ async def show_profile(message: types.Message, user_id: int = None):
         f"🆔 ID: {user_id}\n"
         f"💳 Тариф: {plan}\n\n"
         f"🪙 Токенов: {tokens}\n"
-        f"📊 Дневной лимит: {used}/{limit} (осталось {left})\n"
         f"👥 Рефералов: {referral_count}\n"
         f"🖼️ Картинок: {meta.get('images_count', 0)}"
     )

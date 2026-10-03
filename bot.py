@@ -4,15 +4,16 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
-from database.db import init_db, migrate_db, is_admin, add_admin, db_connection
+from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection,
+                          get_expiring_subscriptions, mark_subscription_notified,
+                          was_subscription_notified_today)
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
-from datetime import datetime
+from datetime import datetime, timedelta
 
 load_dotenv()
 
-# ═══════════ ЛОГИРОВАНИЕ ═══════════
 os.makedirs('logs', exist_ok=True)
 LOG_FORMAT = '%(asctime)s | %(levelname)-7s | %(name)s | %(message)s'
 
@@ -52,7 +53,6 @@ def run_flask():
 
 
 async def reminder_worker():
-    """Фоновый воркер: отправляет наступившие напоминания (сравнивает с UTC)."""
     while True:
         await asyncio.sleep(30)
         try:
@@ -72,6 +72,33 @@ async def reminder_worker():
             logger.error(f"❌ Ошибка воркера напоминаний: {e}")
 
 
+async def subscription_worker():
+    """Напоминает об окончании подписки за 3 дня. Раз в 24 часа."""
+    while True:
+        await asyncio.sleep(86400)  # раз в 24 часа
+        try:
+            subs = get_expiring_subscriptions()
+            for row in subs:
+                user_id = row['user_id']
+                if was_subscription_notified_today(user_id):
+                    continue
+                try:
+                    until = datetime.fromisoformat(row['premium_until'])
+                    days_left = (until - datetime.now()).days
+                    plan_name = "Premium+" if row['plan'] == "premium_plus" else "Premium"
+                    await bot.send_message(
+                        user_id,
+                        f"⚠️ Твоя подписка {plan_name} заканчивается через {days_left} дн.\n\n"
+                        f"Продлить: /credits"
+                    )
+                    mark_subscription_notified(user_id)
+                    logger.info(f"📩 Напоминание о подписке: {user_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Не отправил {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка воркера подписок: {e}")
+
+
 async def main():
     logger.info("🚀 Запуск...")
 
@@ -83,7 +110,6 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # Загружаем настройки (цены, лимиты) из БД
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()
@@ -91,18 +117,15 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
 
-    # ===== БЭКАП =====
     def backup_loop():
-        # Первый бэкап БД — при старте
         try:
             GitHubBackup().backup_db(reason='при старте')
             logger.info("✅ Бэкап БД при старте")
         except Exception as e:
             logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
 
-        # Дальше — каждые 30 минут
         while True:
-            time.sleep(1800)  # 30 минут
+            time.sleep(1800)
             try:
                 GitHubBackup().backup_db(reason='по расписанию (30 мин)')
             except Exception as e:
@@ -133,6 +156,9 @@ async def main():
 
     asyncio.create_task(reminder_worker())
     logger.info("✅ Воркер напоминаний запущен")
+
+    asyncio.create_task(subscription_worker())
+    logger.info("✅ Воркер подписок запущен")
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("🚀 Бот готов!")
