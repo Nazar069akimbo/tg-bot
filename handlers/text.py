@@ -195,6 +195,12 @@ async def pick_model_cb(callback: types.CallbackQuery):
 
     set_model_setting(task, model_id)
 
+    # Отключаем повторный выбор
+    if task == "image_generate":
+        set_setting(f"ask_image_model_{callback.from_user.id}", "no")
+    elif task == "text_chat":
+        set_setting(f"ask_model_{callback.from_user.id}", "no")
+
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")
     pending_prompt = state.get("pending_prompt")

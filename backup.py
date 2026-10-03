@@ -30,7 +30,7 @@ class GitHubBackup:
         }
         logger.info(f"✅ Backup: БД → {self.repo_db}, юзеры → {self.repo_users}")
 
-    # ===== БД (раз в 30 минут) =====
+    # ===== БД =====
     def backup_db(self, db_path='data/repsolver.db', reason='автоматический'):
         try:
             if not self.repo_db or not os.path.exists(db_path):
@@ -55,7 +55,7 @@ class GitHubBackup:
             logger.error(f"❌ Ошибка бэкапа БД: {e}")
             return False
 
-    # ===== ПОЛЬЗОВАТЕЛИ (после каждого действия) =====
+    # ===== ПОЛЬЗОВАТЕЛИ =====
     def backup_users(self, reason='изменение'):
         try:
             if not self.repo_users:
@@ -93,7 +93,7 @@ class GitHubBackup:
         users_ok = self.backup_users(reason=reason)
         return db_ok and users_ok
 
-    # ===== ВОССТАНОВЛЕНИЕ =====
+    # ===== ВОССТАНОВЛЕНИЕ БД =====
     def restore_latest_backup(self, db_path='data/repsolver.db'):
         try:
             if not self.repo_db:
@@ -121,8 +121,73 @@ class GitHubBackup:
                 return True
             return False
         except Exception as e:
-            logger.error(f"❌ Ошибка восстановления: {e}")
+            logger.error(f"❌ Ошибка восстановления БД: {e}")
             return False
+
+    # ===== ВОССТАНОВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ =====
+    def restore_users(self, base_dir='data/users'):
+        """Скачивает папки пользователей из GitHub."""
+        try:
+            if not self.repo_users:
+                return False
+
+            url = f'https://api.github.com/repos/{self.repo_users}/contents/users'
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                logger.info("ℹ️ Нет файлов пользователей")
+                return False
+
+            files = response.json()
+            downloaded = 0
+
+            for item in files:
+                if item['type'] == 'dir':
+                    self._restore_user_dir(item['name'], item['url'], base_dir)
+                    downloaded += 1
+
+            logger.info(f"✅ Восстановлено пользователей: {downloaded}")
+            return downloaded > 0
+        except Exception as e:
+            logger.error(f"❌ Ошибка восстановления юзеров: {e}")
+            return False
+
+    def _restore_user_dir(self, folder_name, url, base_dir):
+        try:
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                return
+            files = response.json()
+            user_path = os.path.join(base_dir, folder_name)
+            os.makedirs(user_path, exist_ok=True)
+            os.makedirs(os.path.join(user_path, "images"), exist_ok=True)
+
+            for item in files:
+                if item['type'] == 'file':
+                    self._download_file(item['download_url'], os.path.join(user_path, item['name']))
+                elif item['type'] == 'dir' and item['name'] == 'images':
+                    self._restore_images(item['url'], os.path.join(user_path, "images"))
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка папки {folder_name}: {e}")
+
+    def _restore_images(self, url, images_path):
+        try:
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                return
+            for item in response.json():
+                if item['type'] == 'file':
+                    self._download_file(item['download_url'], os.path.join(images_path, item['name']))
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка картинок: {e}")
+
+    def _download_file(self, url, path):
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                with open(path, 'wb') as f:
+                    f.write(response.content)
+        except Exception as e:
+            logger.warning(f"⚠️ Не скачал {path}: {e}")
 
     # ===== ВСПОМОГАТЕЛЬНЫЕ =====
     def _upload_file(self, repo, repo_path, content_b64, message):
@@ -169,7 +234,6 @@ _users_backup_lock = threading.Lock()
 
 
 def schedule_users_backup(delay=5):
-    """Запускает бэкап пользователей через delay секунд (батчинг)."""
     global _users_backup_timer
     with _users_backup_lock:
         if _users_backup_timer is not None:
