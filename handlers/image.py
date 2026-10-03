@@ -62,6 +62,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     status_msg = await message.answer("🎨 Рисую картинку...")
 
     try:
+        # 1. Улучшение промпта
+        logger.info(f"🔄 [{user_id}] Улучшение промпта...")
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -78,7 +80,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         enhanced = prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
+            logger.info(f"✅ [{user_id}] Промпт: {enhanced[:60]}")
 
+        # 2. Генерация картинки
+        logger.info(f"🎨 [{user_id}] Запрос к Replicate: model={current_model}")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -89,6 +94,9 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             },
             timeout=120
         )
+
+        logger.info(f"📡 [{user_id}] Статус: {img_resp.status_code}")
+        logger.info(f"📦 [{user_id}] Ответ: {img_resp.text[:800]}")
 
         img_data = None
         if img_resp.status_code == 200:
@@ -101,10 +109,25 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     img_response = requests.get(img_url, timeout=30)
                     if img_response.status_code == 200 and len(img_response.content) > 1000:
                         img_data = img_response.content
+                        logger.info(f"✅ [{user_id}] Картинка: {len(img_data)} байт")
                 except Exception as e:
-                    logger.error(f"❌ Скачивание: {e}")
+                    logger.error(f"❌ [{user_id}] Скачивание: {e}")
+        else:
+            logger.error(f"❌ [{user_id}] Ошибка генерации: {img_resp.status_code}")
+            # Показываем пользователю текст ошибки
+            try:
+                err_text = img_resp.json().get('detail') or img_resp.json().get('error') or img_resp.text[:200]
+            except Exception:
+                err_text = img_resp.text[:200]
+            await status_msg.edit_text(
+                f"❌ Ошибка генерации ({img_resp.status_code})\n\n"
+                f"Модель: {current_model}\n"
+                f"Ответ: {err_text[:200]}"
+            )
+            return
 
         if img_data:
+            # 3. Водяной знак
             try:
                 img = Image.open(BytesIO(img_data))
                 draw = ImageDraw.Draw(img)
@@ -118,8 +141,9 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 output.seek(0)
                 img_data = output.getvalue()
             except Exception as e:
-                logger.warning(f"⚠️ Водяной знак: {e}")
+                logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
+            # 4. Сохранение
             image_id = None
             try:
                 image_id, session_id = save_image_to_history(
@@ -131,10 +155,11 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     save_user_image(user_id, image_id, img_data)
                     update_meta(user_id, last_topics=[prompt[:50]])
                 except Exception as e:
-                    logger.warning(f"⚠️ Папка: {e}")
+                    logger.warning(f"⚠️ [{user_id}] Папка: {e}")
             except Exception as e:
-                logger.warning(f"⚠️ БД: {e}")
+                logger.warning(f"⚠️ [{user_id}] БД: {e}")
 
+            # 5. Отправка
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Ещё", callback_data="regenerate"),
                  InlineKeyboardButton(text="🎨 Стикер", callback_data="make_sticker")],
@@ -150,7 +175,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             logger.info(f"✅ [{user_id}] Картинка отправлена")
             return
 
-        await status_msg.edit_text(f"❌ Не удалось. Код: {img_resp.status_code}")
+        await status_msg.edit_text(f"❌ Не удалось получить картинку")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}", exc_info=True)

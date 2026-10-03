@@ -30,7 +30,6 @@ class GitHubBackup:
         }
         logger.info(f"✅ Backup: БД → {self.repo_db}, юзеры → {self.repo_users}")
 
-    # ===== БД =====
     def backup_db(self, db_path='data/repsolver.db', reason='автоматический'):
         try:
             if not self.repo_db or not os.path.exists(db_path):
@@ -55,7 +54,6 @@ class GitHubBackup:
             logger.error(f"❌ Ошибка бэкапа БД: {e}")
             return False
 
-    # ===== ПОЛЬЗОВАТЕЛИ =====
     def backup_users(self, reason='изменение'):
         try:
             if not self.repo_users:
@@ -93,7 +91,6 @@ class GitHubBackup:
         users_ok = self.backup_users(reason=reason)
         return db_ok and users_ok
 
-    # ===== ВОССТАНОВЛЕНИЕ БД =====
     def restore_latest_backup(self, db_path='data/repsolver.db'):
         try:
             if not self.repo_db:
@@ -124,9 +121,7 @@ class GitHubBackup:
             logger.error(f"❌ Ошибка восстановления БД: {e}")
             return False
 
-    # ===== ВОССТАНОВЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ =====
     def restore_users(self, base_dir='data/users'):
-        """Скачивает папки пользователей из GitHub."""
         try:
             if not self.repo_users:
                 return False
@@ -189,25 +184,40 @@ class GitHubBackup:
         except Exception as e:
             logger.warning(f"⚠️ Не скачал {path}: {e}")
 
-    # ===== ВСПОМОГАТЕЛЬНЫЕ =====
-    def _upload_file(self, repo, repo_path, content_b64, message):
+    def _upload_file(self, repo, repo_path, content_b64, message, retry=3):
+        """Загружает файл в GitHub. При 409 — retry с задержкой."""
         url = f'https://api.github.com/repos/{repo}/contents/{repo_path}'
-        try:
-            response = requests.get(url, headers=self.headers)
-            if response.status_code == 200:
-                sha = response.json()['sha']
-                data = {'message': message, 'content': content_b64, 'sha': sha, 'branch': self.branch}
-            else:
-                data = {'message': message, 'content': content_b64, 'branch': self.branch}
 
-            response = requests.put(url, headers=self.headers, json=data)
-            if response.status_code in (200, 201):
-                return True
-            logger.error(f"❌ Загрузка {repo_path} в {repo}: {response.text[:200]}")
-            return False
-        except Exception as e:
-            logger.error(f"❌ upload {repo_path}: {e}")
-            return False
+        for attempt in range(retry):
+            try:
+                response = requests.get(url, headers=self.headers)
+                if response.status_code == 200:
+                    sha = response.json()['sha']
+                    data = {'message': message, 'content': content_b64, 'sha': sha, 'branch': self.branch}
+                else:
+                    data = {'message': message, 'content': content_b64, 'branch': self.branch}
+
+                response = requests.put(url, headers=self.headers, json=data)
+
+                if response.status_code in (200, 201):
+                    return True
+
+                if response.status_code == 409 and attempt < retry - 1:
+                    logger.warning(f"⚠️ 409 для {repo_path}, попытка {attempt + 1}/{retry}")
+                    time.sleep(1.5)
+                    continue
+
+                logger.error(f"❌ Загрузка {repo_path}: {response.text[:150]}")
+                return False
+
+            except Exception as e:
+                logger.error(f"❌ upload {repo_path} (попытка {attempt + 1}): {e}")
+                if attempt < retry - 1:
+                    time.sleep(1.5)
+                    continue
+                return False
+
+        return False
 
     def _cleanup_old(self, repo, folder_path, keep=20):
         try:
@@ -228,12 +238,13 @@ class GitHubBackup:
             logger.warning(f"⚠️ Очистка: {e}")
 
 
-# ===== АВТОБЭКАП ПОЛЬЗОВАТЕЛЕЙ С ЗАДЕРЖКОЙ =====
+# ===== АВТОБЭКАП С ЗАДЕРЖКОЙ 30 СЕК =====
 _users_backup_timer = None
 _users_backup_lock = threading.Lock()
 
 
-def schedule_users_backup(delay=5):
+def schedule_users_backup(delay=30):
+    """Запускает бэкап пользователей через delay секунд (батчинг)."""
     global _users_backup_timer
     with _users_backup_lock:
         if _users_backup_timer is not None:
