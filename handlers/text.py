@@ -3,7 +3,7 @@ from database.db import *
 from ai.client import smart_reply, search_web
 from . import helpers
 from .image import generate_image
-from utils.user_storage import set_user_name, add_fact
+from utils.user_storage import set_user_name, add_fact, save_user_settings
 import logging
 
 router = Router()
@@ -195,11 +195,22 @@ async def pick_model_cb(callback: types.CallbackQuery):
 
     set_model_setting(task, model_id)
 
-    # Отключаем повторный выбор
     if task == "image_generate":
         set_setting(f"ask_image_model_{callback.from_user.id}", "no")
     elif task == "text_chat":
         set_setting(f"ask_model_{callback.from_user.id}", "no")
+
+    # Сохраняем настройки в папку
+    try:
+        save_user_settings(
+            callback.from_user.id,
+            ask_model=get_setting(f"ask_model_{callback.from_user.id}") or "yes",
+            ask_image_model=get_setting(f"ask_image_model_{callback.from_user.id}") or "yes",
+            text_chat=get_model_setting("text_chat"),
+            image_generate=get_model_setting("image_generate")
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ save_user_settings: {e}")
 
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")
@@ -233,6 +244,15 @@ async def always_model_cb(callback: types.CallbackQuery):
     set_setting(f"ask_model_{callback.from_user.id}", "no")
     if task == "image_generate":
         set_setting(f"ask_image_model_{callback.from_user.id}", "no")
+
+    try:
+        save_user_settings(
+            callback.from_user.id,
+            ask_model=get_setting(f"ask_model_{callback.from_user.id}") or "yes",
+            ask_image_model=get_setting(f"ask_image_model_{callback.from_user.id}") or "yes"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ save_user_settings: {e}")
 
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")

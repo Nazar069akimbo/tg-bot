@@ -1,9 +1,7 @@
 import os
 import json
 import re
-import time
 import logging
-import threading
 import shutil
 from datetime import datetime
 
@@ -57,10 +55,14 @@ def get_user_dir(user_id: int) -> str:
 def _profile_path(user_id): return os.path.join(get_user_dir(user_id), "profile.json")
 def _history_path(user_id): return os.path.join(get_user_dir(user_id), "history.json")
 def _meta_path(user_id): return os.path.join(get_user_dir(user_id), "meta.json")
+def _tokens_path(user_id): return os.path.join(get_user_dir(user_id), "tokens.json")
+def _settings_path(user_id): return os.path.join(get_user_dir(user_id), "settings.json")
+def _reminders_path(user_id): return os.path.join(get_user_dir(user_id), "reminders.json")
+def _referrals_path(user_id): return os.path.join(get_user_dir(user_id), "referrals.json")
+def _payments_path(user_id): return os.path.join(get_user_dir(user_id), "payments.json")
 
 
 def _backup_users(force=False):
-    """Запускает бэкап пользователей с задержкой 5 сек (батчинг)."""
     try:
         from backup import schedule_users_backup
         schedule_users_backup(delay=5)
@@ -68,6 +70,7 @@ def _backup_users(force=False):
         logger.warning(f"⚠️ Бэкап: {e}")
 
 
+# ===== PROFILE =====
 def load_profile(user_id):
     path = _profile_path(user_id)
     if not os.path.exists(path):
@@ -116,6 +119,7 @@ def add_fact(user_id, fact):
     save_profile(user_id, profile)
 
 
+# ===== HISTORY =====
 def load_history(user_id):
     path = _history_path(user_id)
     if not os.path.exists(path):
@@ -145,6 +149,7 @@ def get_recent_history(user_id, limit=10):
     return history[-limit:] if len(history) > limit else history
 
 
+# ===== META =====
 def load_meta(user_id):
     path = _meta_path(user_id)
     if not os.path.exists(path):
@@ -172,6 +177,105 @@ def update_meta(user_id, **kwargs):
         pass
 
 
+# ===== TOKENS =====
+def save_user_tokens(user_id, tokens, plan, premium_until=None):
+    data = {
+        "user_id": user_id,
+        "tokens": tokens,
+        "plan": plan,
+        "premium_until": premium_until,
+        "updated_at": datetime.now().isoformat()
+    }
+    try:
+        with open(_tokens_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_tokens: {e}")
+
+
+def load_user_tokens(user_id):
+    path = _tokens_path(user_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# ===== SETTINGS =====
+def save_user_settings(user_id, **kwargs):
+    data = load_user_settings(user_id) or {"user_id": user_id}
+    for k, v in kwargs.items():
+        data[k] = v
+    data["updated_at"] = datetime.now().isoformat()
+    try:
+        with open(_settings_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_settings: {e}")
+
+
+def load_user_settings(user_id):
+    path = _settings_path(user_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# ===== REMINDERS =====
+def save_user_reminders(user_id, reminders_list):
+    """reminders_list: список dict с id, text, time."""
+    data = {"user_id": user_id, "reminders": reminders_list, "updated_at": datetime.now().isoformat()}
+    try:
+        with open(_reminders_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_reminders: {e}")
+
+
+def load_user_reminders(user_id):
+    path = _reminders_path(user_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f).get("reminders", [])
+    except Exception:
+        return []
+
+
+# ===== REFERRALS =====
+def save_user_referrals(user_id, referrals_list):
+    data = {"user_id": user_id, "referrals": referrals_list, "updated_at": datetime.now().isoformat()}
+    try:
+        with open(_referrals_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_referrals: {e}")
+
+
+# ===== PAYMENTS =====
+def save_user_payments(user_id, payments_list):
+    data = {"user_id": user_id, "payments": payments_list, "updated_at": datetime.now().isoformat()}
+    try:
+        with open(_payments_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_payments: {e}")
+
+
+# ===== IMAGES =====
 def save_user_image(user_id, image_id, image_bytes):
     path = os.path.join(get_user_dir(user_id), "images", f"{image_id}.png")
     try:
@@ -188,6 +292,7 @@ def save_user_image(user_id, image_id, image_bytes):
         return ""
 
 
+# ===== CLEAR =====
 def clear_memory(user_id):
     for path in (_history_path(user_id), _profile_path(user_id)):
         if os.path.exists(path):
