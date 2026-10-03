@@ -355,6 +355,81 @@ def migrate_db():
         print("✅ БД в порядке")
 
 
+def restore_from_user_folders():
+    """Восстанавливает токены и план из папок пользователей."""
+    base = 'data/users'
+    if not os.path.exists(base):
+        return 0
+
+    restored = 0
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        for folder in os.listdir(base):
+            folder_path = os.path.join(base, folder)
+            if not os.path.isdir(folder_path):
+                continue
+
+            id_file = os.path.join(folder_path, "_id.txt")
+            tokens_file = os.path.join(folder_path, "tokens.json")
+            profile_file = os.path.join(folder_path, "profile.json")
+
+            if not os.path.exists(id_file):
+                continue
+
+            try:
+                with open(id_file, "r", encoding="utf-8") as f:
+                    user_id = int(f.read().strip())
+            except Exception:
+                continue
+
+            cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+
+            if row and row[1] and row[1] > 0:
+                continue
+
+            tokens = 0
+            plan = "basic"
+            premium_until = None
+
+            if os.path.exists(tokens_file):
+                try:
+                    with open(tokens_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        tokens = data.get("tokens", 0)
+                        plan = data.get("plan", "basic")
+                        premium_until = data.get("premium_until")
+                except Exception:
+                    pass
+
+            name = None
+            if os.path.exists(profile_file):
+                try:
+                    with open(profile_file, "r", encoding="utf-8") as f:
+                        name = json.load(f).get("name")
+                except Exception:
+                    pass
+
+            if row:
+                cursor.execute("""
+                    UPDATE users SET tokens = ?, plan = ?, premium_until = ?, trial_active = 1
+                    WHERE user_id = ?
+                """, (tokens, plan, premium_until, user_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, joined, trial_start, trial_active, tokens, plan, premium_until, daily_reset)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                """, (user_id, name or str(user_id), datetime.now().isoformat(),
+                      datetime.now().isoformat(), tokens, plan, premium_until,
+                      datetime.now().date().isoformat()))
+
+            restored += 1
+            print(f"✅ Восстановлен {name or user_id}: {tokens} токенов, {plan}")
+
+    return restored
+
+
 # ===== ПОЛЬЗОВАТЕЛИ =====
 @db_operation
 def get_user(conn, cursor, user_id):
@@ -426,7 +501,6 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
-# ===== ЛИМИТЫ =====
 @db_operation
 def get_text_tokens_today(conn, cursor, user_id):
     cursor.execute("SELECT plan, daily_requests_used, daily_reset, tokens FROM users WHERE user_id = ?", (user_id,))
@@ -479,7 +553,6 @@ def use_week_image(conn, cursor, user_id):
     cursor.execute("UPDATE users SET week_images_used = week_images_used + 1, week_start = ? WHERE user_id = ?", (monday, user_id))
 
 
-# ===== ТРИАЛ =====
 @db_operation
 def has_trial(conn, cursor, user_id):
     cursor.execute("SELECT trial_start, trial_active FROM users WHERE user_id = ?", (user_id,))
@@ -500,7 +573,6 @@ def activate_trial(conn, cursor, user_id):
                    (datetime.now().isoformat(), user_id))
 
 
-# ===== КАРТИНКИ =====
 @db_operation
 def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data):
     session_id = secrets.token_hex(8)
@@ -518,7 +590,6 @@ def get_last_image(conn, cursor, user_id):
     return dict(row) if row else None
 
 
-# ===== РЕФЕРАЛЫ =====
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
     if referrer_id == referred_id:
@@ -557,7 +628,6 @@ def get_referral_count(conn, cursor, user_id):
     return cursor.fetchone()[0] or 0
 
 
-# ===== ПРОМОКОДЫ =====
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
@@ -587,7 +657,6 @@ def use_promocode(conn, cursor, code, user_id):
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
 
-# ===== ПЛАТЕЖИ =====
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
@@ -672,7 +741,6 @@ def get_stats(conn, cursor):
     return total, total_tokens, premium_users
 
 
-# ===== ПОДПИСКИ =====
 @db_operation
 def get_expiring_subscriptions(conn, cursor):
     now = datetime.now()
@@ -702,7 +770,6 @@ def was_subscription_notified_today(conn, cursor, user_id):
     return row[0] == today
 
 
-# ===== НАПОМИНАНИЯ =====
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str):
     try:
@@ -786,7 +853,6 @@ def delete_all_reminders(conn, cursor, user_id):
         print(f"⚠️ save_user_reminders: {e}")
 
 
-# ===== НАСТРОЙКИ =====
 @db_operation
 def get_setting(conn, cursor, key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -799,7 +865,6 @@ def set_setting(conn, cursor, key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
 
-# ===== МОДЕЛИ =====
 @db_operation
 def get_model_setting(conn, cursor, task):
     cursor.execute("SELECT model FROM model_settings WHERE task = ?", (task,))
@@ -819,7 +884,6 @@ def get_all_model_settings(conn, cursor):
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-# ===== ТАРИФЫ =====
 @db_operation
 def get_tariffs(conn, cursor, kind=None):
     if kind:
@@ -860,7 +924,6 @@ def get_tariff(conn, cursor, tariff_id):
     return dict(row) if row else None
 
 
-# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup

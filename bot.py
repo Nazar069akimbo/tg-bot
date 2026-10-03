@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection,
                           get_expiring_subscriptions, mark_subscription_notified,
-                          was_subscription_notified_today)
+                          was_subscription_notified_today, restore_from_user_folders)
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
@@ -105,9 +105,28 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
 
+    # Проверяем, есть ли БД
+    db_exists = os.path.exists('data/repsolver.db')
+
+    if not db_exists:
+        logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
+        try:
+            GitHubBackup().restore_latest_backup()
+            logger.info("✅ БД восстановлена из бэкапа")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось восстановить: {e}")
+
     init_db()
     migrate_db()
     logger.info("✅ База данных готова")
+
+    # Восстанавливаем токены из папок пользователей
+    try:
+        count = restore_from_user_folders()
+        if count > 0:
+            logger.info(f"✅ Восстановлено из папок: {count} пользователей")
+    except Exception as e:
+        logger.warning(f"⚠️ Восстановление из папок: {e}")
 
     try:
         from handlers.helpers import load_settings_from_db
