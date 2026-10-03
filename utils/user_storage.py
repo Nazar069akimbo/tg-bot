@@ -10,8 +10,6 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 BASE_DIR = "data/users"
-_last_backup_time = {"users": 0}
-BACKUP_INTERVAL = 300
 
 
 def _safe_name(name: str) -> str:
@@ -62,17 +60,12 @@ def _meta_path(user_id): return os.path.join(get_user_dir(user_id), "meta.json")
 
 
 def _backup_users(force=False):
-    now = time.time()
-    if not force and now - _last_backup_time["users"] < BACKUP_INTERVAL:
-        return
-    _last_backup_time["users"] = now
-    def _run():
-        try:
-            from backup import GitHubBackup
-            GitHubBackup().backup_users(reason='изменение')
-        except Exception as e:
-            logger.warning(f"⚠️ Бэкап: {e}")
-    threading.Thread(target=_run, daemon=True).start()
+    """Запускает бэкап пользователей с задержкой 5 сек (батчинг)."""
+    try:
+        from backup import schedule_users_backup
+        schedule_users_backup(delay=5)
+    except Exception as e:
+        logger.warning(f"⚠️ Бэкап: {e}")
 
 
 def load_profile(user_id):

@@ -53,9 +53,11 @@ def admin_kb():
          InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
         [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"),
          InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
-        [InlineKeyboardButton(text="📥 Восстановить", callback_data="a_restore_github"),
+        [InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
         [InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs"),
+         InlineKeyboardButton(text="💰 Цены моделей", callback_data="a_model_prices")],
+        [InlineKeyboardButton(text="🔢 Лимиты токенов", callback_data="a_limits"),
          InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
@@ -207,3 +209,24 @@ def build_reminder_time(date_str, time_str):
             except ValueError:
                 return None
     return None
+
+
+def load_settings_from_db():
+    """Загружает цены и лимиты из БД при старте."""
+    from database.db import get_setting
+    try:
+        for model_id in list(MODEL_COSTS.keys()):
+            saved = get_setting(f"model_cost_{model_id}")
+            if saved:
+                MODEL_COSTS[model_id] = int(saved)
+                for task in ["text_chat", "image_generate"]:
+                    models = AVAILABLE_MODELS.get(task, [])
+                    for i, (mid, mname, cost, mplan) in enumerate(models):
+                        if mid == model_id:
+                            models[i] = (mid, mname, int(saved), mplan)
+        for plan in ["basic", "premium", "premium_plus"]:
+            saved = get_setting(f"daily_limit_{plan}")
+            if saved:
+                DAILY_LIMITS[plan] = int(saved)
+    except Exception as e:
+        logger.warning(f"⚠️ Настройки: {e}")

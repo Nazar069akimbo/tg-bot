@@ -2,6 +2,8 @@ import os
 import shutil
 import logging
 import base64
+import time
+import threading
 from datetime import datetime
 import requests
 
@@ -11,13 +13,12 @@ logger = logging.getLogger(__name__)
 class GitHubBackup:
     def __init__(self):
         self.token = os.getenv('GITHUB_TOKEN')
-        self.repo_db = os.getenv('GITHUB_BACKUP_REPO')       # репо для БД
-        self.repo_users = os.getenv('GITHUB_USERS_REPO')     # репо для пользователей
+        self.repo_db = os.getenv('GITHUB_BACKUP_REPO')
+        self.repo_users = os.getenv('GITHUB_USERS_REPO')
         self.branch = os.getenv('GITHUB_BACKUP_BRANCH', 'main')
 
         if not self.token:
             logger.error("❌ GITHUB_TOKEN не найден!")
-            return
         if not self.repo_db:
             logger.error("❌ GITHUB_BACKUP_REPO не найден!")
         if not self.repo_users:
@@ -29,13 +30,10 @@ class GitHubBackup:
         }
         logger.info(f"✅ Backup: БД → {self.repo_db}, юзеры → {self.repo_users}")
 
-    # ===== БД =====
+    # ===== БД (раз в 30 минут) =====
     def backup_db(self, db_path='data/repsolver.db', reason='автоматический'):
         try:
-            if not self.repo_db:
-                return False
-            if not os.path.exists(db_path):
-                logger.warning(f"⚠️ Файл {db_path} не найден")
+            if not self.repo_db or not os.path.exists(db_path):
                 return False
 
             timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -46,27 +44,25 @@ class GitHubBackup:
                 content = base64.b64encode(f.read()).decode('utf-8')
 
             file_path = f'db/{backup_name}'
-            ok = self._upload_file(self.repo_db, file_path, content, f'Бэкап БД {backup_name} ({reason})')
+            ok = self._upload_file(self.repo_db, file_path, content, f'БД {backup_name} ({reason})')
             os.remove(backup_name)
 
             if ok:
-                self._cleanup_old(self.repo_db, 'db', keep=10)
+                self._cleanup_old(self.repo_db, 'db', keep=20)
             return ok
 
         except Exception as e:
             logger.error(f"❌ Ошибка бэкапа БД: {e}")
             return False
 
-    # ===== ПОЛЬЗОВАТЕЛИ =====
-    def backup_users(self, reason='автоматический'):
+    # ===== ПОЛЬЗОВАТЕЛИ (после каждого действия) =====
+    def backup_users(self, reason='изменение'):
         try:
             if not self.repo_users:
-                logger.warning("⚠️ GITHUB_USERS_REPO не указан")
                 return False
 
             base = 'data/users'
             if not os.path.exists(base):
-                logger.info("ℹ️ Папка data/users пуста")
                 return True
 
             uploaded = 0
@@ -79,26 +75,23 @@ class GitHubBackup:
                     try:
                         with open(full_path, 'rb') as f:
                             content = base64.b64encode(f.read()).decode('utf-8')
-                        if self._upload_file(self.repo_users, repo_path, content, f'user: {rel_path} ({reason})'):
+                        if self._upload_file(self.repo_users, repo_path, content, f'{rel_path} ({reason})'):
                             uploaded += 1
                     except Exception as e:
                         logger.warning(f"⚠️ Не залит {rel_path}: {e}")
 
-            logger.info(f"✅ Бэкап пользователей: {uploaded} файлов")
+            if uploaded > 0:
+                logger.info(f"✅ Бэкап пользователей: {uploaded} файлов")
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка бэкапа пользователей: {e}")
             return False
 
-    def backup_all(self, reason='автоматический'):
+    def backup_all(self, reason='полный'):
         logger.info(f"🔄 Полный бэкап ({reason})...")
         db_ok = self.backup_db(reason=reason)
         users_ok = self.backup_users(reason=reason)
-        if db_ok and users_ok:
-            logger.info("✅ Полный бэкап завершён")
-            return True
-        logger.warning("⚠️ Бэкап завершён с ошибками")
-        return False
+        return db_ok and users_ok
 
     # ===== ВОССТАНОВЛЕНИЕ =====
     def restore_latest_backup(self, db_path='data/repsolver.db'):
@@ -108,7 +101,6 @@ class GitHubBackup:
             url = f'https://api.github.com/repos/{self.repo_db}/contents/db'
             response = requests.get(url, headers=self.headers)
             if response.status_code != 200:
-                logger.info("ℹ️ Нет бэкапов БД")
                 return False
 
             files = response.json()
@@ -146,13 +138,13 @@ class GitHubBackup:
             response = requests.put(url, headers=self.headers, json=data)
             if response.status_code in (200, 201):
                 return True
-            logger.error(f"❌ Ошибка загрузки {repo_path} в {repo}: {response.text[:200]}")
+            logger.error(f"❌ Загрузка {repo_path} в {repo}: {response.text[:200]}")
             return False
         except Exception as e:
-            logger.error(f"❌ Ошибка upload {repo_path}: {e}")
+            logger.error(f"❌ upload {repo_path}: {e}")
             return False
 
-    def _cleanup_old(self, repo, folder_path, keep=10):
+    def _cleanup_old(self, repo, folder_path, keep=20):
         try:
             url = f'https://api.github.com/repos/{repo}/contents/{folder_path}'
             response = requests.get(url, headers=self.headers)
@@ -168,4 +160,30 @@ class GitHubBackup:
                 data = {'message': f'Удаление {file["name"]}', 'sha': file['sha'], 'branch': self.branch}
                 requests.delete(delete_url, headers=self.headers, json=data)
         except Exception as e:
-            logger.warning(f"⚠️ Ошибка очистки: {e}")
+            logger.warning(f"⚠️ Очистка: {e}")
+
+
+# ===== АВТОБЭКАП ПОЛЬЗОВАТЕЛЕЙ С ЗАДЕРЖКОЙ =====
+_users_backup_timer = None
+_users_backup_lock = threading.Lock()
+
+
+def schedule_users_backup(delay=5):
+    """Запускает бэкап пользователей через delay секунд (батчинг)."""
+    global _users_backup_timer
+    with _users_backup_lock:
+        if _users_backup_timer is not None:
+            _users_backup_timer.cancel()
+        _users_backup_timer = threading.Timer(delay, _do_users_backup)
+        _users_backup_timer.daemon = True
+        _users_backup_timer.start()
+
+
+def _do_users_backup():
+    global _users_backup_timer
+    try:
+        GitHubBackup().backup_users(reason='изменение')
+    except Exception as e:
+        logger.warning(f"⚠️ Бэкап пользователей: {e}")
+    with _users_backup_lock:
+        _users_backup_timer = None

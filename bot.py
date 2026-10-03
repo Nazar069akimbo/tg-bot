@@ -83,22 +83,34 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
+    # Загружаем настройки (цены, лимиты) из БД
+    try:
+        from handlers.helpers import load_settings_from_db
+        load_settings_from_db()
+        logger.info("✅ Настройки загружены из БД")
+    except Exception as e:
+        logger.warning(f"⚠️ Настройки: {e}")
+
+    # ===== БЭКАП =====
     def backup_loop():
+        # Первый бэкап БД — при старте
         try:
-            GitHubBackup().backup_all(reason='при старте')
+            GitHubBackup().backup_db(reason='при старте')
+            logger.info("✅ Бэкап БД при старте")
         except Exception as e:
             logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
 
+        # Дальше — каждые 30 минут
         while True:
-            time.sleep(3600)
+            time.sleep(1800)  # 30 минут
             try:
-                GitHubBackup().backup_all(reason='по расписанию (1 час)')
+                GitHubBackup().backup_db(reason='по расписанию (30 мин)')
             except Exception as e:
-                logger.warning(f"⚠️ Ошибка бэкапа: {e}")
+                logger.warning(f"⚠️ Ошибка бэкапа БД: {e}")
 
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
-    logger.info("✅ Бэкап-воркер запущен")
+    logger.info("✅ Бэкап-воркер запущен (БД раз в 30 мин)")
 
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
@@ -114,7 +126,6 @@ async def main():
         types.BotCommand(command="profile", description="👤 Профиль"),
         types.BotCommand(command="prices", description="💰 Цены"),
         types.BotCommand(command="credits", description="🛒 Купить токены"),
-        types.BotCommand(command="memory", description="🧠 Моя память"),
         types.BotCommand(command="remind", description="⏰ Напоминание"),
         types.BotCommand(command="reminders", description="📋 Напоминания"),
         types.BotCommand(command="help", description="❓ Помощь"),

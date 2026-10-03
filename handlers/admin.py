@@ -56,6 +56,7 @@ def get_promocodes_from_db():
         return cursor.fetchall()
 
 
+# ===== СТАТИСТИКА =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     total, total_tokens, premium_users = get_stats()
@@ -79,7 +80,7 @@ async def a_users_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_give_tokens")
 async def a_give_tokens_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_give_tokens"}
-    await safe_edit(callback, "⭐ РАЗДАТЬ ТОКЕНЫ\n\nФормат: ID | кол-во", helpers.admin_kb())
+    await safe_edit(callback, "⭐ РАЗДАТЬ ТОКЕНЫ\n\nФормат: ID | кол-во  или  всем | кол-во", helpers.admin_kb())
     await helpers.safe_answer(callback)
 
 
@@ -150,8 +151,17 @@ async def export_db_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_restore_github")
 async def restore_github_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    await safe_edit(callback, "⏳ Восстанавливаю...", None)
     result = GitHubBackup().restore_latest_backup()
-    await safe_edit(callback, "✅ Восстановлено!" if result else "❌ Ошибка", helpers.admin_kb())
+    if result:
+        from database.db import reload_db_connection
+        reload_db_connection()
+        await safe_edit(callback, "✅ БД восстановлена и перезагружена!", helpers.admin_kb())
+    else:
+        await safe_edit(callback, "❌ Ошибка восстановления", helpers.admin_kb())
     await helpers.safe_answer(callback)
 
 
@@ -243,6 +253,87 @@ async def a_tariff_add_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
+# ===== ЦЕНЫ МОДЕЛЕЙ =====
+@router.callback_query(F.data == "a_model_prices")
+async def a_model_prices_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for model_id, model_name, cost, min_plan in helpers.AVAILABLE_MODELS["text_chat"]:
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"🧠 {model_name} — {cost} ток.",
+                callback_data=f"a_edit_cost|{model_id}"
+            )
+        ])
+    for model_id, model_name, cost, min_plan in helpers.AVAILABLE_MODELS["image_generate"]:
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"🎨 {model_name} — {cost} ток.",
+                callback_data=f"a_edit_cost|{model_id}"
+            )
+        ])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+
+    await safe_edit(callback, "💰 Цены моделей (в токенах)\n\nНажми, чтобы изменить:", kb)
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_edit_cost|"))
+async def a_edit_cost_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    model_id = callback.data.split("|")[1]
+    helpers.user_pages[callback.from_user.id] = {"state": "waiting_model_cost", "model_id": model_id}
+    current = helpers.MODEL_COSTS.get(model_id, 0)
+    await safe_edit(
+        callback,
+        f"💰 Изменение цены: {helpers.MODEL_NAMES.get(model_id, model_id)}\n\n"
+        f"Сейчас: {current} токенов\n\n"
+        f"Введи новое число токенов:",
+        None
+    )
+    await helpers.safe_answer(callback)
+
+
+# ===== ЛИМИТЫ =====
+@router.callback_query(F.data == "a_limits")
+async def a_limits_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"👤 Free — {helpers.DAILY_LIMITS['basic']} ток.", callback_data="a_edit_limit|basic")],
+        [InlineKeyboardButton(text=f"💎 Premium — {helpers.DAILY_LIMITS['premium']} ток.", callback_data="a_edit_limit|premium")],
+        [InlineKeyboardButton(text=f"👑 Premium+ — {helpers.DAILY_LIMITS['premium_plus']} ток.", callback_data="a_edit_limit|premium_plus")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+
+    await safe_edit(callback, "🔢 Дневные лимиты токенов\n\nНажми, чтобы изменить:", kb)
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_edit_limit|"))
+async def a_edit_limit_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    plan = callback.data.split("|")[1]
+    helpers.user_pages[callback.from_user.id] = {"state": "waiting_limit", "plan": plan}
+    current = helpers.DAILY_LIMITS.get(plan, 0)
+    await safe_edit(
+        callback,
+        f"🔢 Лимит для {plan}\n\nСейчас: {current} токенов/день\n\nВведи новое число:",
+        None
+    )
+    await helpers.safe_answer(callback)
+
+
+# ===== АДМИН-ВВОД =====
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
@@ -335,5 +426,34 @@ async def handle_admin_input(message: types.Message):
             await message.answer(f"✅ Добавлено: {name}", reply_markup=helpers.admin_kb())
         except Exception as e:
             await message.answer(f"❌ {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+
+    if state.get("state") == "waiting_model_cost":
+        try:
+            new_cost = int(message.text.strip())
+            model_id = state.get("model_id")
+            helpers.MODEL_COSTS[model_id] = new_cost
+            set_setting(f"model_cost_{model_id}", str(new_cost))
+            for task in ["text_chat", "image_generate"]:
+                models = helpers.AVAILABLE_MODELS.get(task, [])
+                for i, (mid, mname, cost, mplan) in enumerate(models):
+                    if mid == model_id:
+                        models[i] = (mid, mname, new_cost, mplan)
+            await message.answer(f"✅ Цена обновлена: {helpers.MODEL_NAMES.get(model_id)} = {new_cost} токенов", reply_markup=helpers.admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+
+    if state.get("state") == "waiting_limit":
+        try:
+            new_limit = int(message.text.strip())
+            plan = state.get("plan")
+            helpers.DAILY_LIMITS[plan] = new_limit
+            set_setting(f"daily_limit_{plan}", str(new_limit))
+            await message.answer(f"✅ Лимит {plan} = {new_limit} токенов/день", reply_markup=helpers.admin_kb())
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
         helpers.user_pages.pop(user_id, None)
         return

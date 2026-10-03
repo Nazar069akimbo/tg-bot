@@ -11,12 +11,14 @@ DB_PATH = 'data/repsolver.db'
 os.makedirs('data', exist_ok=True)
 
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
-
 DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
 
 _db_queue = queue.Queue()
 _db_thread = None
 _db_running = True
+
+_db_backup_timer = None
+_db_backup_lock = threading.Lock()
 
 
 def _db_worker():
@@ -81,6 +83,41 @@ def db_operation(func):
     def wrapper(*args, **kwargs):
         return _execute_db(func, *args, **kwargs)
     return wrapper
+
+
+def reload_db_connection():
+    """Перезапускает поток БД после восстановления."""
+    global _db_running, _db_thread, _db_queue
+    _db_running = False
+    if _db_thread:
+        _db_thread.join(timeout=2)
+    _db_running = True
+    _db_thread = None
+    _db_queue = queue.Queue()
+    _ensure_db_thread()
+    print("🔄 Поток БД перезапущен")
+
+
+def _schedule_db_backup():
+    """Запускает бэкап БД через 10 сек (батчинг)."""
+    global _db_backup_timer
+    with _db_backup_lock:
+        if _db_backup_timer is not None:
+            _db_backup_timer.cancel()
+        _db_backup_timer = threading.Timer(10, _do_db_backup)
+        _db_backup_timer.daemon = True
+        _db_backup_timer.start()
+
+
+def _do_db_backup():
+    global _db_backup_timer
+    try:
+        from backup import GitHubBackup
+        GitHubBackup().backup_db(reason='изменение токенов')
+    except Exception as e:
+        print(f"⚠️ Бэкап БД: {e}")
+    with _db_backup_lock:
+        _db_backup_timer = None
 
 
 @contextmanager
@@ -346,6 +383,7 @@ def get_tokens(conn, cursor, user_id):
 @db_operation
 def add_tokens(conn, cursor, user_id, amount):
     cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -354,14 +392,14 @@ def spend_tokens(conn, cursor, user_id, amount):
     row = cursor.fetchone()
     if row and row[0] >= amount:
         cursor.execute("UPDATE users SET tokens = tokens - ? WHERE user_id = ?", (amount, user_id))
+        _schedule_db_backup()
         return True
     return False
 
 
-# ===== ДНЕВНЫЕ ЛИМИТЫ (ТОКЕНЫ) =====
+# ===== ДНЕВНЫЕ ЛИМИТЫ =====
 @db_operation
 def get_daily_usage(conn, cursor, user_id):
-    """Возвращает (использовано_токенов, лимит_токенов)."""
     cursor.execute("SELECT daily_requests_used, daily_reset, plan FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
@@ -382,7 +420,6 @@ def get_daily_usage(conn, cursor, user_id):
 
 @db_operation
 def spend_daily_requests(conn, cursor, user_id, amount):
-    """Списывает amount токенов. Возвращает True, если хватило."""
     cursor.execute("SELECT daily_requests_used, plan FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
@@ -448,6 +485,7 @@ def add_referral(conn, cursor, referrer_id, referred_id):
     cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
                    (referrer_id, referred_id, datetime.now().isoformat()))
     cursor.execute("UPDATE users SET tokens = tokens + 20 WHERE user_id = ?", (referrer_id,))
+    _schedule_db_backup()
     return True, "✅ +20 токенов!"
 
 
@@ -473,6 +511,7 @@ def use_promocode(conn, cursor, code, user_id):
     cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
     if promo['bonus_tokens'] > 0:
         cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
+        _schedule_db_backup()
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
 
@@ -510,6 +549,7 @@ def add_premium(conn, cursor, user_id, days, plan, paid=False):
                    (new_date, plan, new_limit, user_id))
     if paid:
         cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
 
 
 @db_operation
