@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import *
-from utils.user_storage import load_profile, set_user_name
+from utils.user_storage import load_profile
 from . import helpers
 import logging
 
@@ -49,7 +49,6 @@ async def start_cmd(message: types.Message):
             if success:
                 await message.answer(msg)
 
-    # Триал — 30 токенов один раз
     if not has_trial(user_id) and get_tokens(user_id) == 0:
         activate_trial(user_id)
         trial_text = "🎁 30 токенов новичку — трать на что хочешь!"
@@ -57,18 +56,18 @@ async def start_cmd(message: types.Message):
         trial_text = ""
 
     tokens = get_tokens(user_id)
-    plan = dict(get_user(user_id)).get("plan", "basic")
+    user = get_user(user_id)
+    plan = dict(user).get("plan", "basic") if user else "basic"
 
-    # Доступные лимиты
-    text_available, text_limit = get_text_tokens_today(user_id)
-    images_used, images_limit = get_week_images_used(user_id)
+    text_avail, text_limit = get_text_tokens_today(user_id)
+    img_used, img_limit = get_week_images_used(user_id)
 
     if tokens > 0:
         balance_line = f"🪙 Токенов: {tokens} (без лимитов)"
     else:
         balance_line = (
-            f"📝 Текст: {text_available}/{text_limit} сегодня\n"
-            f"🎨 Картинок: {images_used}/{images_limit} на этой неделе"
+            f"📝 Текст: {text_avail}/{text_limit} сегодня\n"
+            f"🎨 Картинок: {img_used}/{img_limit} на этой неделе"
         )
 
     text = (

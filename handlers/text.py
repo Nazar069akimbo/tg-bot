@@ -19,7 +19,6 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
-    # === АДМИН-ВВОД ===
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add",
@@ -28,7 +27,6 @@ async def handle_text(message: types.Message):
         await handle_admin_input(message)
         return
 
-    # === ПРОМОКОД ===
     if state.get("state") == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -36,13 +34,11 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === ОТМЕНА ===
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # === ИМЯ ===
     if state.get("state") == "waiting_name":
         set_user_name(user_id, text)
         helpers.user_pages.pop(user_id, None)
@@ -51,18 +47,17 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # === СПРАШИВАТЬ ЛИ МОДЕЛЬ ===
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
         user = get_user(user_id)
         plan = dict(user).get("plan", "basic") if user else "basic"
-        used, limit = get_daily_usage(user_id)
-        balance = limit - used
+        balance = get_tokens(user_id)
+        text_avail, text_limit = get_text_tokens_today(user_id)
         current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
         await message.answer(
-            f"🧠 Выбери модель ({balance}/{limit} токенов):",
+            f"🧠 Выбери модель ({text_avail}/{text_limit}):",
             reply_markup=helpers.model_choice_kb("text_chat", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_model_choice", "pending_text": text}
@@ -72,40 +67,24 @@ async def handle_text(message: types.Message):
 
 
 async def process_text(message: types.Message, user_id: int, text: str, state: dict):
-    user = get_user(user_id)
-    if not user:
-        force_create_user(user_id)
-        user = get_user(user_id)
-    user = dict(user)
-    plan = user.get("plan") or "basic"
+    current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
+    cost = helpers.MODEL_COSTS.get(current_model, 1)
 
-    # === КУПЛЕННЫЕ ТОКЕНЫ — БЕЗ ЛИМИТОВ ===
+    if not helpers.can_use_model(user_id, current_model):
+        await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} доступна только на Premium или с токенами.\n\nОформи: /credits")
+        return
+
     balance = get_tokens(user_id)
 
     if balance > 0:
-        current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
-        cost = helpers.MODEL_COSTS.get(current_model, 1)
-
-        user_level = helpers.PLAN_LEVEL.get(plan, 0)
-        required = helpers.MODEL_MIN_LEVEL.get(current_model, 0)
-        if required > user_level:
-            await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} доступна только на Premium.\nОформи: /credits")
-            return
-
         if balance < cost:
             await message.answer(f"❌ Не хватает токенов: нужно {cost}, у тебя {balance}.\n\nПополни: /credits")
             return
-
         spend_tokens(user_id, cost)
-
     else:
-        # === БЕСПЛАТНЫЙ ЛИМИТ: 10 текстов/день ===
         available, limit = get_text_tokens_today(user_id)
         if available <= 0:
-            await message.answer(
-                f"🔒 Лимит текстовых запросов на сегодня исчерпан (10/10).\n\n"
-                f"💎 Купи токены, чтобы продолжить: /credits"
-            )
+            await message.answer(f"🔒 Лимит текстовых запросов на сегодня исчерпан.\n\n💎 Купи токены: /credits")
             return
         spend_text_token(user_id)
 
@@ -210,13 +189,8 @@ async def pick_model_cb(callback: types.CallbackQuery):
     task = parts[1]
     model_id = parts[2]
 
-    user = get_user(callback.from_user.id)
-    plan = dict(user).get("plan", "basic") if user else "basic"
-    user_level = helpers.PLAN_LEVEL.get(plan, 0)
-    required = helpers.MODEL_MIN_LEVEL.get(model_id, 0)
-
-    if required > user_level:
-        await helpers.safe_answer(callback, "🔒 Модель доступна только на Premium", show_alert=True)
+    if not helpers.can_use_model(callback.from_user.id, model_id):
+        await helpers.safe_answer(callback, "🔒 Модель доступна только на Premium или с токенами", show_alert=True)
         return
 
     set_model_setting(task, model_id)
@@ -293,18 +267,18 @@ async def change_model_cb(callback: types.CallbackQuery):
 async def change_model_text_cb(callback: types.CallbackQuery):
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
-    used, limit = get_daily_usage(callback.from_user.id)
-    balance = limit - used
+    balance = get_tokens(callback.from_user.id)
+    text_avail, text_limit = get_text_tokens_today(callback.from_user.id)
     current = get_model_setting("text_chat") or "gpt-4.1-nano"
 
     try:
         await callback.message.edit_text(
-            f"🧠 Выбери текстовую модель ({balance}/{limit} токенов):",
+            f"🧠 Выбери текстовую модель ({text_avail}/{text_limit}):",
             reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
         )
     except Exception:
         await callback.message.answer(
-            f"🧠 Выбери текстовую модель ({balance}/{limit} токенов):",
+            f"🧠 Выбери текстовую модель ({text_avail}/{text_limit}):",
             reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
         )
     await helpers.safe_answer(callback)
@@ -314,18 +288,18 @@ async def change_model_text_cb(callback: types.CallbackQuery):
 async def change_model_image_cb(callback: types.CallbackQuery):
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
-    used, limit = get_daily_usage(callback.from_user.id)
-    balance = limit - used
+    balance = get_tokens(callback.from_user.id)
+    img_used, img_limit = get_week_images_used(callback.from_user.id)
     current = get_model_setting("image_generate") or "flux-schnell"
 
     try:
         await callback.message.edit_text(
-            f"🎨 Выбери модель для картинок ({balance}/{limit} токенов):",
+            f"🎨 Выбери модель для картинок ({img_used}/{img_limit}):",
             reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
         )
     except Exception:
         await callback.message.answer(
-            f"🎨 Выбери модель для картинок ({balance}/{limit} токенов):",
+            f"🎨 Выбери модель для картинок ({img_used}/{img_limit}):",
             reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
         )
     await helpers.safe_answer(callback)
