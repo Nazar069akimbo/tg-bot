@@ -12,6 +12,8 @@ os.makedirs('data', exist_ok=True)
 
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "3"))
 DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
+DAILY_TEXT_LIMITS = {"basic": 10, "premium": 100, "premium_plus": 300}
+DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 9999, "premium_plus": 9999}
 
 _db_queue = queue.Queue()
 _db_thread = None
@@ -86,7 +88,6 @@ def db_operation(func):
 
 
 def reload_db_connection():
-    """Перезапускает поток БД после восстановления."""
     global _db_running, _db_thread, _db_queue
     _db_running = False
     if _db_thread:
@@ -99,7 +100,6 @@ def reload_db_connection():
 
 
 def _schedule_db_backup():
-    """Запускает бэкап БД через 10 сек (батчинг)."""
     global _db_backup_timer
     with _db_backup_lock:
         if _db_backup_timer is not None:
@@ -153,6 +153,9 @@ def init_db():
             premium_until TEXT,
             daily_requests INTEGER DEFAULT 30,
             daily_requests_used INTEGER DEFAULT 0,
+            daily_images_used INTEGER DEFAULT 0,
+            week_images_used INTEGER DEFAULT 0,
+            week_start TEXT,
             daily_reset TEXT,
             paid_premium INTEGER DEFAULT 0
         )
@@ -330,6 +333,9 @@ def migrate_db():
         for col, typ, default in [
             ("daily_requests", "INTEGER", "30"),
             ("daily_requests_used", "INTEGER", "0"),
+            ("daily_images_used", "INTEGER", "0"),
+            ("week_images_used", "INTEGER", "0"),
+            ("week_start", "TEXT", None),
             ("daily_reset", "TEXT", None),
         ]:
             try:
@@ -397,40 +403,80 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
-# ===== ДНЕВНЫЕ ЛИМИТЫ =====
+# ===== ЛИМИТЫ =====
 @db_operation
-def get_daily_usage(conn, cursor, user_id):
-    cursor.execute("SELECT daily_requests_used, daily_reset, plan FROM users WHERE user_id = ?", (user_id,))
+def get_text_tokens_today(conn, cursor, user_id):
+    cursor.execute("SELECT plan, daily_requests_used, daily_reset, tokens FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
-        return 0, 30
-    used = row[0] or 0
-    last_reset = row[1]
-    plan = row[2] or "basic"
-
-    limit = DAILY_LIMITS.get(plan, 30)
-
+        return 0, 10
+    plan = row[0] or "basic"
+    used = row[1] or 0
+    last_reset = row[2]
+    balance = row[3] or 0
+    if balance > 0:
+        return balance, 9999
     today = datetime.now().date().isoformat()
     if last_reset != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
-        return 0, limit
-
-    return used, limit
+        used = 0
+    limit = DAILY_TEXT_LIMITS.get(plan, 10)
+    return max(0, limit - used), limit
 
 
 @db_operation
-def spend_daily_requests(conn, cursor, user_id, amount):
-    cursor.execute("SELECT daily_requests_used, plan FROM users WHERE user_id = ?", (user_id,))
+def spend_text_token(conn, cursor, user_id):
+    today = datetime.now().date().isoformat()
+    cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + 1, daily_reset = ? WHERE user_id = ?", (today, user_id))
+
+
+@db_operation
+def get_week_images_used(conn, cursor, user_id):
+    cursor.execute("SELECT plan, week_images_used, week_start, tokens FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        return 0, 2
+    plan = row[0] or "basic"
+    used = row[1] or 0
+    week_start = row[2]
+    balance = row[3] or 0
+    if balance > 0:
+        return used, 9999
+    now = datetime.now()
+    monday = (now - timedelta(days=now.weekday())).date().isoformat()
+    if week_start != monday:
+        cursor.execute("UPDATE users SET week_images_used = 0, week_start = ? WHERE user_id = ?", (monday, user_id))
+        used = 0
+    limits = DAILY_IMAGE_LIMITS
+    return used, limits.get(plan, 2)
+
+
+@db_operation
+def use_week_image(conn, cursor, user_id):
+    now = datetime.now()
+    monday = (now - timedelta(days=now.weekday())).date().isoformat()
+    cursor.execute("UPDATE users SET week_images_used = week_images_used + 1, week_start = ? WHERE user_id = ?", (monday, user_id))
+
+
+# ===== ТРИАЛ =====
+@db_operation
+def has_trial(conn, cursor, user_id):
+    cursor.execute("SELECT trial_start, trial_active FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
         return False
-    used = row[0] or 0
-    plan = row[1] or "basic"
-    limit = DAILY_LIMITS.get(plan, 30)
-    if used + amount > limit:
+    trial_start = row[0]
+    trial_active = row[1] or 0
+    if not trial_start or not trial_active:
         return False
-    cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + ? WHERE user_id = ?", (amount, user_id))
-    return True
+    start_date = datetime.fromisoformat(trial_start)
+    return (datetime.now() - start_date).days < 30
+
+
+@db_operation
+def activate_trial(conn, cursor, user_id):
+    cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 30 WHERE user_id = ?",
+                   (datetime.now().isoformat(), user_id))
 
 
 # ===== КАРТИНКИ =====
@@ -451,27 +497,7 @@ def get_last_image(conn, cursor, user_id):
     return dict(row) if row else None
 
 
-# ===== ТРИАЛ / РЕФЕРАЛЫ / ПРОМОКОДЫ =====
-@db_operation
-def has_trial(conn, cursor, user_id):
-    cursor.execute("SELECT trial_start, trial_active FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        return False
-    trial_start = row[0]
-    trial_active = row[1] or 0
-    if not trial_start or not trial_active:
-        return False
-    start_date = datetime.fromisoformat(trial_start)
-    return (datetime.now() - start_date).days < 3
-
-
-@db_operation
-def activate_trial(conn, cursor, user_id):
-    cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 20 WHERE user_id = ?",
-                   (datetime.now().isoformat(), user_id))
-
-
+# ===== РЕФЕРАЛЫ =====
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
     if referrer_id == referred_id:
@@ -495,8 +521,10 @@ def get_referral_count(conn, cursor, user_id):
     return cursor.fetchone()[0] or 0
 
 
+# ===== ПРОМОКОДЫ =====
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
+    code = code.strip().upper()
     cursor.execute("SELECT id, bonus_tokens, max_uses, used FROM promocodes WHERE code = ? AND expires_at > datetime('now')", (code,))
     promo = cursor.fetchone()
     if not promo:
@@ -515,7 +543,7 @@ def use_promocode(conn, cursor, code, user_id):
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
 
-# ===== ПЛАТЕЖИ / ПРЕМИУМ / АДМИНЫ =====
+# ===== ПЛАТЕЖИ =====
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",

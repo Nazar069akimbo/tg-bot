@@ -20,8 +20,9 @@ def main_menu():
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders")],
-        [InlineKeyboardButton(text="⚙️ Сменить модель", callback_data="change_model")],
+        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders"),
+         InlineKeyboardButton(text="⚙️ Сменить модель", callback_data="change_model")],
+        [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="promo_use")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
         [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
@@ -115,6 +116,8 @@ MODEL_COSTS = {
 MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
 
 DAILY_LIMITS = {"basic": 30, "premium": 100, "premium_plus": 300}
+DAILY_TEXT_LIMITS = {"basic": 10, "premium": 100, "premium_plus": 300}
+DAILY_IMAGE_LIMITS = {"basic": 2, "premium": 9999, "premium_plus": 9999}
 
 PLAN_LEVEL = {"basic": 0, "premium": 1, "premium_plus": 2}
 
