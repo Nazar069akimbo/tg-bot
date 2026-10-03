@@ -56,7 +56,6 @@ def get_promocodes_from_db():
         return cursor.fetchall()
 
 
-# ===== СТАТИСТИКА =====
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
     total, total_tokens, premium_users = get_stats()
@@ -154,14 +153,28 @@ async def restore_github_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    await safe_edit(callback, "⏳ Восстанавливаю...", None)
+    await safe_edit(callback, "⏳ Восстанавливаю БД...", None)
     result = GitHubBackup().restore_latest_backup()
     if result:
         from database.db import reload_db_connection
         reload_db_connection()
-        await safe_edit(callback, "✅ БД восстановлена и перезагружена!", helpers.admin_kb())
+        await safe_edit(callback, "✅ БД восстановлена!", helpers.admin_kb())
     else:
-        await safe_edit(callback, "❌ Ошибка восстановления", helpers.admin_kb())
+        await safe_edit(callback, "❌ Ошибка", helpers.admin_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "a_restore_users")
+async def restore_users_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    await safe_edit(callback, "⏳ Восстанавливаю пользователей...", None)
+    result = GitHubBackup().restore_users()
+    if result:
+        await safe_edit(callback, "✅ Пользователи восстановлены!", helpers.admin_kb())
+    else:
+        await safe_edit(callback, "❌ Ошибка", helpers.admin_kb())
     await helpers.safe_answer(callback)
 
 
@@ -199,7 +212,6 @@ async def a_db_status_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ===== ТАРИФЫ =====
 @router.callback_query(F.data == "a_tariffs")
 async def a_tariffs_cb(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -253,30 +265,21 @@ async def a_tariff_add_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ===== ЦЕНЫ МОДЕЛЕЙ =====
 @router.callback_query(F.data == "a_model_prices")
 async def a_model_prices_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for model_id, model_name, cost, min_plan in helpers.AVAILABLE_MODELS["text_chat"]:
         kb.inline_keyboard.append([
-            InlineKeyboardButton(
-                text=f"🧠 {model_name} — {cost} ток.",
-                callback_data=f"a_edit_cost|{model_id}"
-            )
+            InlineKeyboardButton(text=f"🧠 {model_name} — {cost} ток.", callback_data=f"a_edit_cost|{model_id}")
         ])
     for model_id, model_name, cost, min_plan in helpers.AVAILABLE_MODELS["image_generate"]:
         kb.inline_keyboard.append([
-            InlineKeyboardButton(
-                text=f"🎨 {model_name} — {cost} ток.",
-                callback_data=f"a_edit_cost|{model_id}"
-            )
+            InlineKeyboardButton(text=f"🎨 {model_name} — {cost} ток.", callback_data=f"a_edit_cost|{model_id}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-
     await safe_edit(callback, "💰 Цены моделей (в токенах)\n\nНажми, чтобы изменить:", kb)
     await helpers.safe_answer(callback)
 
@@ -299,21 +302,18 @@ async def a_edit_cost_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ===== ЛИМИТЫ =====
 @router.callback_query(F.data == "a_limits")
 async def a_limits_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👤 Free — {helpers.DAILY_LIMITS['basic']} ток.", callback_data="a_edit_limit|basic")],
-        [InlineKeyboardButton(text=f"💎 Premium — {helpers.DAILY_LIMITS['premium']} ток.", callback_data="a_edit_limit|premium")],
-        [InlineKeyboardButton(text=f"👑 Premium+ — {helpers.DAILY_LIMITS['premium_plus']} ток.", callback_data="a_edit_limit|premium_plus")],
+        [InlineKeyboardButton(text=f"👤 Free — {helpers.DAILY_TEXT_LIMITS['basic']} текст / {helpers.DAILY_IMAGE_LIMITS['basic']} карт", callback_data="a_edit_limit|basic")],
+        [InlineKeyboardButton(text=f"💎 Premium — {helpers.DAILY_TEXT_LIMITS['premium']} текст / {helpers.DAILY_IMAGE_LIMITS['premium']} карт", callback_data="a_edit_limit|premium")],
+        [InlineKeyboardButton(text=f"👑 Premium+ — {helpers.DAILY_TEXT_LIMITS['premium_plus']} текст / {helpers.DAILY_IMAGE_LIMITS['premium_plus']} карт", callback_data="a_edit_limit|premium_plus")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
-
-    await safe_edit(callback, "🔢 Дневные лимиты токенов\n\nНажми, чтобы изменить:", kb)
+    await safe_edit(callback, "🔢 Лимиты токенов\n\nНажми, чтобы изменить:", kb)
     await helpers.safe_answer(callback)
 
 
@@ -324,16 +324,18 @@ async def a_edit_limit_cb(callback: types.CallbackQuery):
         return
     plan = callback.data.split("|")[1]
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_limit", "plan": plan}
-    current = helpers.DAILY_LIMITS.get(plan, 0)
+    current_text = helpers.DAILY_TEXT_LIMITS.get(plan, 10)
+    current_img = helpers.DAILY_IMAGE_LIMITS.get(plan, 2)
     await safe_edit(
         callback,
-        f"🔢 Лимит для {plan}\n\nСейчас: {current} токенов/день\n\nВведи новое число:",
+        f"🔢 Лимит для {plan}\n\n"
+        f"Сейчас: текст {current_text}/день, картинки {current_img}/нед\n\n"
+        f"Введи через |: текст | картинки",
         None
     )
     await helpers.safe_answer(callback)
 
 
-# ===== АДМИН-ВВОД =====
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
@@ -448,11 +450,15 @@ async def handle_admin_input(message: types.Message):
 
     if state.get("state") == "waiting_limit":
         try:
-            new_limit = int(message.text.strip())
+            parts = [p.strip() for p in message.text.split("|")]
+            text_limit = int(parts[0])
+            image_limit = int(parts[1]) if len(parts) > 1 else 2
             plan = state.get("plan")
-            helpers.DAILY_LIMITS[plan] = new_limit
-            set_setting(f"daily_limit_{plan}", str(new_limit))
-            await message.answer(f"✅ Лимит {plan} = {new_limit} токенов/день", reply_markup=helpers.admin_kb())
+            helpers.DAILY_TEXT_LIMITS[plan] = text_limit
+            helpers.DAILY_IMAGE_LIMITS[plan] = image_limit
+            set_setting(f"daily_text_limit_{plan}", str(text_limit))
+            set_setting(f"daily_image_limit_{plan}", str(image_limit))
+            await message.answer(f"✅ Лимит {plan}: текст {text_limit}/день, картинки {image_limit}/нед", reply_markup=helpers.admin_kb())
         except Exception as e:
             await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
         helpers.user_pages.pop(user_id, None)

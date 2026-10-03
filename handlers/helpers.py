@@ -55,11 +55,12 @@ def admin_kb():
         [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"),
          InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
         [InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github"),
-         InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
-        [InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs"),
-         InlineKeyboardButton(text="💰 Цены моделей", callback_data="a_model_prices")],
-        [InlineKeyboardButton(text="🔢 Лимиты токенов", callback_data="a_limits"),
-         InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
+         InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users")],
+        [InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes"),
+         InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs")],
+        [InlineKeyboardButton(text="💰 Цены моделей", callback_data="a_model_prices"),
+         InlineKeyboardButton(text="🔢 Лимиты токенов", callback_data="a_limits")],
+        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 
@@ -131,7 +132,6 @@ MODEL_MIN_LEVEL = {
 
 
 def can_use_model(user_id, model_id):
-    """Проверяет, может ли пользователь использовать модель."""
     balance = get_tokens(user_id)
     if balance > 0:
         return True
@@ -152,14 +152,12 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
         mark = "✅ " if model_id == current else ""
         cost_str = f" ({cost} ток.)"
         required_level = MODEL_MIN_LEVEL.get(model_id, 0)
-
         if has_tokens:
             icon = ""
         elif required_level > user_level:
             icon = " 🔒"
         else:
             icon = ""
-
         kb.inline_keyboard.append([
             InlineKeyboardButton(
                 text=f"{mark}{model_name}{cost_str}{icon}",
@@ -246,8 +244,11 @@ def load_settings_from_db():
                         if mid == model_id:
                             models[i] = (mid, mname, int(saved), mplan)
         for plan in ["basic", "premium", "premium_plus"]:
-            saved = get_setting(f"daily_limit_{plan}")
-            if saved:
-                DAILY_LIMITS[plan] = int(saved)
+            saved_text = get_setting(f"daily_text_limit_{plan}")
+            if saved_text:
+                DAILY_TEXT_LIMITS[plan] = int(saved_text)
+            saved_img = get_setting(f"daily_image_limit_{plan}")
+            if saved_img:
+                DAILY_IMAGE_LIMITS[plan] = int(saved_img)
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")

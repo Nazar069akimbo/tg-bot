@@ -73,9 +73,8 @@ async def reminder_worker():
 
 
 async def subscription_worker():
-    """Напоминает об окончании подписки за 3 дня. Раз в 24 часа."""
     while True:
-        await asyncio.sleep(86400)  # раз в 24 часа
+        await asyncio.sleep(86400)
         try:
             subs = get_expiring_subscriptions()
             for row in subs:
@@ -116,6 +115,13 @@ async def main():
         logger.info("✅ Настройки загружены из БД")
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
+
+    # Восстанавливаем папки пользователей из GitHub
+    try:
+        GitHubBackup().restore_users()
+        logger.info("✅ Пользователи восстановлены из GitHub")
+    except Exception as e:
+        logger.warning(f"⚠️ Восстановление юзеров: {e}")
 
     def backup_loop():
         try:
