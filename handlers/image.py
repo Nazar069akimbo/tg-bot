@@ -14,8 +14,6 @@ PROMPT_MODEL = "gpt-4.1-nano"
 
 
 async def generate_image(message: types.Message, prompt=None, user_id: int = None):
-    logger.info(f"🖼️ generate_image ВЫЗВАН: user_id={user_id}")
-
     if user_id is None:
         user_id = message.from_user.id
     if not prompt:
@@ -26,42 +24,40 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     if ask_model:
         user = get_user(user_id)
         plan = dict(user).get("plan", "basic") if user else "basic"
-        used, limit = get_daily_usage(user_id)
-        balance = limit - used
+        balance = get_tokens(user_id)
+        img_used, img_limit = get_week_images_used(user_id)
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
         await message.answer(
-            f"🎨 Выбери модель ({balance}/{limit} токенов):",
+            f"🎨 Выбери модель ({img_used}/{img_limit}):",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_image_model", "pending_prompt": prompt}
         return
 
-    user = get_user(user_id)
-    plan = dict(user).get("plan", "basic") if user else "basic"
     current_model = get_model_setting("image_generate") or "flux-schnell"
     image_cost = helpers.MODEL_COSTS.get(current_model, 10)
 
-    user_level = helpers.PLAN_LEVEL.get(plan, 0)
-    required = helpers.MODEL_MIN_LEVEL.get(current_model, 0)
-
-    if required > user_level:
-        await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} только на Premium.\nОформи: /credits")
+    if not helpers.can_use_model(user_id, current_model):
+        await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} доступна только на Premium или с токенами.\n\nОформи: /credits")
         return
 
-    used, limit = get_daily_usage(user_id)
-    if used + image_cost > limit:
-        await message.answer(
-            f"🔒 Не хватает токенов: {used}/{limit}.\n"
-            f"Эта модель стоит {image_cost} токенов.\n\n"
-            f"💎 Premium даёт 100 токенов/день: /credits"
-        )
-        return
+    balance = get_tokens(user_id)
+
+    if balance > 0:
+        if balance < image_cost:
+            await message.answer(f"❌ Не хватает токенов: нужно {image_cost}, у тебя {balance}.\n\nПополни: /credits")
+            return
+        spend_tokens(user_id, image_cost)
+    else:
+        img_used, img_limit = get_week_images_used(user_id)
+        if img_used >= img_limit:
+            await message.answer(f"🔒 Лимит картинок на неделю исчерпан ({img_used}/{img_limit}).\n\n💎 Купи токены: /credits")
+            return
+        use_week_image(user_id)
 
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
-
-    spend_daily_requests(user_id, image_cost)
 
     status_msg = await message.answer("🎨 Рисую картинку...")
 
@@ -83,7 +79,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
 
-        logger.info(f"🖼️ Запрос к Replicate: model={current_model}")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -94,8 +89,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             },
             timeout=120
         )
-
-        logger.info(f"🖼️ Статус: {img_resp.status_code}")
 
         img_data = None
         if img_resp.status_code == 200:
@@ -126,8 +119,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 img_data = output.getvalue()
             except Exception as e:
                 logger.warning(f"⚠️ Водяной знак: {e}")
-
-            new_tokens = get_tokens(user_id)
 
             image_id = None
             try:
