@@ -49,21 +49,33 @@ async def start_cmd(message: types.Message):
             if success:
                 await message.answer(msg)
 
+    # Триал — 30 токенов один раз
     if not has_trial(user_id) and get_tokens(user_id) == 0:
         activate_trial(user_id)
-        trial_text = "🎁 20 токенов бесплатно на 3 дня!"
+        trial_text = "🎁 30 токенов новичку — трать на что хочешь!"
     else:
         trial_text = ""
 
     tokens = get_tokens(user_id)
-    used, limit = get_daily_usage(user_id)
-    left = limit - used
+    plan = dict(get_user(user_id)).get("plan", "basic")
+
+    # Доступные лимиты
+    text_available, text_limit = get_text_tokens_today(user_id)
+    images_used, images_limit = get_week_images_used(user_id)
+
+    if tokens > 0:
+        balance_line = f"🪙 Токенов: {tokens} (без лимитов)"
+    else:
+        balance_line = (
+            f"📝 Текст: {text_available}/{text_limit} сегодня\n"
+            f"🎨 Картинок: {images_used}/{images_limit} на этой неделе"
+        )
 
     text = (
         f"✨ Vertex AI\n\n"
         f"👋 Привет, {name}!\n"
-        f"🪙 Токенов: {tokens}\n"
-        f"📊 Дневной лимит: {left}/{limit}\n\n"
+        f"💳 Тариф: {plan}\n"
+        f"{balance_line}\n\n"
         f"{trial_text}\n\n"
         f"💬 Напиши, что хочешь!\n\n"
         f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"
