@@ -387,6 +387,7 @@ def migrate_db():
 
 
 def restore_from_user_folders():
+    """Восстанавливает токены из папок пользователей. Перезаписывает, если в папке больше."""
     base = 'data/users'
     if not os.path.exists(base):
         return 0
@@ -413,12 +414,7 @@ def restore_from_user_folders():
             except Exception:
                 continue
 
-            cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
-            row = cursor.fetchone()
-
-            if row and row[1] and row[1] > 0:
-                continue
-
+            # Читаем токены из папки СНАЧАЛА
             tokens = 0
             plan = "basic"
             premium_until = None
@@ -432,6 +428,14 @@ def restore_from_user_folders():
                         premium_until = data.get("premium_until")
                 except Exception:
                     pass
+
+            # Проверяем, что в БД
+            cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+
+            # Если в БД токенов больше или столько же — не трогаем
+            if row and row[1] and tokens and row[1] >= tokens:
+                continue
 
             name = None
             if os.path.exists(profile_file):
@@ -455,6 +459,7 @@ def restore_from_user_folders():
                       datetime.now().date().isoformat()))
 
             restored += 1
+            print(f"✅ Восстановлен {name or user_id}: {tokens} токенов")
 
     return restored
 
