@@ -1,13 +1,14 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from database.db import *
-from utils.user_storage import load_profile
+from utils.user_storage import load_profile, set_user_name
 from . import helpers
-import logging
+import os, logging
 
 router = Router()
 logger = logging.getLogger(__name__)
-ADMIN_EMAIL = "mychannell@gmail.com"
+ADMIN_EMAIL = "mychannell069@gmail.com"
+ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
 
 
 @router.message(Command("start"))
@@ -23,6 +24,9 @@ async def start_cmd(message: types.Message):
     force_create_user(user_id, username)
     profile = load_profile(user_id)
     name = profile.get("name") if profile else None
+
+    # Проверяем — новый ли юзер
+    is_new = not has_trial(user_id) and get_tokens(user_id) == 0
 
     if not name:
         helpers.user_pages[user_id] = {"state": "waiting_name"}
@@ -49,7 +53,8 @@ async def start_cmd(message: types.Message):
             if success:
                 await message.answer(msg)
 
-    if not has_trial(user_id) and get_tokens(user_id) == 0:
+    # Триал
+    if is_new:
         activate_trial(user_id)
         trial_text = "🎁 30 токенов новичку — трать на что хочешь!"
     else:
@@ -80,3 +85,21 @@ async def start_cmd(message: types.Message):
         f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"
     )
     await message.answer(text, reply_markup=helpers.main_menu())
+
+    # Уведомление админу о новом юзере
+    if is_new:
+        try:
+            notif_text = (
+                f"🆕 **Новый пользователь!**\n\n"
+                f"👤 {message.from_user.full_name}\n"
+                f"🔗 @{message.from_user.username or '—'}\n"
+                f"🆔 {user_id}"
+            )
+            await message.bot.send_message(ADMIN_ID, notif_text)
+            logger.info(f"📩 Уведомление о новом юзере {user_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Не отправил уведомление: {e}")
+            try:
+                add_admin_notification(notif_text, user_id)
+            except Exception:
+                pass

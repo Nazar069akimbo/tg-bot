@@ -1,5 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from datetime import datetime
 from database.db import *
 from utils.user_storage import load_profile, load_meta, clear_memory
 from . import helpers
@@ -22,14 +23,18 @@ async def show_profile(message: types.Message, user_id: int = None):
     name = profile.get("name") or "—"
     tokens = user.get("tokens") or 0
     plan = user.get("plan") or "basic"
+    text_avail, text_limit = get_text_tokens_today(user_id)
+    img_used, img_limit = get_week_images_used(user_id)
     referral_count = get_referral_count(user_id)
 
     text = (
-        f"👤 Профиль\n\n"
+        f"👤 **Профиль**\n\n"
         f"🪪 Имя: {name}\n"
         f"🆔 ID: {user_id}\n"
         f"💳 Тариф: {plan}\n\n"
         f"🪙 Токенов: {tokens}\n"
+        f"📝 Текст: {text_avail}/{text_limit}\n"
+        f"🎨 Картинок: {img_used}/{img_limit}\n"
         f"👥 Рефералов: {referral_count}\n"
         f"🖼️ Картинок: {meta.get('images_count', 0)}"
     )

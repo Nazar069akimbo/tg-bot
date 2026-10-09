@@ -38,7 +38,14 @@ async def handle_voice(message: types.Message):
         result = smart_reply(user_id, text)
         answer = result.get("reply", "Не понял.")
         await message.answer(answer)
-        add_to_context(user_id, text)
+
+        # Добавляем в историю
+        try:
+            from utils.user_storage import append_history
+            append_history(user_id, "user", text)
+            append_history(user_id, "assistant", answer)
+        except Exception as e:
+            logger.warning(f"⚠️ История: {e}")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка голосового: {e}")

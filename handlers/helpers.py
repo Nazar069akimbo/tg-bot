@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-ADMIN_EMAIL = "mychannell@gmail.com"
+ADMIN_EMAIL = "mychannell069@gmail.com"
 
 user_pages = {}
 user_model = {}
@@ -22,7 +22,8 @@ def main_menu():
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders"),
          InlineKeyboardButton(text="⚙️ Сменить модель", callback_data="change_model")],
-        [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="promo_use")],
+        [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="promo_use"),
+         InlineKeyboardButton(text="💬 Поддержка", callback_data="support")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
         [InlineKeyboardButton(text="🛡️ Админ", callback_data="admin_panel")]
@@ -47,19 +48,19 @@ def profile_kb():
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
-         InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users")],
-        [InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens"),
+         InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
+        [InlineKeyboardButton(text="🔍 Поиск юзера", callback_data="a_search_users"),
+         InlineKeyboardButton(text="🎯 Фильтры", callback_data="a_filter_users")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
+         InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
+        [InlineKeyboardButton(text="📩 Тикеты", callback_data="a_support_tickets"),
          InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
         [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"),
          InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
-        [InlineKeyboardButton(text="📩 Обращения", callback_data="a_messages"),
-         InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
-        [InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github"),
-         InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users")],
-        [InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes"),
-         InlineKeyboardButton(text="🎫 Тарифы", callback_data="a_tariffs")],
-        [InlineKeyboardButton(text="💰 Цены моделей", callback_data="a_model_prices"),
-         InlineKeyboardButton(text="🔢 Лимиты токенов", callback_data="a_limits")],
+        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
+         InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github")],
+        [InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users"),
+         InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
         [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])

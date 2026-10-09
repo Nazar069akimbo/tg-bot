@@ -19,14 +19,23 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
+    # === АДМИН-ВВОД ===
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add",
-                              "waiting_model_cost", "waiting_limit"]:
+                              "waiting_model_cost", "waiting_limit",
+                              "waiting_user_search", "waiting_admin_reply"]:
         from .admin import handle_admin_input
         await handle_admin_input(message)
         return
 
+    # === ПОДДЕРЖКА ===
+    if state.get("state") == "waiting_support_message":
+        from .support import handle_support_message
+        await handle_support_message(message)
+        return
+
+    # === ПРОМОКОД ===
     if state.get("state") == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -34,11 +43,13 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
+    # === ОТМЕНА ===
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
+    # === ИМЯ ===
     if state.get("state") == "waiting_name":
         set_user_name(user_id, text)
         helpers.user_pages.pop(user_id, None)
@@ -47,6 +58,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
+    # === СПРАШИВАТЬ ЛИ МОДЕЛЬ ===
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
@@ -200,7 +212,6 @@ async def pick_model_cb(callback: types.CallbackQuery):
     elif task == "text_chat":
         set_setting(f"ask_model_{callback.from_user.id}", "no")
 
-    # Сохраняем настройки в папку
     try:
         save_user_settings(
             callback.from_user.id,

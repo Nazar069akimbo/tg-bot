@@ -292,6 +292,38 @@ def init_db():
         )
         ''')
 
+        # Поддержка
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS support_tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            status TEXT DEFAULT 'open',
+            created_at TEXT,
+            updated_at TEXT
+        )
+        ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS support_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER,
+            sender TEXT,
+            text TEXT,
+            created_at TEXT
+        )
+        ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT,
+            user_id INTEGER,
+            sent INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        ''')
+
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -356,7 +388,6 @@ def migrate_db():
 
 
 def restore_from_user_folders():
-    """Восстанавливает токены и план из папок пользователей."""
     base = 'data/users'
     if not os.path.exists(base):
         return 0
@@ -425,7 +456,6 @@ def restore_from_user_folders():
                       datetime.now().date().isoformat()))
 
             restored += 1
-            print(f"✅ Восстановлен {name or user_id}: {tokens} токенов, {plan}")
 
     return restored
 
@@ -501,6 +531,7 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
+# ===== ЛИМИТЫ =====
 @db_operation
 def get_text_tokens_today(conn, cursor, user_id):
     cursor.execute("SELECT plan, daily_requests_used, daily_reset, tokens FROM users WHERE user_id = ?", (user_id,))
@@ -573,6 +604,7 @@ def activate_trial(conn, cursor, user_id):
                    (datetime.now().isoformat(), user_id))
 
 
+# ===== КАРТИНКИ =====
 @db_operation
 def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data):
     session_id = secrets.token_hex(8)
@@ -590,6 +622,7 @@ def get_last_image(conn, cursor, user_id):
     return dict(row) if row else None
 
 
+# ===== РЕФЕРАЛЫ =====
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
     if referrer_id == referred_id:
@@ -604,21 +637,6 @@ def add_referral(conn, cursor, referrer_id, referred_id):
                    (referrer_id, referred_id, datetime.now().isoformat()))
     cursor.execute("UPDATE users SET tokens = tokens + 20 WHERE user_id = ?", (referrer_id,))
     _schedule_db_backup()
-
-    try:
-        from utils.user_storage import save_user_referrals, save_user_tokens
-        cursor.execute("SELECT referred_id, joined FROM referrals WHERE referrer_id = ?", (referrer_id,))
-        rows = cursor.fetchall()
-        referrals = [{"referred_id": r[0], "joined": r[1]} for r in rows]
-        save_user_referrals(referrer_id, referrals)
-
-        cursor.execute("SELECT tokens, plan, premium_until FROM users WHERE user_id = ?", (referrer_id,))
-        u = cursor.fetchone()
-        if u:
-            save_user_tokens(referrer_id, u[0], u[1], u[2])
-    except Exception as e:
-        print(f"⚠️ save_user_referrals: {e}")
-
     return True, "✅ +20 токенов!"
 
 
@@ -628,6 +646,7 @@ def get_referral_count(conn, cursor, user_id):
     return cursor.fetchone()[0] or 0
 
 
+# ===== ПРОМОКОДЫ =====
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
@@ -646,49 +665,21 @@ def use_promocode(conn, cursor, code, user_id):
     if promo['bonus_tokens'] > 0:
         cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
         _schedule_db_backup()
-        try:
-            from utils.user_storage import save_user_tokens
-            cursor.execute("SELECT tokens, plan, premium_until FROM users WHERE user_id = ?", (user_id,))
-            u = cursor.fetchone()
-            if u:
-                save_user_tokens(user_id, u[0], u[1], u[2])
-        except Exception as e:
-            print(f"⚠️ save_user_tokens: {e}")
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
 
+# ===== ПЛАТЕЖИ =====
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
                    (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
-    try:
-        from utils.user_storage import save_user_payments
-        cursor.execute("SELECT stars_amount, plan, status, timestamp FROM payments WHERE user_id = ?", (user_id,))
-        rows = cursor.fetchall()
-        payments = [{"stars": r[0], "plan": r[1], "status": r[2], "timestamp": r[3]} for r in rows]
-        save_user_payments(user_id, payments)
-    except Exception as e:
-        print(f"⚠️ save_user_payments: {e}")
 
 
 @db_operation
 def complete_payment(conn, cursor, payload):
     cursor.execute("UPDATE payments SET status = 'completed' WHERE telegram_payload = ?", (payload,))
     cursor.execute("SELECT user_id, stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
-    row = cursor.fetchone()
-
-    if row:
-        try:
-            from utils.user_storage import save_user_payments
-            user_id = row[0]
-            cursor.execute("SELECT stars_amount, plan, status, timestamp FROM payments WHERE user_id = ?", (user_id,))
-            rows = cursor.fetchall()
-            payments = [{"stars": r[0], "plan": r[1], "status": r[2], "timestamp": r[3]} for r in rows]
-            save_user_payments(user_id, payments)
-        except Exception as e:
-            print(f"⚠️ save_user_payments: {e}")
-
-    return row
+    return cursor.fetchone()
 
 
 @db_operation
@@ -710,14 +701,6 @@ def add_premium(conn, cursor, user_id, days, plan, paid=False):
     if paid:
         cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
     _schedule_db_backup()
-    try:
-        from utils.user_storage import save_user_tokens
-        cursor.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        if row:
-            save_user_tokens(user_id, row[0], plan, new_date)
-    except Exception as e:
-        print(f"⚠️ save_user_tokens: {e}")
 
 
 @db_operation
@@ -741,6 +724,7 @@ def get_stats(conn, cursor):
     return total, total_tokens, premium_users
 
 
+# ===== ПОДПИСКИ =====
 @db_operation
 def get_expiring_subscriptions(conn, cursor):
     now = datetime.now()
@@ -770,6 +754,7 @@ def was_subscription_notified_today(conn, cursor, user_id):
     return row[0] == today
 
 
+# ===== НАПОМИНАНИЯ =====
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str):
     try:
@@ -780,18 +765,7 @@ def add_reminder(conn, cursor, user_id, text, time_str):
         print(f"⚠️ Сдвиг времени: {e}")
     cursor.execute("INSERT INTO reminders (user_id, text, time, created_at) VALUES (?, ?, ?, ?)",
                    (user_id, text, time_str, datetime.now().isoformat()))
-    reminder_id = cursor.lastrowid
-
-    try:
-        from utils.user_storage import save_user_reminders
-        cursor.execute("SELECT id, text, time FROM reminders WHERE user_id = ? AND sent = 0", (user_id,))
-        rows = cursor.fetchall()
-        reminders = [{"id": r[0], "text": r[1], "time": r[2]} for r in rows]
-        save_user_reminders(user_id, reminders)
-    except Exception as e:
-        print(f"⚠️ save_user_reminders: {e}")
-
-    return reminder_id
+    return cursor.lastrowid
 
 
 @db_operation
@@ -813,46 +787,20 @@ def get_user_reminders(conn, cursor, user_id):
 
 @db_operation
 def delete_reminder(conn, cursor, reminder_id):
-    cursor.execute("SELECT user_id FROM reminders WHERE id = ?", (reminder_id,))
-    row = cursor.fetchone()
-    user_id = row[0] if row else None
-
     cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-
-    if user_id:
-        try:
-            from utils.user_storage import save_user_reminders
-            cursor.execute("SELECT id, text, time FROM reminders WHERE user_id = ? AND sent = 0", (user_id,))
-            rows = cursor.fetchall()
-            reminders = [{"id": r[0], "text": r[1], "time": r[2]} for r in rows]
-            save_user_reminders(user_id, reminders)
-        except Exception as e:
-            print(f"⚠️ save_user_reminders: {e}")
 
 
 @db_operation
 def delete_reminder_by_text(conn, cursor, user_id, text):
     cursor.execute("DELETE FROM reminders WHERE user_id = ? AND text LIKE ?", (user_id, f"%{text}%"))
-    try:
-        from utils.user_storage import save_user_reminders
-        cursor.execute("SELECT id, text, time FROM reminders WHERE user_id = ? AND sent = 0", (user_id,))
-        rows = cursor.fetchall()
-        reminders = [{"id": r[0], "text": r[1], "time": r[2]} for r in rows]
-        save_user_reminders(user_id, reminders)
-    except Exception as e:
-        print(f"⚠️ save_user_reminders: {e}")
 
 
 @db_operation
 def delete_all_reminders(conn, cursor, user_id):
     cursor.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
-    try:
-        from utils.user_storage import save_user_reminders
-        save_user_reminders(user_id, [])
-    except Exception as e:
-        print(f"⚠️ save_user_reminders: {e}")
 
 
+# ===== НАСТРОЙКИ =====
 @db_operation
 def get_setting(conn, cursor, key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -865,6 +813,7 @@ def set_setting(conn, cursor, key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
 
+# ===== МОДЕЛИ =====
 @db_operation
 def get_model_setting(conn, cursor, task):
     cursor.execute("SELECT model FROM model_settings WHERE task = ?", (task,))
@@ -884,6 +833,7 @@ def get_all_model_settings(conn, cursor):
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
+# ===== ТАРИФЫ =====
 @db_operation
 def get_tariffs(conn, cursor, kind=None):
     if kind:
@@ -924,6 +874,153 @@ def get_tariff(conn, cursor, tariff_id):
     return dict(row) if row else None
 
 
+# ===== ПОИСК ПОЛЬЗОВАТЕЛЕЙ =====
+@db_operation
+def search_users(conn, cursor, query=None, filter_type=None, limit=50):
+    sql = "SELECT user_id, username, tokens, plan, joined, is_blocked FROM users WHERE 1=1"
+    params = []
+
+    if query:
+        sql += " AND (username LIKE ? OR CAST(user_id AS TEXT) LIKE ?)"
+        params.append(f"%{query}%")
+        params.append(f"%{query}%")
+
+    if filter_type == "premium":
+        sql += " AND plan IN ('premium', 'premium_plus')"
+    elif filter_type == "basic":
+        sql += " AND plan = 'basic'"
+    elif filter_type == "recent":
+        sql += " AND joined > datetime('now', '-7 days')"
+    elif filter_type == "rich":
+        sql += " AND tokens > 1000"
+    elif filter_type == "poor":
+        sql += " AND tokens < 100"
+
+    sql += " ORDER BY tokens DESC LIMIT ?"
+    params.append(limit)
+
+    cursor.execute(sql, params)
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def get_users_count(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM users")
+    return cursor.fetchone()[0] or 0
+
+
+@db_operation
+def get_users_count_today(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM users WHERE joined > datetime('now', '-1 day')")
+    return cursor.fetchone()[0] or 0
+
+
+@db_operation
+def get_users_count_week(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM users WHERE joined > datetime('now', '-7 days')")
+    return cursor.fetchone()[0] or 0
+
+
+@db_operation
+def get_premium_count(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_plus')")
+    return cursor.fetchone()[0] or 0
+
+
+# ===== ДИАЛОГИ С ПОДДЕРЖКОЙ =====
+@db_operation
+def create_support_ticket(conn, cursor, user_id, username, first_message):
+    cursor.execute("""
+        INSERT INTO support_tickets (user_id, username, status, created_at, updated_at)
+        VALUES (?, ?, 'open', ?, ?)
+    """, (user_id, username, datetime.now().isoformat(), datetime.now().isoformat()))
+    ticket_id = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO support_messages (ticket_id, sender, text, created_at)
+        VALUES (?, 'user', ?, ?)
+    """, (ticket_id, first_message, datetime.now().isoformat()))
+
+    return ticket_id
+
+
+@db_operation
+def add_support_message(conn, cursor, ticket_id, sender, text):
+    cursor.execute("""
+        INSERT INTO support_messages (ticket_id, sender, text, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (ticket_id, sender, text, datetime.now().isoformat()))
+
+    cursor.execute("UPDATE support_tickets SET updated_at = ? WHERE id = ?",
+                   (datetime.now().isoformat(), ticket_id))
+    return cursor.lastrowid
+
+
+@db_operation
+def get_support_tickets(conn, cursor, status=None, limit=30):
+    if status:
+        cursor.execute("""
+            SELECT * FROM support_tickets WHERE status = ?
+            ORDER BY updated_at DESC LIMIT ?
+        """, (status, limit))
+    else:
+        cursor.execute("""
+            SELECT * FROM support_tickets
+            ORDER BY updated_at DESC LIMIT ?
+        """, (limit,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def get_ticket_messages(conn, cursor, ticket_id, limit=100):
+    cursor.execute("""
+        SELECT * FROM support_messages WHERE ticket_id = ?
+        ORDER BY id ASC LIMIT ?
+    """, (ticket_id, limit))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def close_ticket(conn, cursor, ticket_id):
+    cursor.execute("UPDATE support_tickets SET status = 'closed', updated_at = ? WHERE id = ?",
+                   (datetime.now().isoformat(), ticket_id))
+
+
+@db_operation
+def get_user_ticket(conn, cursor, user_id):
+    cursor.execute("""
+        SELECT * FROM support_tickets WHERE user_id = ? AND status = 'open'
+        ORDER BY id DESC LIMIT 1
+    """, (user_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+# ===== УВЕДОМЛЕНИЯ АДМИНУ =====
+@db_operation
+def add_admin_notification(conn, cursor, text, user_id=None):
+    cursor.execute("""
+        INSERT INTO admin_notifications (text, user_id, created_at)
+        VALUES (?, ?, ?)
+    """, (text, user_id, datetime.now().isoformat()))
+    return cursor.lastrowid
+
+
+@db_operation
+def get_pending_notifications(conn, cursor, limit=20):
+    cursor.execute("""
+        SELECT * FROM admin_notifications WHERE sent = 0
+        ORDER BY id ASC LIMIT ?
+    """, (limit,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def mark_notification_sent(conn, cursor, notif_id):
+    cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
+
+
+# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup

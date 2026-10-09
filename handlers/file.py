@@ -30,11 +30,16 @@ async def handle_file(message: types.Message):
             await status.edit_text("❌ Не удалось извлечь текст")
             return
 
-        # ИИ анализирует файл
         result = smart_reply(user_id, f"Проанализируй текст и дай краткое резюме:\n\n{text[:3000]}")
         answer = result.get("reply", "Не смог проанализировать.")
         await status.edit_text(f"📊 Анализ файла:\n\n{answer}")
-        add_to_context(user_id, f"Анализ файла {doc.file_name}")
+
+        # Добавляем в историю
+        try:
+            from utils.user_storage import append_history
+            append_history(user_id, "user", f"Анализ файла {doc.file_name}")
+        except Exception as e:
+            logger.warning(f"⚠️ История: {e}")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка файла: {e}")
