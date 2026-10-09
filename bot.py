@@ -1,5 +1,6 @@
 import os, sys, asyncio, logging, threading, time
 from logging.handlers import RotatingFileHandler
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -10,7 +11,6 @@ from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
-from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -58,7 +58,7 @@ async def reminder_worker():
         try:
             with db_connection() as conn:
                 cursor = conn.cursor()
-                now_utc = datetime.utcnow().isoformat()
+                now_utc = datetime.now(timezone.utc).isoformat()
                 cursor.execute("SELECT id, user_id, text FROM reminders WHERE sent = 0 AND time <= ?", (now_utc,))
                 rows = cursor.fetchall()
                 for row in rows:
@@ -105,9 +105,8 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
 
-    # Проверяем, есть ли БД
+    # === ШАГ 1: Восстановить БД из GitHub (если нет локально) ===
     db_exists = os.path.exists('data/repsolver.db')
-
     if not db_exists:
         logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
         try:
@@ -120,14 +119,28 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # Восстанавливаем токены из папок пользователей
+    # === ШАГ 2: Восстановить ПАПКИ ЮЗЕРОВ из GitHub ДО polling ===
+    logger.info("📥 Восстанавливаю папки пользователей из GitHub...")
+    try:
+        ok = GitHubBackup().restore_users()
+        if ok:
+            logger.info("✅ Папки пользователей восстановлены из GitHub")
+        else:
+            logger.info("ℹ️ Папок пользователей на GitHub нет (или пусто)")
+    except Exception as e:
+        logger.warning(f"⚠️ Восстановление юзеров из GitHub: {e}")
+
+    # === ШАГ 3: Восстановить токены из папок в БД ===
     try:
         count = restore_from_user_folders()
         if count > 0:
             logger.info(f"✅ Восстановлено из папок: {count} пользователей")
+        else:
+            logger.info("ℹ️ Из папок восстанавливать нечего")
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
+    # === ШАГ 4: Настройки моделей ===
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()
@@ -135,13 +148,7 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
 
-    # Восстанавливаем папки пользователей из GitHub
-    try:
-        GitHubBackup().restore_users()
-        logger.info("✅ Пользователи восстановлены из GitHub")
-    except Exception as e:
-        logger.warning(f"⚠️ Восстановление юзеров: {e}")
-
+    # === ШАГ 5: Фоновый бэкап БД раз в 30 мин ===
     def backup_loop():
         try:
             GitHubBackup().backup_db(reason='при старте')
@@ -186,7 +193,8 @@ async def main():
     logger.info("✅ Воркер подписок запущен")
 
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("🚀 Бот готов!")
+    logger.info("🚀 Бот готов! Пользователей в папках: " +
+                str(sum(len(dirs) for _, dirs, _ in os.walk('data/users')) if os.path.exists('data/users') else 0))
 
     await dp.start_polling(bot, skip_updates=True)
 

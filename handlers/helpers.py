@@ -45,6 +45,16 @@ def profile_kb():
     ])
 
 
+def logs_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📄 Последние 100 строк", callback_data="a_logs_tail")],
+        [InlineKeyboardButton(text="❌ Ошибки (ERROR)", callback_data="a_logs_errors")],
+        [InlineKeyboardButton(text="⚠️ Предупреждения (WARNING)", callback_data="a_logs_warnings")],
+        [InlineKeyboardButton(text="🗑 Скачать весь bot.log", callback_data="a_logs_download")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
@@ -61,7 +71,8 @@ def admin_kb():
          InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github")],
         [InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users"),
          InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
-        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
+        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status"),
+         InlineKeyboardButton(text="📜 Логи", callback_data="a_logs")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
 

@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 ADMIN_CODE = os.getenv("ADMIN_CODE", "30121979")
 STAR_RATE = 2.0
 
+LOG_PATH = 'logs/bot.log'
+
 
 @router.message(Command("admin"))
 async def admin_cmd(message: types.Message):
@@ -228,10 +230,8 @@ async def handle_admin_reply(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # Сохраняем ответ
     add_support_message(ticket_id, 'admin', text)
 
-    # Отправляем пользователю
     try:
         ticket = get_support_tickets()
         ticket_data = next((t for t in ticket if t['id'] == ticket_id), None)
@@ -388,6 +388,91 @@ async def a_db_status_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
+# ===== ЛОГИ =====
+@router.callback_query(F.data == "a_logs")
+async def a_logs_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    size = os.path.getsize(LOG_PATH) if os.path.exists(LOG_PATH) else 0
+    text = f"📜 **Логи**\n\n📁 {LOG_PATH}\n📦 Размер: {size / 1024:.1f} КБ\n\nВыбери, что показать:"
+    await safe_edit(callback, text, helpers.logs_kb())
+    await helpers.safe_answer(callback)
+
+
+def _read_logs(lines=100, filter_level=None):
+    if not os.path.exists(LOG_PATH):
+        return "❌ Файл логов не найден"
+    try:
+        with open(LOG_PATH, 'r', encoding='utf-8', errors='ignore') as f:
+            all_lines = f.readlines()
+        if filter_level:
+            all_lines = [l for l in all_lines if filter_level in l]
+        tail = all_lines[-lines:]
+        if not tail:
+            return f"📭 Нет строк с уровнем {filter_level}"
+        return "".join(tail)
+    except Exception as e:
+        return f"❌ Ошибка чтения: {e}"
+
+
+@router.callback_query(F.data == "a_logs_tail")
+async def a_logs_tail_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    content = _read_logs(lines=100)
+    if len(content) > 3800:
+        content = "… (обрезано)\n" + content[-3800:]
+    await safe_edit(callback, f"📄 **Последние 100 строк:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "a_logs_errors")
+async def a_logs_errors_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    content = _read_logs(lines=100, filter_level="ERROR")
+    if len(content) > 3800:
+        content = content[-3800:]
+    await safe_edit(callback, f"❌ **Ошибки:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "a_logs_warnings")
+async def a_logs_warnings_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    content = _read_logs(lines=100, filter_level="WARNING")
+    if len(content) > 3800:
+        content = content[-3800:]
+    await safe_edit(callback, f"⚠️ **Предупреждения:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "a_logs_download")
+async def a_logs_download_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    if not os.path.exists(LOG_PATH):
+        await helpers.safe_answer(callback, "❌ Файл логов не найден", show_alert=True)
+        return
+    try:
+        with open(LOG_PATH, 'rb') as f:
+            data = f.read()
+        await callback.message.answer_document(
+            BufferedInputFile(data, filename="bot.log"),
+            caption=f"📜 bot.log ({len(data) / 1024:.1f} КБ)",
+            reply_markup=helpers.logs_kb()
+        )
+    except Exception as e:
+        await helpers.safe_answer(callback, f"❌ {e}", show_alert=True)
+    await helpers.safe_answer(callback)
+
+
 # ===== АДМИН-ВВОД =====
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
@@ -398,17 +483,14 @@ async def handle_admin_input(message: types.Message):
         await message.answer("✅ Отменено", reply_markup=helpers.admin_kb())
         return
 
-    # Поиск юзеров
     if state.get("state") == "waiting_user_search":
         await handle_user_search(message)
         return
 
-    # Ответ в тикет
     if state.get("state") == "waiting_admin_reply":
         await handle_admin_reply(message)
         return
 
-    # Промокод
     if state.get("state") == "waiting_promo_code":
         try:
             parts = [p.strip() for p in message.text.split("|")]
@@ -426,7 +508,6 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # Раздача токенов
     if state.get("state") == "waiting_give_tokens":
         try:
             parts = message.text.split("|")
@@ -449,7 +530,6 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # Рассылка
     if state.get("state") == "waiting_broadcast":
         with db_connection() as conn:
             cursor = conn.cursor()
