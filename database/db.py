@@ -292,7 +292,6 @@ def init_db():
         )
         ''')
 
-        # Поддержка
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS support_tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -881,7 +880,12 @@ def search_users(conn, cursor, query=None, filter_type=None, limit=50):
     params = []
 
     if query:
-        sql += " AND (username LIKE ? OR CAST(user_id AS TEXT) LIKE ?)"
+        sql += """ AND (
+            username LIKE ?
+            OR CAST(user_id AS TEXT) LIKE ?
+            OR user_id IN (SELECT user_id FROM user_memory WHERE name LIKE ?)
+        )"""
+        params.append(f"%{query}%")
         params.append(f"%{query}%")
         params.append(f"%{query}%")
 
@@ -1018,6 +1022,38 @@ def get_pending_notifications(conn, cursor, limit=20):
 @db_operation
 def mark_notification_sent(conn, cursor, notif_id):
     cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
+
+
+# ===== ТЕСТОВЫЕ ЮЗЕРЫ =====
+@db_operation
+def create_test_users(conn, cursor, count=10):
+    names = ["Тест1", "Тест2", "Тест3", "Тест4", "Тест5",
+             "Тест6", "Тест7", "Тест8", "Тест9", "Тест10"]
+    plans = ["basic", "basic", "premium", "basic", "premium_plus",
+             "basic", "premium", "basic", "premium_plus", "basic"]
+    tokens_list = [0, 50, 100, 500, 1000, 3000, 200, 0, 800, 150]
+
+    for i in range(count):
+        uid = 900000000 + i
+        name = names[i % len(names)]
+        plan = plans[i % len(plans)]
+        tokens = tokens_list[i % len(tokens_list)]
+        premium_until = (datetime.now() + timedelta(days=30)).isoformat() if plan != "basic" else None
+        joined = (datetime.now() - timedelta(days=i)).isoformat()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO users
+            (user_id, username, joined, tokens, plan, premium_until, trial_start, trial_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        """, (uid, name, joined, tokens, plan, premium_until, joined))
+
+    return count
+
+
+@db_operation
+def delete_test_users(conn, cursor):
+    cursor.execute("DELETE FROM users WHERE user_id >= 900000000")
+    return cursor.rowcount
 
 
 # ===== СЛУЖЕБНОЕ =====

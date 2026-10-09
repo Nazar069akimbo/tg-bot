@@ -62,8 +62,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     status_msg = await message.answer("🎨 Рисую картинку...")
 
     try:
-        # 1. Улучшение промпта
-        logger.info(f"🔄 [{user_id}] Улучшение промпта...")
         prompt_resp = requests.post(
             "https://openai.bothub.chat/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -80,9 +78,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         enhanced = prompt
         if prompt_resp.status_code == 200:
             enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
-            logger.info(f"✅ [{user_id}] Промпт: {enhanced[:60]}")
 
-        # 2. Генерация картинки
         logger.info(f"🎨 [{user_id}] Запрос к Replicate: model={current_model}")
         img_resp = requests.post(
             "https://bothub.chat/api/v2/replicate/v1/images/generations",
@@ -96,9 +92,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         )
 
         logger.info(f"📡 [{user_id}] Статус: {img_resp.status_code}")
-        logger.info(f"📦 [{user_id}] Ответ: {img_resp.text[:800]}")
+        logger.info(f"📦 [{user_id}] Ответ: {img_resp.text[:300]}")
 
         img_data = None
+
         if img_resp.status_code == 200:
             result = img_resp.json()
             img_url = result.get('url')
@@ -109,73 +106,79 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     img_response = requests.get(img_url, timeout=30)
                     if img_response.status_code == 200 and len(img_response.content) > 1000:
                         img_data = img_response.content
-                        logger.info(f"✅ [{user_id}] Картинка: {len(img_data)} байт")
                 except Exception as e:
                     logger.error(f"❌ [{user_id}] Скачивание: {e}")
-        else:
-            logger.error(f"❌ [{user_id}] Ошибка генерации: {img_resp.status_code}")
-            # Показываем пользователю текст ошибки
+
+        if not img_data:
+            # Безопасная обработка ошибки
+            err_text = "Неизвестная ошибка"
             try:
-                err_text = img_resp.json().get('detail') or img_resp.json().get('error') or img_resp.text[:200]
+                data = img_resp.json()
+                if isinstance(data.get('error'), dict):
+                    err_text = data['error'].get('message', str(data['error']))
+                elif data.get('detail'):
+                    err_text = str(data['detail'])
+                elif data.get('message'):
+                    err_text = str(data['message'])
+                else:
+                    err_text = img_resp.text
             except Exception:
-                err_text = img_resp.text[:200]
+                err_text = img_resp.text
+            err_text = str(err_text)[:300]
+
             await status_msg.edit_text(
                 f"❌ Ошибка генерации ({img_resp.status_code})\n\n"
                 f"Модель: {current_model}\n"
-                f"Ответ: {err_text[:200]}"
+                f"Ответ: {err_text}"
             )
             return
 
-        if img_data:
-            # 3. Водяной знак
+        # Водяной знак
+        try:
+            img = Image.open(BytesIO(img_data))
+            draw = ImageDraw.Draw(img)
             try:
-                img = Image.open(BytesIO(img_data))
-                draw = ImageDraw.Draw(img)
-                try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
-                except Exception:
-                    font = ImageFont.load_default()
-                draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
-                output = BytesIO()
-                img.save(output, format='PNG')
-                output.seek(0)
-                img_data = output.getvalue()
-            except Exception as e:
-                logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+            except Exception:
+                font = ImageFont.load_default()
+            draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
+            output = BytesIO()
+            img.save(output, format='PNG')
+            output.seek(0)
+            img_data = output.getvalue()
+        except Exception as e:
+            logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
-            # 4. Сохранение
-            image_id = None
-            try:
-                image_id, session_id = save_image_to_history(
-                    user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
-                    model=current_model, image_data=img_data
-                )
-                try:
-                    from utils.user_storage import save_user_image, update_meta
-                    save_user_image(user_id, image_id, img_data)
-                    update_meta(user_id, last_topics=[prompt[:50]])
-                except Exception as e:
-                    logger.warning(f"⚠️ [{user_id}] Папка: {e}")
-            except Exception as e:
-                logger.warning(f"⚠️ [{user_id}] БД: {e}")
-
-            # 5. Отправка
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Ещё", callback_data="regenerate"),
-                 InlineKeyboardButton(text="🎨 Стикер", callback_data="make_sticker")],
-                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-            ])
-
-            await message.answer_photo(
-                BufferedInputFile(file=img_data, filename="image.png"),
-                caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов",
-                reply_markup=keyboard
+        # Сохранение
+        image_id = None
+        try:
+            image_id, session_id = save_image_to_history(
+                user_id=user_id, prompt=prompt, enhanced_prompt=enhanced,
+                model=current_model, image_data=img_data
             )
-            await status_msg.delete()
-            logger.info(f"✅ [{user_id}] Картинка отправлена")
-            return
+            try:
+                from utils.user_storage import save_user_image, update_meta
+                save_user_image(user_id, image_id, img_data)
+                update_meta(user_id, last_topics=[prompt[:50]])
+            except Exception as e:
+                logger.warning(f"⚠️ [{user_id}] Папка: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ [{user_id}] БД: {e}")
 
-        await status_msg.edit_text(f"❌ Не удалось получить картинку")
+        # Отправка
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Ещё", callback_data="regenerate"),
+             InlineKeyboardButton(text="🎨 Стикер", callback_data="make_sticker")],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
+        ])
+
+        await message.answer_photo(
+            BufferedInputFile(file=img_data, filename="image.png"),
+            caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов",
+            reply_markup=keyboard
+        )
+        await status_msg.delete()
+        logger.info(f"✅ [{user_id}] Картинка отправлена")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}", exc_info=True)

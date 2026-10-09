@@ -14,6 +14,7 @@ from .inline import router as inline_router
 from .profile import router as profile_router
 from .help import router as help_router
 from .memory import router as memory_router
+from .support import router as support_router
 from .helpers import user_pages, user_model
 
 routers = [
@@ -33,4 +34,5 @@ routers = [
     profile_router,
     help_router,
     memory_router,
+    support_router,
 ]
