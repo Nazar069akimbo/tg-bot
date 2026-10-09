@@ -52,7 +52,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
     week = get_users_count_week()
 
     text = (
-        f"📊 **СТАТИСТИКА**\n\n"
+        "📊 СТАТИСТИКА\n\n"
         f"👥 Всего: {total}\n"
         f"🆕 Сегодня: {today}\n"
         f"📅 За неделю: {week}\n"
@@ -68,7 +68,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
 async def a_search_users_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_user_search"}
     await safe_edit(callback,
-        "🔍 **Поиск пользователей**\n\n"
+        "🔍 ПОИСК ПОЛЬЗОВАТЕЛЕЙ\n\n"
         "Введи имя, username или ID.\n\n"
         "⏹ /cancel — отмена",
         helpers.admin_kb()
@@ -86,7 +86,7 @@ async def a_filter_users_cb(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="💸 Токенов < 100", callback_data="a_filter|poor")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
-    await safe_edit(callback, "🎯 **Фильтры**\n\nВыбери:", kb)
+    await safe_edit(callback, "🎯 ФИЛЬТРЫ\n\nВыбери:", kb)
     await helpers.safe_answer(callback)
 
 
@@ -95,7 +95,7 @@ async def a_filter_cb(callback: types.CallbackQuery):
     filter_type = callback.data.split("|")[1]
     users = search_users(filter_type=filter_type, limit=30)
 
-    text = f"🎯 **Фильтр: {filter_type}**\n\n"
+    text = f"🎯 Фильтр: {filter_type}\n\n"
     for u in users:
         name = u['username'] or str(u['user_id'])
         status = "⛔" if u['is_blocked'] else "✅"
@@ -121,9 +121,9 @@ async def handle_user_search(message: types.Message):
     users = search_users(query=query, limit=30)
 
     if not users:
-        await message.answer(f"❌ Ничего не найдено по `{query}`", reply_markup=helpers.admin_kb())
+        await message.answer(f"❌ Ничего не найдено по «{query}»", reply_markup=helpers.admin_kb())
     else:
-        text = f"🔍 **Результаты: {query}**\n\n"
+        text = f"🔍 Результаты: {query}\n\n"
         for u in users:
             name = u['username'] or str(u['user_id'])
             status = "⛔" if u['is_blocked'] else "✅"
@@ -140,20 +140,35 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
+
+    balance = None
+    err = None
+
     try:
-        balance = await callback.bot.get_my_star_balance()
+        if hasattr(callback.bot, "get_my_star_balance"):
+            balance = await callback.bot.get_my_star_balance()
+    except Exception as e:
+        err = str(e)
+
+    if balance is None:
+        text = (
+            "⭐ БАЛАНС STARS\n\n"
+            "Не удалось получить баланс через API.\n"
+            f"Причина: {err or 'метод недоступен (нужен aiogram 3.7+)'}\n\n"
+            "💡 Проверь баланс в @BotFather → Payments."
+        )
+    else:
         rub = balance * 0.45
         byn = balance * 0.013
         text = (
-            f"⭐ **Баланс Stars**\n\n"
+            "⭐ БАЛАНС STARS\n\n"
             f"На счету: {balance} Stars\n"
             f"💵 ≈ {rub:.2f} ₽\n"
             f"💶 ≈ {byn:.2f} BYN\n"
-            f"💡 Мин. вывод: 1000 Stars"
+            "💡 Мин. вывод: 1000 Stars"
         )
-        await safe_edit(callback, text, helpers.admin_kb())
-    except Exception as e:
-        await safe_edit(callback, f"❌ Ошибка: {e}", helpers.admin_kb())
+
+    await safe_edit(callback, text, helpers.admin_kb())
     await helpers.safe_answer(callback)
 
 
@@ -173,7 +188,7 @@ async def a_support_tickets_cb(callback: types.CallbackQuery):
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
 
-    await safe_edit(callback, f"📩 **Открытые тикеты: {len(tickets)}**\n\nВыбери:", kb)
+    await safe_edit(callback, f"📩 Открытые тикеты: {len(tickets)}\n\nВыбери:", kb)
     await helpers.safe_answer(callback)
 
 
@@ -182,7 +197,7 @@ async def a_ticket_cb(callback: types.CallbackQuery):
     ticket_id = int(callback.data.replace("a_ticket_", ""))
     msgs = get_ticket_messages(ticket_id)
 
-    text = f"💬 **Тикет #{ticket_id}**\n\n"
+    text = f"💬 Тикет #{ticket_id}\n\n"
     for m in msgs[-30:]:
         who = "👤 User" if m['sender'] == 'user' else "🛡 Admin"
         text += f"{who}: {m['text']}\n"
@@ -237,7 +252,7 @@ async def handle_admin_reply(message: types.Message):
         ticket_data = next((t for t in ticket if t['id'] == ticket_id), None)
         if ticket_data:
             user_tg_id = ticket_data['user_id']
-            await message.bot.send_message(user_tg_id, f"💬 **Ответ поддержки:**\n\n{text}")
+            await message.bot.send_message(user_tg_id, f"💬 Ответ поддержки:\n\n{text}")
     except Exception as e:
         logger.warning(f"⚠️ Не отправил юзеру: {e}")
 
@@ -249,7 +264,7 @@ async def handle_admin_reply(message: types.Message):
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
     users = search_users(limit=50)
-    text = "👥 **Топ по токенам**\n\n"
+    text = "👥 Топ по токенам\n\n"
     for u in users:
         status = "⛔" if u['is_blocked'] else "✅"
         name = u['username'] or str(u['user_id'])
@@ -312,9 +327,23 @@ async def a_messages_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     await safe_edit(callback, "⏳ Бэкап...", None)
-    result = GitHubBackup().backup_all(reason='вручную')
-    await safe_edit(callback, "✅ Готово!" if result else "❌ Ошибка", helpers.admin_kb())
+    try:
+        bk = GitHubBackup()
+        if hasattr(bk, "backup_all"):
+            result = bk.backup_all(reason='вручную')
+        else:
+            db_ok = bk.backup_db(reason='вручную')
+            users_ok = bk.backup_users(reason='вручную')
+            result = db_ok and users_ok
+        text = "✅ Готово!" if result else "⚠️ Частично (см. логи)"
+    except Exception as e:
+        logger.error(f"❌ Бэкап: {e}")
+        text = f"❌ Ошибка: {str(e)[:150]}"
+    await safe_edit(callback, text, helpers.admin_kb())
     await helpers.safe_answer(callback)
 
 
@@ -395,7 +424,7 @@ async def a_logs_cb(callback: types.CallbackQuery):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     size = os.path.getsize(LOG_PATH) if os.path.exists(LOG_PATH) else 0
-    text = f"📜 **Логи**\n\n📁 {LOG_PATH}\n📦 Размер: {size / 1024:.1f} КБ\n\nВыбери, что показать:"
+    text = f"📜 ЛОГИ\n\n📁 {LOG_PATH}\n📦 Размер: {size / 1024:.1f} КБ\n\nВыбери, что показать:"
     await safe_edit(callback, text, helpers.logs_kb())
     await helpers.safe_answer(callback)
 
@@ -424,7 +453,7 @@ async def a_logs_tail_cb(callback: types.CallbackQuery):
     content = _read_logs(lines=100)
     if len(content) > 3800:
         content = "… (обрезано)\n" + content[-3800:]
-    await safe_edit(callback, f"📄 **Последние 100 строк:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await safe_edit(callback, f"📄 Последние 100 строк:\n\n<pre>{content}</pre>", helpers.logs_kb())
     await helpers.safe_answer(callback)
 
 
@@ -436,7 +465,7 @@ async def a_logs_errors_cb(callback: types.CallbackQuery):
     content = _read_logs(lines=100, filter_level="ERROR")
     if len(content) > 3800:
         content = content[-3800:]
-    await safe_edit(callback, f"❌ **Ошибки:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await safe_edit(callback, f"❌ Ошибки:\n\n<pre>{content}</pre>", helpers.logs_kb())
     await helpers.safe_answer(callback)
 
 
@@ -448,7 +477,7 @@ async def a_logs_warnings_cb(callback: types.CallbackQuery):
     content = _read_logs(lines=100, filter_level="WARNING")
     if len(content) > 3800:
         content = content[-3800:]
-    await safe_edit(callback, f"⚠️ **Предупреждения:**\n\n<pre>{content}</pre>", helpers.logs_kb())
+    await safe_edit(callback, f"⚠️ Предупреждения:\n\n<pre>{content}</pre>", helpers.logs_kb())
     await helpers.safe_answer(callback)
 
 
@@ -500,8 +529,10 @@ async def handle_admin_input(message: types.Message):
             with db_connection() as conn:
                 cursor = conn.cursor()
                 expires = (datetime.now() + timedelta(days=days)).isoformat()
-                cursor.execute("INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-                              (code, bonus, 100, datetime.now().isoformat(), expires))
+                cursor.execute(
+                    "INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                    (code, bonus, 100, datetime.now().isoformat(), expires)
+                )
             await message.answer(f"✅ Промокод {code} создан!", reply_markup=helpers.admin_kb())
         except Exception as e:
             await message.answer(f"❌ {e}", reply_markup=helpers.admin_kb())
@@ -546,3 +577,4 @@ async def handle_admin_input(message: types.Message):
         await message.answer(f"✅ Отправлено: {sent}", reply_markup=helpers.admin_kb())
         helpers.user_pages.pop(user_id, None)
         return
+
