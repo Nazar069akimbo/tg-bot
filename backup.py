@@ -96,10 +96,11 @@ class GitHubBackup:
                 return True
 
             uploaded = 0
+            failed = 0
             for root, dirs, files in os.walk(base):
                 for file in files:
                     full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, base).replace('\\', '/')
+                    rel_path = os.path.relpath(full_path, base).replace(chr(92)+chr(92), '/')
                     repo_path = f'users/{rel_path}'
 
                     try:
@@ -107,18 +108,26 @@ class GitHubBackup:
                             content = base64.b64encode(f.read()).decode('utf-8')
                         if self._upload_file(self.repo_users, repo_path, content, f'{rel_path} ({reason})'):
                             uploaded += 1
+                        else:
+                            failed += 1
                     except Exception as e:
                         logger.warning(f"⚠️ Не залит {rel_path}: {e}")
+                        failed += 1
 
             if uploaded > 0:
-                logger.info(f"✅ Бэкап пользователей: {uploaded} файлов")
+                logger.info(f"✅ Бэкап пользователей: {uploaded} файлов" + (f" (ошибок: {failed})" if failed else ""))
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка бэкапа пользователей: {e}")
             return False
 
+    def backup_all(self, reason='полный'):
+        logger.info(f"🔄 Полный бэкап ({reason})...")
+        db_ok = self.backup_db(reason=reason)
+        users_ok = self.backup_users(reason=reason)
+        return db_ok and users_ok
+
     def restore_users(self, base_dir='data/users'):
-        """Скачивает все папки пользователей из GitHub в data/users/."""
         try:
             if not self.repo_users:
                 logger.warning("⚠️ GITHUB_USERS_REPO не задан — пропускаю восстановление юзеров")
@@ -201,32 +210,50 @@ class GitHubBackup:
         except Exception as e:
             logger.warning(f"⚠️ Не скачал {path}: {e}")
 
-    # ===== UPLOAD =====
-    def _upload_file(self, repo, repo_path, content_b64, message, retry=3):
+    # ===== UPLOAD (с фиксом 409) =====
+    def _upload_file(self, repo, repo_path, content_b64, message, retry=5):
+        """Загружает файл в GitHub. При 409 перечитывает sha."""
         url = f'https://api.github.com/repos/{repo}/contents/{repo_path}'
 
         for attempt in range(retry):
             try:
                 response = requests.get(url, headers=self.headers)
                 if response.status_code == 200:
-                    sha = response.json()['sha']
+                    sha = response.json().get('sha')
                     data = {'message': message, 'content': content_b64, 'sha': sha, 'branch': self.branch}
                 else:
                     data = {'message': message, 'content': content_b64, 'branch': self.branch}
 
-                response = requests.put(url, headers=self.headers, json=data)
+                response = requests.put(url, headers=self.headers, json=data, timeout=30)
 
                 if response.status_code in (200, 201):
                     return True
 
-                if response.status_code == 409 and attempt < retry - 1:
-                    logger.warning(f"⚠️ 409 для {repo_path}, попытка {attempt + 1}/{retry}")
-                    time.sleep(1.5)
-                    continue
+                if response.status_code == 409:
+                    if attempt < retry - 1:
+                        delay = 0.5 + attempt * 0.7
+                        logger.warning(f"⚠️ 409 для {repo_path}, попытка {attempt + 1}/{retry}, ждём {delay:.1f}с")
+                        time.sleep(delay)
+                        continue
+                    logger.error(f"❌ 409 для {repo_path}: не удалось после {retry} попыток")
+                    return False
 
-                logger.error(f"❌ Загрузка {repo_path}: {response.text[:150]}")
+                if response.status_code == 422:
+                    if attempt < retry - 1:
+                        time.sleep(1.0)
+                        continue
+                    logger.error(f"❌ 422 для {repo_path}: {response.text[:150]}")
+                    return False
+
+                logger.error(f"❌ Загрузка {repo_path} ({response.status_code}): {response.text[:150]}")
                 return False
 
+            except requests.exceptions.Timeout:
+                logger.warning(f"⏱ Таймаут upload {repo_path} (попытка {attempt + 1})")
+                if attempt < retry - 1:
+                    time.sleep(1.5)
+                    continue
+                return False
             except Exception as e:
                 logger.error(f"❌ upload {repo_path} (попытка {attempt + 1}): {e}")
                 if attempt < retry - 1:
@@ -258,9 +285,11 @@ class GitHubBackup:
 # ===== АВТОБЭКАП С ЗАДЕРЖКОЙ 30 СЕК =====
 _users_backup_timer = None
 _users_backup_lock = threading.Lock()
+_users_backup_running = threading.Lock()
 
 
 def schedule_users_backup(delay=30):
+    """Запускает бэкап пользователей через delay секунд (батчинг)."""
     global _users_backup_timer
     with _users_backup_lock:
         if _users_backup_timer is not None:
@@ -272,9 +301,14 @@ def schedule_users_backup(delay=30):
 
 def _do_users_backup():
     global _users_backup_timer
+    if not _users_backup_running.acquire(blocking=False):
+        logger.info("⏭ Бэкап юзеров уже идёт, пропускаю")
+        return
     try:
         GitHubBackup().backup_users(reason='изменение')
     except Exception as e:
         logger.warning(f"⚠️ Бэкап пользователей: {e}")
-    with _users_backup_lock:
-        _users_backup_timer = None
+    finally:
+        _users_backup_running.release()
+        with _users_backup_lock:
+            _users_backup_timer = None

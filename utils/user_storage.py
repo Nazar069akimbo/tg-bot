@@ -70,6 +70,23 @@ def _backup_users(force=False):
         logger.warning(f"⚠️ Бэкап: {e}")
 
 
+def _json_unchanged(path, new_data, ignore_keys=("updated_at",)):
+    """True, если файл существует и его содержимое (без ignore_keys) совпадает."""
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            old = json.load(f)
+        old_copy = dict(old)
+        new_copy = dict(new_data)
+        for k in ignore_keys:
+            old_copy.pop(k, None)
+            new_copy.pop(k, None)
+        return old_copy == new_copy
+    except Exception:
+        return False
+
+
 # ===== PROFILE =====
 def load_profile(user_id):
     path = _profile_path(user_id)
@@ -87,13 +104,16 @@ def load_profile(user_id):
 
 def save_profile(user_id, data):
     data["updated_at"] = datetime.now().isoformat()
+    path = _profile_path(user_id)
+    # Не пишем и не бэкапим, если содержимое не изменилось
+    if _json_unchanged(path, data):
+        return
     try:
-        with open(_profile_path(user_id), "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         _backup_users()
     except Exception as e:
         logger.error(f"❌ save_profile: {e}")
-
 
 def set_user_name(user_id, name):
     profile = load_profile(user_id)
@@ -232,7 +252,6 @@ def load_user_settings(user_id):
 
 # ===== REMINDERS =====
 def save_user_reminders(user_id, reminders_list):
-    """reminders_list: список dict с id, text, time."""
     data = {"user_id": user_id, "reminders": reminders_list, "updated_at": datetime.now().isoformat()}
     try:
         with open(_reminders_path(user_id), "w", encoding="utf-8") as f:
