@@ -464,8 +464,9 @@ def restore_from_user_folders():
             cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
 
-            if row and row[1] and tokens and row[1] >= tokens:
-                print(f"⏭ {name or user_id}: в БД {row[1]} >= папки {tokens}, пропуск")
+            # Папка — источник правды: перезаписываем БД, если в папке есть токены
+            if not tokens and row and row[1] and row[1] > 0:
+                print(f"⏭ {name or user_id}: папка пустая, в БД {row[1]}, пропуск")
                 continue
 
             if row:
