@@ -387,63 +387,86 @@ def migrate_db():
 
 
 def restore_from_user_folders():
-    """Восстанавливает токены из папок пользователей. Перезаписывает, если в папке больше."""
+    """Восстанавливает токены/план из папок.
+    Если у пользователя несколько папок — берёт МАКСИМУМ токенов."""
     base = 'data/users'
     if not os.path.exists(base):
         return 0
+
+    collected = {}
+
+    for folder in os.listdir(base):
+        folder_path = os.path.join(base, folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+        id_file = os.path.join(folder_path, "_id.txt")
+        tokens_file = os.path.join(folder_path, "tokens.json")
+        profile_file = os.path.join(folder_path, "profile.json")
+
+        if not os.path.exists(id_file):
+            continue
+
+        try:
+            with open(id_file, "r", encoding="utf-8") as f:
+                user_id = int(f.read().strip())
+        except Exception:
+            continue
+
+        tokens = 0
+        plan = "basic"
+        premium_until = None
+
+        if os.path.exists(tokens_file):
+            try:
+                with open(tokens_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    tokens = data.get("tokens", 0) or 0
+                    plan = data.get("plan", "basic")
+                    premium_until = data.get("premium_until")
+            except Exception:
+                pass
+
+        name = None
+        if os.path.exists(profile_file):
+            try:
+                with open(profile_file, "r", encoding="utf-8") as f:
+                    name = json.load(f).get("name")
+            except Exception:
+                pass
+
+        if user_id in collected:
+            if tokens > collected[user_id]["tokens"]:
+                collected[user_id] = {
+                    "tokens": tokens,
+                    "plan": plan,
+                    "premium_until": premium_until,
+                    "name": name,
+                }
+        else:
+            collected[user_id] = {
+                "tokens": tokens,
+                "plan": plan,
+                "premium_until": premium_until,
+                "name": name,
+            }
 
     restored = 0
     with db_connection() as conn:
         cursor = conn.cursor()
 
-        for folder in os.listdir(base):
-            folder_path = os.path.join(base, folder)
-            if not os.path.isdir(folder_path):
-                continue
+        for user_id, info in collected.items():
+            tokens = info["tokens"]
+            plan = info["plan"]
+            premium_until = info["premium_until"]
+            name = info["name"]
 
-            id_file = os.path.join(folder_path, "_id.txt")
-            tokens_file = os.path.join(folder_path, "tokens.json")
-            profile_file = os.path.join(folder_path, "profile.json")
-
-            if not os.path.exists(id_file):
-                continue
-
-            try:
-                with open(id_file, "r", encoding="utf-8") as f:
-                    user_id = int(f.read().strip())
-            except Exception:
-                continue
-
-            # Читаем токены из папки СНАЧАЛА
-            tokens = 0
-            plan = "basic"
-            premium_until = None
-
-            if os.path.exists(tokens_file):
-                try:
-                    with open(tokens_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        tokens = data.get("tokens", 0)
-                        plan = data.get("plan", "basic")
-                        premium_until = data.get("premium_until")
-                except Exception:
-                    pass
-
-            # Проверяем, что в БД
             cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
 
-            # Если в БД токенов больше или столько же — не трогаем
             if row and row[1] and tokens and row[1] >= tokens:
+                print(f"⏭ {name or user_id}: в БД {row[1]} >= папки {tokens}, пропуск")
                 continue
-
-            name = None
-            if os.path.exists(profile_file):
-                try:
-                    with open(profile_file, "r", encoding="utf-8") as f:
-                        name = json.load(f).get("name")
-                except Exception:
-                    pass
 
             if row:
                 cursor.execute("""
@@ -452,10 +475,12 @@ def restore_from_user_folders():
                 """, (tokens, plan, premium_until, user_id))
             else:
                 cursor.execute("""
-                    INSERT INTO users (user_id, username, joined, trial_start, trial_active, tokens, plan, premium_until, daily_reset)
+                    INSERT INTO users (user_id, username, joined, trial_start, trial_active,
+                                       tokens, plan, premium_until, daily_reset)
                     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
-                """, (user_id, name or str(user_id), datetime.now().isoformat(),
-                      datetime.now().isoformat(), tokens, plan, premium_until,
+                """, (user_id, name or str(user_id),
+                      datetime.now().isoformat(), datetime.now().isoformat(),
+                      tokens, plan, premium_until,
                       datetime.now().date().isoformat()))
 
             restored += 1
@@ -535,7 +560,6 @@ def spend_tokens(conn, cursor, user_id, amount):
     return False
 
 
-# ===== ЛИМИТЫ =====
 @db_operation
 def get_text_tokens_today(conn, cursor, user_id):
     cursor.execute("SELECT plan, daily_requests_used, daily_reset, tokens FROM users WHERE user_id = ?", (user_id,))
@@ -608,7 +632,6 @@ def activate_trial(conn, cursor, user_id):
                    (datetime.now().isoformat(), user_id))
 
 
-# ===== КАРТИНКИ =====
 @db_operation
 def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data):
     session_id = secrets.token_hex(8)
@@ -626,7 +649,6 @@ def get_last_image(conn, cursor, user_id):
     return dict(row) if row else None
 
 
-# ===== РЕФЕРАЛЫ =====
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
     if referrer_id == referred_id:
@@ -650,7 +672,6 @@ def get_referral_count(conn, cursor, user_id):
     return cursor.fetchone()[0] or 0
 
 
-# ===== ПРОМОКОДЫ =====
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
@@ -672,7 +693,6 @@ def use_promocode(conn, cursor, code, user_id):
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
 
 
-# ===== ПЛАТЕЖИ =====
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
     cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
@@ -728,7 +748,6 @@ def get_stats(conn, cursor):
     return total, total_tokens, premium_users
 
 
-# ===== ПОДПИСКИ =====
 @db_operation
 def get_expiring_subscriptions(conn, cursor):
     now = datetime.now()
@@ -758,7 +777,6 @@ def was_subscription_notified_today(conn, cursor, user_id):
     return row[0] == today
 
 
-# ===== НАПОМИНАНИЯ =====
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str):
     try:
@@ -804,7 +822,6 @@ def delete_all_reminders(conn, cursor, user_id):
     cursor.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
 
 
-# ===== НАСТРОЙКИ =====
 @db_operation
 def get_setting(conn, cursor, key):
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -817,7 +834,6 @@ def set_setting(conn, cursor, key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
 
-# ===== МОДЕЛИ =====
 @db_operation
 def get_model_setting(conn, cursor, task):
     cursor.execute("SELECT model FROM model_settings WHERE task = ?", (task,))
@@ -837,7 +853,6 @@ def get_all_model_settings(conn, cursor):
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-# ===== ТАРИФЫ =====
 @db_operation
 def get_tariffs(conn, cursor, kind=None):
     if kind:
@@ -878,7 +893,6 @@ def get_tariff(conn, cursor, tariff_id):
     return dict(row) if row else None
 
 
-# ===== ПОИСК ПОЛЬЗОВАТЕЛЕЙ =====
 @db_operation
 def search_users(conn, cursor, query=None, filter_type=None, limit=50):
     sql = "SELECT user_id, username, tokens, plan, joined, is_blocked FROM users WHERE 1=1"
@@ -936,7 +950,6 @@ def get_premium_count(conn, cursor):
     return cursor.fetchone()[0] or 0
 
 
-# ===== ДИАЛОГИ С ПОДДЕРЖКОЙ =====
 @db_operation
 def create_support_ticket(conn, cursor, user_id, username, first_message):
     cursor.execute("""
@@ -1005,7 +1018,6 @@ def get_user_ticket(conn, cursor, user_id):
     return dict(row) if row else None
 
 
-# ===== УВЕДОМЛЕНИЯ АДМИНУ =====
 @db_operation
 def add_admin_notification(conn, cursor, text, user_id=None):
     cursor.execute("""
@@ -1029,7 +1041,6 @@ def mark_notification_sent(conn, cursor, notif_id):
     cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
 
 
-# ===== ТЕСТОВЫЕ ЮЗЕРЫ =====
 @db_operation
 def create_test_users(conn, cursor, count=10):
     names = ["Тест1", "Тест2", "Тест3", "Тест4", "Тест5",
@@ -1061,7 +1072,6 @@ def delete_test_users(conn, cursor):
     return cursor.rowcount
 
 
-# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup
