@@ -25,11 +25,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         user = get_user(user_id)
         plan = dict(user).get("plan", "basic") if user else "basic"
         balance = get_tokens(user_id)
-        img_used, img_limit = get_week_images_used(user_id)
         current_model = get_model_setting("image_generate") or "flux-schnell"
 
         await message.answer(
-            f"🎨 Выбери модель ({img_used}/{img_limit}):",
+            f"🎨 Выбери модель:",
             reply_markup=helpers.model_choice_kb("image_generate", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_image_model", "pending_prompt": prompt}
@@ -39,22 +38,21 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
     image_cost = helpers.MODEL_COSTS.get(current_model, 10)
 
     if not helpers.can_use_model(user_id, current_model):
-        await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} доступна только на Premium или с токенами.\n\nОформи: /credits")
+        await message.answer(
+            f"🔒 Модель <b>{helpers.MODEL_NAMES.get(current_model)}</b> доступна только на Premium или с токенами.\n\n"
+            f"💎 Оформи: /credits"
+        )
         return
 
     balance = get_tokens(user_id)
 
-    if balance > 0:
-        if balance < image_cost:
-            await message.answer(f"❌ Не хватает токенов: нужно {image_cost}, у тебя {balance}.\n\nПополни: /credits")
-            return
-        spend_tokens(user_id, image_cost)
-    else:
-        img_used, img_limit = get_week_images_used(user_id)
-        if img_used >= img_limit:
-            await message.answer(f"🔒 Лимит картинок на неделю исчерпан ({img_used}/{img_limit}).\n\n💎 Купи токены: /credits")
-            return
-        use_week_image(user_id)
+    if balance < image_cost:
+        await message.answer(
+            f"❌ Не хватает токенов: нужно <b>{image_cost}</b>, у тебя <b>{balance}</b>.\n\n"
+            f"💎 Пополни: /credits"
+        )
+        return
+    spend_tokens(user_id, image_cost)
 
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
@@ -77,7 +75,10 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         )
         enhanced = prompt
         if prompt_resp.status_code == 200:
-            enhanced = prompt_resp.json().get('choices', [{}])[0].get('message', {}).get('content', prompt).strip('"')
+            try:
+                enhanced = prompt_resp.json()['choices'][0]['message']['content'].strip('"')
+            except (KeyError, IndexError, TypeError):
+                enhanced = prompt
 
         logger.info(f"🎨 [{user_id}] Запрос к Replicate: model={current_model}")
         img_resp = requests.post(
@@ -110,7 +111,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                     logger.error(f"❌ [{user_id}] Скачивание: {e}")
 
         if not img_data:
-            # Безопасная обработка ошибки
             err_text = "Неизвестная ошибка"
             try:
                 data = img_resp.json()
@@ -133,7 +133,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             )
             return
 
-        # Водяной знак
         try:
             img = Image.open(BytesIO(img_data))
             draw = ImageDraw.Draw(img)
@@ -149,7 +148,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
-        # Сохранение
         image_id = None
         try:
             image_id, session_id = save_image_to_history(
@@ -165,16 +163,18 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] БД: {e}")
 
-        # Отправка
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Ещё", callback_data="regenerate"),
-             InlineKeyboardButton(text="🎨 Стикер", callback_data="make_sticker")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
         ])
 
         await message.answer_photo(
             BufferedInputFile(file=img_data, filename="image.png"),
-            caption=f"🖼️ Твоя картинка\n📝 {prompt[:50]}\n🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n💰 -{image_cost} токенов",
+            caption=(
+                f"🖼️ <b>Твоя картинка</b>\n"
+                f"📝 {prompt[:50]}\n"
+                f"🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n"
+                f"💰 -{image_cost} токенов"
+            ),
             reply_markup=keyboard
         )
         await status_msg.delete()
@@ -192,43 +192,9 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 async def back_main_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     name = helpers.get_user_name(user_id) or "друг"
-    text = f"✨ Vertex AI\n\n👋 Привет, {name}!\n\n📧 Проблемы? Пиши: mychannell@gmail.com"
+    text = f"✨ <b>Vertex AI</b>\n\n👋 Привет, <b>{name}</b>!\n\n📧 Проблемы? Пиши: mychannell069@gmail.com"
     try:
         await callback.message.edit_text(text, reply_markup=helpers.main_menu())
     except Exception:
         await callback.message.answer(text, reply_markup=helpers.main_menu())
     await helpers.safe_answer(callback)
-
-
-@router.callback_query(F.data == "regenerate")
-async def regenerate_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    memory = get_user_memory(user_id)
-    if memory and memory.get('context_history'):
-        import json
-        history = json.loads(memory.get('context_history', '[]'))
-        if history:
-            prompt = history[-1].get('prompt', '')
-            if prompt:
-                await callback.message.answer("🔄 Генерирую вариацию...")
-                await generate_image(callback.message, prompt, user_id)
-                await callback.answer()
-                return
-    await callback.answer("❌ Не найден запрос", show_alert=True)
-
-
-@router.callback_query(F.data == "make_sticker")
-async def make_sticker_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    memory = get_user_memory(user_id)
-    if memory and memory.get('context_history'):
-        import json
-        history = json.loads(memory.get('context_history', '[]'))
-        if history:
-            prompt = history[-1].get('prompt', '')
-            if prompt:
-                await callback.message.answer("🎨 Делаю стикер...")
-                await generate_image(callback.message, f"{prompt}, as a sticker, white border", user_id)
-                await callback.answer()
-                return
-    await callback.answer("❌ Не найден запрос", show_alert=True)

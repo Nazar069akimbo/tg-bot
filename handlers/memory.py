@@ -26,14 +26,14 @@ async def show_memory(message: types.Message, user_id: int = None):
     name = profile.get("name") or "—"
 
     text = (
-        f"🧠 **Что я о тебе знаю**\n\n"
-        f"🪪 Имя: {name}\n"
+        f"🧠 <b>Что я о тебе знаю</b>\n\n"
+        f"🪪 Имя: <b>{name}</b>\n"
         f"🎨 Стиль: {prefs.get('style') or '—'}\n"
         f"🌈 Цвета: {prefs.get('colors') or '—'}\n"
         f"🎯 Хобби: {', '.join(prefs.get('hobbies') or []) or '—'}\n"
         f"💬 Любимые темы: {', '.join(prefs.get('favorite_topics') or []) or '—'}\n\n"
-        f"🖼️ Картинок: {meta.get('images_count', 0)}\n"
-        f"📝 Сообщений: {len(history)}\n"
+        f"🖼️ Картинок: <b>{meta.get('images_count', 0)}</b>\n"
+        f"📝 Сообщений: {len(history)}"
     )
     try:
         await message.edit_text(text, reply_markup=memory_kb())

@@ -19,7 +19,6 @@ async def handle_text(message: types.Message):
 
     state = helpers.user_pages.get(user_id, {})
 
-    # === АДМИН-ВВОД ===
     if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
                               "waiting_give_tokens", "waiting_price", "waiting_promo_code",
                               "waiting_tariff_edit", "waiting_tariff_add",
@@ -29,13 +28,11 @@ async def handle_text(message: types.Message):
         await handle_admin_input(message)
         return
 
-    # === ПОДДЕРЖКА ===
     if state.get("state") == "waiting_support_message":
         from .support import handle_support_message
         await handle_support_message(message)
         return
 
-    # === ПРОМОКОД ===
     if state.get("state") == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -43,33 +40,29 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === ОТМЕНА ===
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # === ИМЯ ===
     if state.get("state") == "waiting_name":
         set_user_name(user_id, text)
         helpers.user_pages.pop(user_id, None)
-        await message.answer(f"Ок, {text}! Приятно познакомиться 😊")
+        await message.answer(f"Ок, <b>{text}</b>! Приятно познакомиться 😊")
         from .start import start_cmd
         await start_cmd(message)
         return
 
-    # === СПРАШИВАТЬ ЛИ МОДЕЛЬ ===
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
         user = get_user(user_id)
         plan = dict(user).get("plan", "basic") if user else "basic"
         balance = get_tokens(user_id)
-        text_avail, text_limit = get_text_tokens_today(user_id)
         current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
 
         await message.answer(
-            f"🧠 Выбери модель ({text_avail}/{text_limit}):",
+            f"🧠 Выбери модель:",
             reply_markup=helpers.model_choice_kb("text_chat", current_model, plan, balance)
         )
         helpers.user_pages[user_id] = {"state": "waiting_model_choice", "pending_text": text}
@@ -83,22 +76,21 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     cost = helpers.MODEL_COSTS.get(current_model, 1)
 
     if not helpers.can_use_model(user_id, current_model):
-        await message.answer(f"🔒 Модель {helpers.MODEL_NAMES.get(current_model)} доступна только на Premium или с токенами.\n\nОформи: /credits")
+        await message.answer(
+            f"🔒 Модель <b>{helpers.MODEL_NAMES.get(current_model)}</b> доступна только на Premium или с токенами.\n\n"
+            f"💎 Оформи: /credits"
+        )
         return
 
     balance = get_tokens(user_id)
 
-    if balance > 0:
-        if balance < cost:
-            await message.answer(f"❌ Не хватает токенов: нужно {cost}, у тебя {balance}.\n\nПополни: /credits")
-            return
-        spend_tokens(user_id, cost)
-    else:
-        available, limit = get_text_tokens_today(user_id)
-        if available <= 0:
-            await message.answer(f"🔒 Лимит текстовых запросов на сегодня исчерпан.\n\n💎 Купи токены: /credits")
-            return
-        spend_text_token(user_id)
+    if balance < cost:
+        await message.answer(
+            f"❌ Не хватает токенов: нужно <b>{cost}</b>, у тебя <b>{balance}</b>.\n\n"
+            f"💎 Пополни: /credits"
+        )
+        return
+    spend_tokens(user_id, cost)
 
     status_msg = await message.answer("🤔 Думаю...")
 
@@ -146,7 +138,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
             if full_time:
                 add_reminder(user_id, r_text, full_time.isoformat())
                 helpers.user_pages.pop(user_id, None)
-                await message.answer(f"⏰ Напоминание установлено!\n\n📝 {r_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
+                await message.answer(f"⏰ <b>Напоминание установлено!</b>\n\n📝 {r_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
                 return
         await message.answer(reply_text or f"❓ {question}" or "❓ Уточни.")
         return
@@ -243,7 +235,7 @@ async def pick_model_cb(callback: types.CallbackQuery):
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
         try:
-            await callback.message.edit_text(f"✅ Модель: {helpers.MODEL_NAMES.get(model_id, model_id)}")
+            await callback.message.edit_text(f"✅ Модель: <b>{helpers.MODEL_NAMES.get(model_id, model_id)}</b>")
         except Exception:
             pass
     await helpers.safe_answer(callback)
@@ -305,17 +297,16 @@ async def change_model_text_cb(callback: types.CallbackQuery):
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
     balance = get_tokens(callback.from_user.id)
-    text_avail, text_limit = get_text_tokens_today(callback.from_user.id)
     current = get_model_setting("text_chat") or "gpt-4.1-nano"
 
     try:
         await callback.message.edit_text(
-            f"🧠 Выбери текстовую модель ({text_avail}/{text_limit}):",
+            f"🧠 Выбери текстовую модель:",
             reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
         )
     except Exception:
         await callback.message.answer(
-            f"🧠 Выбери текстовую модель ({text_avail}/{text_limit}):",
+            f"🧠 Выбери текстовую модель:",
             reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
         )
     await helpers.safe_answer(callback)
@@ -326,17 +317,16 @@ async def change_model_image_cb(callback: types.CallbackQuery):
     user = get_user(callback.from_user.id)
     plan = dict(user).get("plan", "basic") if user else "basic"
     balance = get_tokens(callback.from_user.id)
-    img_used, img_limit = get_week_images_used(callback.from_user.id)
     current = get_model_setting("image_generate") or "flux-schnell"
 
     try:
         await callback.message.edit_text(
-            f"🎨 Выбери модель для картинок ({img_used}/{img_limit}):",
+            f"🎨 Выбери модель для картинок:",
             reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
         )
     except Exception:
         await callback.message.answer(
-            f"🎨 Выбери модель для картинок ({img_used}/{img_limit}):",
+            f"🎨 Выбери модель для картинок:",
             reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
         )
     await helpers.safe_answer(callback)

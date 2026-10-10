@@ -25,13 +25,12 @@ async def start_cmd(message: types.Message):
     profile = load_profile(user_id)
     name = profile.get("name") if profile else None
 
-    # Проверяем — новый ли юзер
     is_new = not has_trial(user_id) and get_tokens(user_id) == 0
 
     if not name:
         helpers.user_pages[user_id] = {"state": "waiting_name"}
         await message.answer(
-            "👋 Привет! Я — Vertex AI — твой умный ассистент.\n\n"
+            "👋 Привет! Я — <b>Vertex AI</b> — твой умный ассистент.\n\n"
             "✨ Я умею:\n"
             "• 🖼️ Генерировать картинки\n"
             "• 🎨 Делать стикеры\n"
@@ -53,47 +52,40 @@ async def start_cmd(message: types.Message):
             if success:
                 await message.answer(msg)
 
-    # Триал
     if is_new:
         activate_trial(user_id)
-        trial_text = "🎁 30 токенов новичку — трать на что хочешь!"
+        trial_text = "🎁 <b>30 токенов новичку</b> — трать на что хочешь!\n\n"
     else:
         trial_text = ""
 
     tokens = get_tokens(user_id)
     user = get_user(user_id)
     plan = dict(user).get("plan", "basic") if user else "basic"
-
-    text_avail, text_limit = get_text_tokens_today(user_id)
-    img_used, img_limit = get_week_images_used(user_id)
+    plan_name = {"basic": "Базовый", "premium": "Premium", "premium_plus": "Premium+"}.get(plan, plan)
 
     if tokens > 0:
-        balance_line = f"🪙 Токенов: {tokens} (без лимитов)"
+        balance_line = f"🪙 Токенов: <b>{tokens}</b>"
     else:
-        balance_line = (
-            f"📝 Текст: {text_avail}/{text_limit} сегодня\n"
-            f"🎨 Картинок: {img_used}/{img_limit} на этой неделе"
-        )
+        balance_line = "🪙 Токенов: <b>0</b>\n💎 Купи токены: /credits"
 
     text = (
-        f"✨ Vertex AI\n\n"
-        f"👋 Привет, {name}!\n"
-        f"💳 Тариф: {plan}\n"
+        f"✨ <b>Vertex AI</b>\n\n"
+        f"👋 Привет, <b>{name}</b>!\n"
+        f"💳 Тариф: {plan_name}\n"
         f"{balance_line}\n\n"
-        f"{trial_text}\n\n"
+        f"{trial_text}"
         f"💬 Напиши, что хочешь!\n\n"
         f"📧 Проблемы? Пиши: {ADMIN_EMAIL}"
     )
     await message.answer(text, reply_markup=helpers.main_menu())
 
-    # Уведомление админу о новом юзере
     if is_new:
         try:
             notif_text = (
-                f"🆕 **Новый пользователь!**\n\n"
+                f"🆕 <b>Новый пользователь!</b>\n\n"
                 f"👤 {message.from_user.full_name}\n"
                 f"🔗 @{message.from_user.username or '—'}\n"
-                f"🆔 {user_id}"
+                f"🆔 <code>{user_id}</code>"
             )
             await message.bot.send_message(ADMIN_ID, notif_text)
             logger.info(f"📩 Уведомление о новом юзере {user_id}")

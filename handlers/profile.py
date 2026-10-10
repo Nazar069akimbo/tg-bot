@@ -23,20 +23,29 @@ async def show_profile(message: types.Message, user_id: int = None):
     name = profile.get("name") or "—"
     tokens = user.get("tokens") or 0
     plan = user.get("plan") or "basic"
-    text_avail, text_limit = get_text_tokens_today(user_id)
-    img_used, img_limit = get_week_images_used(user_id)
+    plan_name = {"basic": "Базовый", "premium": "Premium", "premium_plus": "Premium+"}.get(plan, plan)
     referral_count = get_referral_count(user_id)
+    images_count = meta.get('images_count', 0)
+
+    premium_until = user.get("premium_until")
+    premium_line = ""
+    if plan in ("premium", "premium_plus") and premium_until:
+        try:
+            until_dt = datetime.fromisoformat(premium_until)
+            days_left = (until_dt - datetime.now()).days
+            if days_left > 0:
+                premium_line = f"\n⏳ Подписка до: <b>{until_dt.strftime('%d.%m.%Y')}</b> ({days_left} дн.)"
+        except Exception:
+            pass
 
     text = (
-        f"👤 **Профиль**\n\n"
-        f"🪪 Имя: {name}\n"
-        f"🆔 ID: {user_id}\n"
-        f"💳 Тариф: {plan}\n\n"
-        f"🪙 Токенов: {tokens}\n"
-        f"📝 Текст: {text_avail}/{text_limit}\n"
-        f"🎨 Картинок: {img_used}/{img_limit}\n"
+        f"👤 <b>Профиль</b>\n\n"
+        f"🪪 Имя: <b>{name}</b>\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"💳 Тариф: <b>{plan_name}</b>{premium_line}\n\n"
+        f"🪙 Токенов: <b>{tokens}</b>\n"
         f"👥 Рефералов: {referral_count}\n"
-        f"🖼️ Картинок: {meta.get('images_count', 0)}"
+        f"🖼️ Картинок создано: {images_count}"
     )
     try:
         await message.edit_text(text, reply_markup=helpers.profile_kb())

@@ -3,6 +3,8 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection,
@@ -33,7 +35,10 @@ if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
@@ -63,7 +68,7 @@ async def reminder_worker():
                 rows = cursor.fetchall()
                 for row in rows:
                     try:
-                        await bot.send_message(row['user_id'], f"⏰ Напоминание:\n{row['text']}")
+                        await bot.send_message(row['user_id'], f"⏰ <b>Напоминание:</b>\n{row['text']}")
                         cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (row['id'],))
                         logger.info(f"✅ Напоминание {row['id']} отправлено {row['user_id']}")
                     except Exception as e:
@@ -87,7 +92,7 @@ async def subscription_worker():
                     plan_name = "Premium+" if row['plan'] == "premium_plus" else "Premium"
                     await bot.send_message(
                         user_id,
-                        f"⚠️ Твоя подписка {plan_name} заканчивается через {days_left} дн.\n\n"
+                        f"⚠️ Твоя подписка <b>{plan_name}</b> заканчивается через <b>{days_left}</b> дн.\n\n"
                         f"Продлить: /credits"
                     )
                     mark_subscription_notified(user_id)
@@ -105,7 +110,6 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
 
-    # === ШАГ 1: Восстановить БД из GitHub (если нет локально) ===
     db_exists = os.path.exists('data/repsolver.db')
     if not db_exists:
         logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
@@ -119,7 +123,6 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # === ШАГ 2: Восстановить ПАПКИ ЮЗЕРОВ из GitHub ДО polling ===
     logger.info("📥 Восстанавливаю папки пользователей из GitHub...")
     try:
         ok = GitHubBackup().restore_users()
@@ -130,7 +133,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление юзеров из GitHub: {e}")
 
-    # === ШАГ 3: Восстановить токены из папок в БД ===
     try:
         count = restore_from_user_folders()
         if count > 0:
@@ -140,7 +142,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
-    # === ШАГ 4: Настройки моделей ===
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()
@@ -148,7 +149,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
 
-    # === ШАГ 5: Фоновый бэкап БД раз в 30 мин ===
     def backup_loop():
         try:
             GitHubBackup().backup_db(reason='при старте')
@@ -193,8 +193,7 @@ async def main():
     logger.info("✅ Воркер подписок запущен")
 
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("🚀 Бот готов! Пользователей в папках: " +
-                str(sum(len(dirs) for _, dirs, _ in os.walk('data/users')) if os.path.exists('data/users') else 0))
+    logger.info("🚀 Бот готов!")
 
     await dp.start_polling(bot, skip_updates=True)
 
