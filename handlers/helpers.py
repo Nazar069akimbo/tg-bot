@@ -66,6 +66,7 @@ def admin_kb():
          InlineKeyboardButton(text="🎯 Фильтры", callback_data="a_filter_users")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
          InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
+        [InlineKeyboardButton(text="💰 Управление ценами", callback_data="a_prices_menu")],
         [InlineKeyboardButton(text="📩 Тикеты", callback_data="a_support_tickets"),
          InlineKeyboardButton(text="⚠️ Варны", callback_data="a_warnings")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
