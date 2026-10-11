@@ -18,34 +18,41 @@ async def handle_text(message: types.Message):
         return
 
     state = helpers.user_pages.get(user_id, {})
+    state_name = state.get("state")
 
-    if state.get("state") in ["waiting_broadcast", "waiting_block_user", "waiting_contact",
-                              "waiting_give_tokens", "waiting_price", "waiting_promo_code",
-                              "waiting_tariff_edit", "waiting_tariff_add",
-                              "waiting_model_cost", "waiting_limit",
-                              "waiting_user_search", "waiting_admin_reply"]:
+    # === АДМИН-ВВОД ===
+    if state_name in [
+        "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
+        "waiting_user_search", "waiting_admin_reply",
+        "waiting_warn_add", "waiting_warn_remove",
+        "waiting_start_dialog_user",
+    ]:
         from .admin import handle_admin_input
         await handle_admin_input(message)
         return
 
-    if state.get("state") == "waiting_support_message":
+    # === ПОДДЕРЖКА ===
+    if state_name == "waiting_support_message":
         from .support import handle_support_message
         await handle_support_message(message)
         return
 
-    if state.get("state") == "waiting_promo_use":
+    # === ПРОМОКОД ===
+    if state_name == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
         await message.answer(msg, reply_markup=helpers.main_menu())
         helpers.user_pages.pop(user_id, None)
         return
 
+    # === ОТМЕНА ===
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    if state.get("state") == "waiting_name":
+    # === ВВОД ИМЕНИ ===
+    if state_name == "waiting_name":
         set_user_name(user_id, text)
         helpers.user_pages.pop(user_id, None)
         await message.answer(f"Ок, <b>{text}</b>! Приятно познакомиться 😊")
@@ -53,6 +60,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
+    # === ВЫБОР МОДЕЛИ ===
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
@@ -138,7 +146,11 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
             if full_time:
                 add_reminder(user_id, r_text, full_time.isoformat())
                 helpers.user_pages.pop(user_id, None)
-                await message.answer(f"⏰ <b>Напоминание установлено!</b>\n\n📝 {r_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
+                await message.answer(
+                    f"⏰ <b>Напоминание установлено!</b>\n\n"
+                    f"📝 {r_text}\n"
+                    f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
+                )
                 return
         await message.answer(reply_text or f"❓ {question}" or "❓ Уточни.")
         return

@@ -14,6 +14,17 @@ user_pages = {}
 user_model = {}
 
 
+# ==================== ССЫЛКИ ====================
+
+def user_link(user_id, name=None):
+    """HTML-ссылка на пользователя. Работает, если юзер хоть раз писал боту."""
+    display = name or str(user_id)
+    display = str(display).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f'<a href="tg://user?id={user_id}">{display}</a>'
+
+
+# ==================== ГЛАВНОЕ МЕНЮ ====================
+
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
@@ -45,15 +56,7 @@ def profile_kb():
     ])
 
 
-def logs_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Последние 100 строк", callback_data="a_logs_tail")],
-        [InlineKeyboardButton(text="❌ Ошибки (ERROR)", callback_data="a_logs_errors")],
-        [InlineKeyboardButton(text="⚠️ Предупреждения (WARNING)", callback_data="a_logs_warnings")],
-        [InlineKeyboardButton(text="🗑 Скачать весь bot.log", callback_data="a_logs_download")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-    ])
-
+# ==================== АДМИН ====================
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -64,16 +67,27 @@ def admin_kb():
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
          InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
         [InlineKeyboardButton(text="📩 Тикеты", callback_data="a_support_tickets"),
-         InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
-        [InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block"),
-         InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
-        [InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db"),
-         InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github")],
-        [InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users"),
-         InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes")],
-        [InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status"),
-         InlineKeyboardButton(text="📜 Логи", callback_data="a_logs")],
+         InlineKeyboardButton(text="⚠️ Варны", callback_data="a_warnings")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
+         InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
+        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
+         InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
+        [InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github"),
+         InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users")],
+        [InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes"),
+         InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
+        [InlineKeyboardButton(text="📜 Логи", callback_data="a_logs")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+
+
+def logs_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📄 Последние 100 строк", callback_data="a_logs_tail")],
+        [InlineKeyboardButton(text="❌ Ошибки (ERROR)", callback_data="a_logs_errors")],
+        [InlineKeyboardButton(text="⚠️ Предупреждения (WARNING)", callback_data="a_logs_warnings")],
+        [InlineKeyboardButton(text="🗑 Скачать весь bot.log", callback_data="a_logs_download")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
 
 
@@ -95,6 +109,8 @@ def get_user_name(user_id):
     except Exception:
         return None
 
+
+# ==================== МОДЕЛИ ====================
 
 AVAILABLE_MODELS = {
     "text_chat": [

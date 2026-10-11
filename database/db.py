@@ -323,6 +323,27 @@ def init_db():
         )
         ''')
 
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ticket_ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER,
+            user_id INTEGER,
+            rating INTEGER,
+            comment TEXT,
+            created_at TEXT
+        )
+        ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS warnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            reason TEXT,
+            admin_id INTEGER,
+            created_at TEXT
+        )
+        ''')
+
         default_settings = [
             ('free_input_chars', '500'),
             ('free_output_words', '50'),
@@ -464,7 +485,6 @@ def restore_from_user_folders():
             cursor.execute("SELECT user_id, tokens FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
 
-            # Папка — источник правды: перезаписываем БД, если в папке есть токены
             if not tokens and row and row[1] and row[1] > 0:
                 print(f"⏭ {name or user_id}: папка пустая, в БД {row[1]}, пропуск")
                 continue
@@ -708,6 +728,35 @@ def complete_payment(conn, cursor, payload):
 
 
 @db_operation
+def get_payments_summary(conn, cursor, days=30):
+    """Возвращает (total_stars, total_count, rub_estimate) за последние N дней."""
+    from datetime import datetime, timedelta
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+    cursor.execute("""
+        SELECT COALESCE(SUM(stars_amount), 0), COUNT(*)
+        FROM payments
+        WHERE status = 'completed' AND timestamp >= ?
+    """, (since,))
+    row = cursor.fetchone()
+    stars = row[0] or 0
+    count = row[1] or 0
+    return stars, count
+
+
+@db_operation
+def get_payments_list(conn, cursor, limit=20):
+    cursor.execute("""
+        SELECT p.*, u.username
+        FROM payments p
+        LEFT JOIN users u ON u.user_id = p.user_id
+        WHERE p.status = 'completed'
+        ORDER BY p.timestamp DESC
+        LIMIT ?
+    """, (limit,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
 def is_admin(conn, cursor, user_id):
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
     return cursor.fetchone() is not None
@@ -864,6 +913,15 @@ def get_tariffs(conn, cursor, kind=None):
 
 
 @db_operation
+def get_all_tariffs(conn, cursor, kind=None):
+    if kind:
+        cursor.execute("SELECT * FROM tariffs WHERE kind = ? ORDER BY sort_order", (kind,))
+    else:
+        cursor.execute("SELECT * FROM tariffs ORDER BY kind, sort_order")
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
 def add_tariff(conn, cursor, kind, name, price_rub, stars, tokens, days=0):
     cursor.execute("INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
                    (kind, name, price_rub, stars, tokens, days))
@@ -951,18 +1009,20 @@ def get_premium_count(conn, cursor):
     return cursor.fetchone()[0] or 0
 
 
+# ===== ПОДДЕРЖКА (ТИКЕТЫ) =====
 @db_operation
-def create_support_ticket(conn, cursor, user_id, username, first_message):
+def create_support_ticket(conn, cursor, user_id, username, first_message=None):
     cursor.execute("""
         INSERT INTO support_tickets (user_id, username, status, created_at, updated_at)
         VALUES (?, ?, 'open', ?, ?)
     """, (user_id, username, datetime.now().isoformat(), datetime.now().isoformat()))
     ticket_id = cursor.lastrowid
 
-    cursor.execute("""
-        INSERT INTO support_messages (ticket_id, sender, text, created_at)
-        VALUES (?, 'user', ?, ?)
-    """, (ticket_id, first_message, datetime.now().isoformat()))
+    if first_message:
+        cursor.execute("""
+            INSERT INTO support_messages (ticket_id, sender, text, created_at)
+            VALUES (?, 'user', ?, ?)
+        """, (ticket_id, first_message, datetime.now().isoformat()))
 
     return ticket_id
 
@@ -1010,6 +1070,12 @@ def close_ticket(conn, cursor, ticket_id):
 
 
 @db_operation
+def reopen_ticket(conn, cursor, ticket_id):
+    cursor.execute("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?",
+                   (datetime.now().isoformat(), ticket_id))
+
+
+@db_operation
 def get_user_ticket(conn, cursor, user_id):
     cursor.execute("""
         SELECT * FROM support_tickets WHERE user_id = ? AND status = 'open'
@@ -1019,6 +1085,90 @@ def get_user_ticket(conn, cursor, user_id):
     return dict(row) if row else None
 
 
+@db_operation
+def get_ticket(conn, cursor, ticket_id):
+    cursor.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+# ===== ОЦЕНКИ ТИКЕТОВ =====
+@db_operation
+def save_ticket_rating(conn, cursor, ticket_id, user_id, rating, comment=None):
+    cursor.execute("""
+        INSERT INTO ticket_ratings (ticket_id, user_id, rating, comment, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ticket_id, user_id, rating, comment, datetime.now().isoformat()))
+    return cursor.lastrowid
+
+
+@db_operation
+def get_ticket_rating(conn, cursor, ticket_id):
+    cursor.execute("SELECT * FROM ticket_ratings WHERE ticket_id = ? ORDER BY id DESC LIMIT 1", (ticket_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+@db_operation
+def get_avg_rating(conn, cursor):
+    cursor.execute("SELECT AVG(rating), COUNT(*) FROM ticket_ratings")
+    row = cursor.fetchone()
+    return (round(row[0], 2) if row[0] else 0, row[1] or 0)
+
+
+# ===== ВАРНЫ =====
+@db_operation
+def add_warning(conn, cursor, user_id, reason, admin_id):
+    cursor.execute("""
+        INSERT INTO warnings (user_id, reason, admin_id, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, reason, admin_id, datetime.now().isoformat()))
+    return cursor.lastrowid
+
+
+@db_operation
+def get_warnings(conn, cursor, user_id):
+    cursor.execute("SELECT * FROM warnings WHERE user_id = ? ORDER BY id DESC", (user_id,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def get_warnings_count(conn, cursor, user_id):
+    cursor.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
+    return cursor.fetchone()[0] or 0
+
+
+@db_operation
+def remove_warning(conn, cursor, warning_id):
+    cursor.execute("DELETE FROM warnings WHERE id = ?", (warning_id,))
+
+
+@db_operation
+def remove_all_warnings(conn, cursor, user_id):
+    cursor.execute("DELETE FROM warnings WHERE user_id = ?", (user_id,))
+
+
+@db_operation
+def get_warned_users(conn, cursor, limit=50):
+    cursor.execute("""
+        SELECT user_id, COUNT(*) as cnt, MAX(created_at) as last_date
+        FROM warnings
+        GROUP BY user_id
+        ORDER BY cnt DESC, last_date DESC
+        LIMIT ?
+    """, (limit,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def get_all_warnings(conn, cursor, limit=100):
+    cursor.execute("""
+        SELECT * FROM warnings ORDER BY id DESC LIMIT ?
+    """, (limit,))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+# ===== УВЕДОМЛЕНИЯ АДМИНУ =====
 @db_operation
 def add_admin_notification(conn, cursor, text, user_id=None):
     cursor.execute("""
@@ -1042,37 +1192,7 @@ def mark_notification_sent(conn, cursor, notif_id):
     cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
 
 
-@db_operation
-def create_test_users(conn, cursor, count=10):
-    names = ["Тест1", "Тест2", "Тест3", "Тест4", "Тест5",
-             "Тест6", "Тест7", "Тест8", "Тест9", "Тест10"]
-    plans = ["basic", "basic", "premium", "basic", "premium_plus",
-             "basic", "premium", "basic", "premium_plus", "basic"]
-    tokens_list = [0, 50, 100, 500, 1000, 3000, 200, 0, 800, 150]
-
-    for i in range(count):
-        uid = 900000000 + i
-        name = names[i % len(names)]
-        plan = plans[i % len(plans)]
-        tokens = tokens_list[i % len(tokens_list)]
-        premium_until = (datetime.now() + timedelta(days=30)).isoformat() if plan != "basic" else None
-        joined = (datetime.now() - timedelta(days=i)).isoformat()
-
-        cursor.execute("""
-            INSERT OR REPLACE INTO users
-            (user_id, username, joined, tokens, plan, premium_until, trial_start, trial_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-        """, (uid, name, joined, tokens, plan, premium_until, joined))
-
-    return count
-
-
-@db_operation
-def delete_test_users(conn, cursor):
-    cursor.execute("DELETE FROM users WHERE user_id >= 900000000")
-    return cursor.rowcount
-
-
+# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup
