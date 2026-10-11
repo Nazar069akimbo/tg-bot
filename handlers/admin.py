@@ -72,9 +72,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
         f"💰 Токенов: {total_tokens}\n"
         f"⭐ Средняя оценка: {avg_r} ({ratings_count} оценок)"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [back_btn("admin_panel")]
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback, text, kb)
     await helpers.safe_answer(callback)
 
@@ -95,7 +93,6 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     except Exception as e:
         err = str(e)
 
-    # Данные из БД (всегда работают)
     stars30, count30 = get_payments_summary(days=30)
     rub30 = stars30 * 0.45
 
@@ -142,10 +139,182 @@ async def a_payments_list_cb(callback: types.CallbackQuery):
             ts = p['timestamp'][:16].replace("T", " ")
             text += f"• {link} — <b>{p['stars_amount']} ⭐</b> ({p.get('plan', '?')})\n  <i>{ts}</i>\n"
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [back_btn("a_stars_balance")]
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_stars_balance")]])
     await safe_edit(callback, text[:4000], kb)
+    await helpers.safe_answer(callback)
+
+
+# ==================== УПРАВЛЕНИЕ ЦЕНАМИ ====================
+
+def prices_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Пакеты токенов", callback_data="a_prices|tokens")],
+        [InlineKeyboardButton(text="💎 Подписки", callback_data="a_prices|premium")],
+        [InlineKeyboardButton(text="➕ Добавить пакет", callback_data="a_price_add|tokens")],
+        [InlineKeyboardButton(text="➕ Добавить подписку", callback_data="a_price_add|premium")],
+        [back_btn("admin_panel")]
+    ])
+
+
+@router.callback_query(F.data == "a_prices_menu")
+async def a_prices_menu_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+
+    tokens = get_all_tariffs("tokens")
+    premium = get_all_tariffs("premium")
+
+    text = (
+        "💰 <b>УПРАВЛЕНИЕ ЦЕНАМИ</b>\n\n"
+        f"📦 Пакетов токенов: <b>{len(tokens)}</b>\n"
+        f"💎 Подписок: <b>{len(premium)}</b>\n\n"
+        "Курс: <code>1⭐ ≈ 2₽</code>\n"
+        "Формат создания: <code>название | цена_руб | токены [| дни]</code>"
+    )
+    await safe_edit(callback, text, prices_menu_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_prices|"))
+async def a_prices_list_cb(callback: types.CallbackQuery):
+    kind = callback.data.split("|")[1]
+    tariffs = get_all_tariffs(kind)
+
+    title = "📦 <b>Пакеты токенов</b>" if kind == "tokens" else "💎 <b>Подписки</b>"
+    text = f"{title}\n\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for t in tariffs:
+        active = "✅" if t.get('active', 1) else "❌"
+        if kind == "premium":
+            label = f"{active} {t['name']} — {t['price_rub']}₽ / {t['stars']}⭐ / {t['days']}дн"
+        else:
+            label = f"{active} {t['name']} — {t['price_rub']}₽ / {t['stars']}⭐ / {t['tokens']}ток"
+        kb.inline_keyboard.append([InlineKeyboardButton(text=label, callback_data=f"a_price_edit|{t['id']}")])
+
+    kb.inline_keyboard.append([InlineKeyboardButton(text="➕ Добавить", callback_data=f"a_price_add|{kind}")])
+    kb.inline_keyboard.append([back_btn("a_prices_menu")])
+
+    if not tariffs:
+        text += "Пусто. Нажми ➕ Добавить"
+
+    await safe_edit(callback, text, kb)
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_price_edit|"))
+async def a_price_edit_cb(callback: types.CallbackQuery):
+    tid = int(callback.data.split("|")[1])
+    t = get_tariff(tid)
+    if not t:
+        await helpers.safe_answer(callback, "❌ Тариф не найден", show_alert=True)
+        return
+
+    kind_label = "пакет" if t['kind'] == "tokens" else "подписка"
+
+    text = (
+        f"✏️ <b>{t['name']}</b> ({kind_label})\n\n"
+        f"💰 Цена: <b>{t['price_rub']}₽</b>\n"
+        f"⭐ Звёзд: <b>{t['stars']}</b>\n"
+        f"🪙 Токенов: <b>{t['tokens']}</b>\n"
+    )
+    if t['kind'] == "premium":
+        text += f"📅 Дней: <b>{t['days']}</b>\n"
+    text += f"👁 Активен: <b>{'Да' if t.get('active', 1) else 'Нет'}</b>\n\n"
+
+    if t['kind'] == "premium":
+        text += f"<b>Формат редактирования:</b>\n<code>имя | цена_руб | токены | дни</code>"
+    else:
+        text += f"<b>Формат редактирования:</b>\n<code>имя | цена_руб | токены</code>"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"a_price_do_edit|{tid}")],
+        [InlineKeyboardButton(text="🔄 Вкл/Выкл", callback_data=f"a_price_toggle|{tid}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"a_price_delete|{tid}")],
+        [back_btn(f"a_prices|{t['kind']}")]
+    ])
+    await safe_edit(callback, text, kb)
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_price_do_edit|"))
+async def a_price_do_edit_cb(callback: types.CallbackQuery):
+    tid = int(callback.data.split("|")[1])
+    t = get_tariff(tid)
+    if not t:
+        await helpers.safe_answer(callback, "❌ Тариф не найден", show_alert=True)
+        return
+
+    helpers.user_pages[callback.from_user.id] = {"state": "waiting_price_edit", "tariff_id": tid}
+
+    if t['kind'] == "premium":
+        fmt = "имя | цена_руб | токены | дни"
+        example = f"{t['name']} | {t['price_rub']} | {t['tokens']} | {t['days']}"
+    else:
+        fmt = "имя | цена_руб | токены"
+        example = f"{t['name']} | {t['price_rub']} | {t['tokens']}"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_price_edit|{tid}", "🔙 Отмена")]])
+    await safe_edit(callback,
+        f"✏️ <b>Редактирование {t['name']}</b>\n\n"
+        f"Формат: <code>{fmt}</code>\n\n"
+        f"Пример: <code>{example}</code>\n\n"
+        f"⏹ /cancel — отмена",
+        kb
+    )
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_price_toggle|"))
+async def a_price_toggle_cb(callback: types.CallbackQuery):
+    tid = int(callback.data.split("|")[1])
+    t = get_tariff(tid)
+    if not t:
+        await helpers.safe_answer(callback, "❌ Нет", show_alert=True)
+        return
+    new_active = 0 if t.get('active', 1) else 1
+    update_tariff(tid, active=new_active)
+    await helpers.safe_answer(callback, f"✅ {'Включён' if new_active else 'Отключён'}", show_alert=True)
+    await a_price_edit_cb(callback)
+
+
+@router.callback_query(F.data.startswith("a_price_delete|"))
+async def a_price_delete_cb(callback: types.CallbackQuery):
+    tid = int(callback.data.split("|")[1])
+    t = get_tariff(tid)
+    if not t:
+        await helpers.safe_answer(callback, "❌ Нет", show_alert=True)
+        return
+    kind = t['kind']
+    delete_tariff(tid)
+    await helpers.safe_answer(callback, f"🗑 Удалён: {t['name']}", show_alert=True)
+    cb2 = callback
+    cb2.data = f"a_prices|{kind}"
+    await a_prices_list_cb(cb2)
+
+
+@router.callback_query(F.data.startswith("a_price_add|"))
+async def a_price_add_cb(callback: types.CallbackQuery):
+    kind = callback.data.split("|")[1]
+    helpers.user_pages[callback.from_user.id] = {"state": "waiting_price_add", "kind": kind}
+
+    if kind == "premium":
+        fmt = "имя | цена_руб | токены | дни"
+        ex = "Premium | 500 | 3000 | 30"
+    else:
+        fmt = "имя | цена_руб | токены"
+        ex = "Новый пакет | 300 | 1500"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_prices|{kind}", "🔙 Отмена")]])
+    await safe_edit(callback,
+        f"➕ <b>Добавить {'подписку' if kind == 'premium' else 'пакет'}</b>\n\n"
+        f"Формат: <code>{fmt}</code>\n\n"
+        f"Пример: <code>{ex}</code>\n\n"
+        f"⭐ Звёзды считаются автоматически: <code>round(цена_руб / 2)</code>\n\n"
+        f"⏹ /cancel — отмена",
+        kb
+    )
     await helpers.safe_answer(callback)
 
 
@@ -185,12 +354,7 @@ async def a_filter_cb(callback: types.CallbackQuery):
 
     text = f"🎯 <b>Фильтр: {filter_type}</b>\n\n"
     for u in users:
-        link = helpers.user_link(u['user_id'], u['username'] or str(u['user_id']))
-        status = "⛔" if u['is_blocked'] else "✅"
-        plan = "💎" if u['plan'] in ('premium', 'premium_plus') else "👤"
-        warn_cnt = get_warnings_count(u['user_id'])
-        warn_str = f" ⚠️{warn_cnt}" if warn_cnt else ""
-        text += f"{status}{plan} {link}: {u['tokens']} ток.{warn_str}\n"
+        text += format_user_line(u)
 
     if not users:
         text += "Пусто."
@@ -198,6 +362,18 @@ async def a_filter_cb(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_filter_users")]])
     await safe_edit(callback, text[:4000], kb)
     await helpers.safe_answer(callback)
+
+
+def format_user_line(u):
+    """Строка юзера с кликабельным именем и ID."""
+    uid = u['user_id']
+    name = u.get('username') or "—"
+    name_link = helpers.user_link(uid, name)
+    status = "⛔" if u.get('is_blocked') else "✅"
+    plan = "💎" if u.get('plan') in ('premium', 'premium_plus') else "👤"
+    warn_cnt = get_warnings_count(uid)
+    warn_str = f" ⚠️{warn_cnt}" if warn_cnt else ""
+    return f"{status}{plan} {name_link}\n   🆔 <code>{uid}</code> · 🪙 {u['tokens']}{warn_str}\n\n"
 
 
 async def handle_user_search(message: types.Message):
@@ -216,12 +392,7 @@ async def handle_user_search(message: types.Message):
     else:
         text = f"🔍 <b>Результаты: {query}</b>\n\n"
         for u in users:
-            link = helpers.user_link(u['user_id'], u['username'] or str(u['user_id']))
-            status = "⛔" if u['is_blocked'] else "✅"
-            plan = "💎" if u['plan'] in ('premium', 'premium_plus') else "👤"
-            warn_cnt = get_warnings_count(u['user_id'])
-            warn_str = f" ⚠️{warn_cnt}" if warn_cnt else ""
-            text += f"{status}{plan} {link} — {u['tokens']} ток.{warn_str}\n"
+            text += format_user_line(u)
         await message.answer(text[:4000], reply_markup=helpers.admin_kb())
 
     helpers.user_pages.pop(user_id, None)
@@ -235,10 +406,10 @@ async def a_support_tickets_cb(callback: types.CallbackQuery):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for t in tickets:
-        link = helpers.user_link(t['user_id'], t['username'] or str(t['user_id']))
+        name = t['username'] or str(t['user_id'])
         kb.inline_keyboard.append([
             InlineKeyboardButton(
-                text=f"💬 #{t['id']} · {t['username'] or t['user_id']}",
+                text=f"💬 #{t['id']} · {name}",
                 callback_data=f"a_ticket_{t['id']}"
             )
         ])
@@ -257,9 +428,7 @@ async def a_closed_tickets_cb(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for t in tickets:
         rating = get_ticket_rating(t['id'])
-        r_str = ""
-        if rating:
-            r_str = f" {'⭐' * rating['rating']}"
+        r_str = f" {'⭐' * rating['rating']}" if rating else ""
         kb.inline_keyboard.append([
             InlineKeyboardButton(
                 text=f"✅ #{t['id']} · {t['username'] or t['user_id']}{r_str}",
@@ -295,7 +464,6 @@ async def a_ticket_cb(callback: types.CallbackQuery):
     else:
         text += "<i>Пусто</i>"
 
-    # Кнопки
     kb_rows = []
     if ticket['status'] == 'open':
         kb_rows.append([InlineKeyboardButton(text="✍️ Ответить", callback_data=f"a_reply_{ticket_id}")])
@@ -326,9 +494,7 @@ async def noop_cb(callback: types.CallbackQuery):
 async def a_reply_cb(callback: types.CallbackQuery):
     ticket_id = int(callback.data.replace("a_reply_", ""))
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_admin_reply", "ticket_id": ticket_id}
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [back_btn(f"a_ticket_{ticket_id}", "🔙 Отмена")]
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_ticket_{ticket_id}", "🔙 Отмена")]])
     await safe_edit(callback, f"✍️ Напиши ответ для тикета #{ticket_id}:", kb)
     await helpers.safe_answer(callback)
 
@@ -338,17 +504,16 @@ async def a_close_cb(callback: types.CallbackQuery):
     ticket_id = int(callback.data.replace("a_close_", ""))
     ticket = get_ticket(ticket_id)
     if not ticket:
-        await helpers.safe_answer(callback, "❌ Тикет не найден", show_alert=True)
+        await helpers.safe_answer(callback, "❌ Нет", show_alert=True)
         return
 
     close_ticket(ticket_id)
 
-    # Уведомляем юзера + просим оценку
     try:
         from .support import notify_user_ticket_closed
         await notify_user_ticket_closed(callback.bot, ticket_id, ticket['user_id'])
     except Exception as e:
-        logger.warning(f"⚠️ Не отправил юзеру уведомление о закрытии: {e}")
+        logger.warning(f"⚠️ Не отправил юзеру: {e}")
 
     await helpers.safe_answer(callback, "✅ Тикет закрыт, юзеру отправлен запрос оценки", show_alert=True)
     await a_support_tickets_cb(callback)
@@ -370,16 +535,16 @@ async def a_delete_ticket_cb(callback: types.CallbackQuery):
         cursor.execute("DELETE FROM support_messages WHERE ticket_id = ?", (ticket_id,))
         cursor.execute("DELETE FROM support_tickets WHERE id = ?", (ticket_id,))
         cursor.execute("DELETE FROM ticket_ratings WHERE ticket_id = ?", (ticket_id,))
-    await helpers.safe_answer(callback, "🗑 Тикет удалён", show_alert=True)
+    await helpers.safe_answer(callback, "🗑 Удалён", show_alert=True)
     await a_support_tickets_cb(callback)
 
+
+# ==================== НАЧАТЬ ДИАЛОГ ПЕРВЫМ ====================
 
 @router.callback_query(F.data == "a_start_dialog")
 async def a_start_dialog_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_start_dialog_user"}
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [back_btn("a_support_tickets", "🔙 Отмена")]
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_support_tickets", "🔙 Отмена")]])
     await safe_edit(callback,
         "✍️ <b>Начать диалог первым</b>\n\n"
         "Введи ID юзера, которому хочешь написать.\n"
@@ -391,7 +556,6 @@ async def a_start_dialog_cb(callback: types.CallbackQuery):
 
 
 async def handle_start_dialog(message: types.Message, admin_id: int):
-    """Админ вводит ID → создаём тикет → пишем первое сообщение."""
     text = message.text.strip()
 
     if text == "/cancel":
@@ -399,21 +563,18 @@ async def handle_start_dialog(message: types.Message, admin_id: int):
         await message.answer("✅ Отменено", reply_markup=helpers.admin_kb())
         return
 
-    # Парсим ID
     try:
         target_id = int(text)
     except ValueError:
-        await message.answer("❌ Нужно число (ID юзера). Попробуй снова или /cancel")
+        await message.answer("❌ Нужно число (ID). Попробуй снова или /cancel")
         return
 
-    # Проверяем, что юзер существует
     user = get_user(target_id)
     if not user:
-        await message.answer(f"❌ Юзер {target_id} не найден в БД. Пусть напишет /start.", reply_markup=helpers.admin_kb())
+        await message.answer(f"❌ Юзер {target_id} не найден. Пусть напишет /start.", reply_markup=helpers.admin_kb())
         helpers.user_pages.pop(admin_id, None)
         return
 
-    # Создаём тикет
     ticket_id = create_support_ticket(target_id, user['username'] or "", None)
 
     helpers.user_pages[admin_id] = {"state": "waiting_admin_reply", "ticket_id": ticket_id}
@@ -421,14 +582,13 @@ async def handle_start_dialog(message: types.Message, admin_id: int):
     await message.answer(
         f"✅ Тикет #{ticket_id} создан для {helpers.user_link(target_id, user['username'] or str(target_id))}\n\n"
         f"✍️ Напиши первое сообщение:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [back_btn(f"a_ticket_{ticket_id}", "🔙 Отмена")]
-        ])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_ticket_{ticket_id}", "🔙 Отмена")]])
     )
 
 
+# ==================== ОТВЕТ АДМИНА ====================
+
 async def handle_admin_reply(message: types.Message):
-    """Админ пишет ответ в тикет."""
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
     ticket_id = state.get("ticket_id")
@@ -446,7 +606,6 @@ async def handle_admin_reply(message: types.Message):
     safe_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     add_support_message(ticket_id, 'admin', safe_text)
 
-    # Отправляем юзеру
     ticket = get_ticket(ticket_id)
     if ticket:
         try:
@@ -458,7 +617,6 @@ async def handle_admin_reply(message: types.Message):
         except Exception as e:
             logger.warning(f"⚠️ Не отправил юзеру: {e}")
 
-    # Отправляем уведомление с кнопкой в тикет
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"💬 Открыть тикет #{ticket_id}", callback_data=f"a_ticket_{ticket_id}")],
         [back_btn("a_support_tickets")]
@@ -467,18 +625,14 @@ async def handle_admin_reply(message: types.Message):
     helpers.user_pages.pop(user_id, None)
 
 
-# ==================== ПОЛЬЗОВАТЕЛИ ====================
+# ==================== ПОЛЬЗОВАТЕЛИ (список) ====================
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
     users = search_users(limit=50)
     text = "👥 <b>Топ по токенам</b>\n\n"
     for u in users:
-        status = "⛔" if u['is_blocked'] else "✅"
-        link = helpers.user_link(u['user_id'], u['username'] or str(u['user_id']))
-        warn_cnt = get_warnings_count(u['user_id'])
-        warn_str = f" ⚠️{warn_cnt}" if warn_cnt else ""
-        text += f"{status} {link}: {u['tokens']}{warn_str}\n"
+        text += format_user_line(u)
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback, text[:4000], kb)
     await helpers.safe_answer(callback)
@@ -505,9 +659,9 @@ async def a_block_cb(callback: types.CallbackQuery):
     users = search_users(limit=30)
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
-        link_txt = u['username'] or str(u['user_id'])
+        name = u['username'] or str(u['user_id'])
         status = "✅" if u['is_blocked'] == 0 else "⛔"
-        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{status} {link_txt}", callback_data=f"block_user_{u['user_id']}")])
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{status} {name}", callback_data=f"block_user_{u['user_id']}")])
     kb.inline_keyboard.append([back_btn("admin_panel")])
     await safe_edit(callback, "🚫 <b>БЛОКИРОВКА</b>", kb)
     await helpers.safe_answer(callback)
@@ -564,8 +718,7 @@ async def a_warn_list_cb(callback: types.CallbackQuery):
             user = get_user(w['user_id'])
             uname = user['username'] if user else ""
             link = helpers.user_link(w['user_id'], uname or str(w['user_id']))
-            text += f"• {link} — <b>{w['cnt']}</b> ⚠️\n"
-
+            text += f"• {link} · 🆔 <code>{w['user_id']}</code> — <b>{w['cnt']}</b> ⚠️\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_warnings")]])
     await safe_edit(callback, text[:4000], kb)
     await helpers.safe_answer(callback)
@@ -584,8 +737,7 @@ async def a_warn_all_cb(callback: types.CallbackQuery):
             link = helpers.user_link(w['user_id'], uname or str(w['user_id']))
             ts = w['created_at'][:16].replace("T", " ")
             reason = str(w.get('reason', '—'))[:40]
-            text += f"• {link} · <i>{ts}</i>\n  Причина: {reason}\n"
-
+            text += f"• {link} · <i>{ts}</i>\n  {reason}\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_warnings")]])
     await safe_edit(callback, text[:4000], kb)
     await helpers.safe_answer(callback)
@@ -608,11 +760,7 @@ async def a_warn_add_cb(callback: types.CallbackQuery):
 async def a_warn_remove_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_warn_remove"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_warnings", "🔙 Отмена")]])
-    await safe_edit(callback,
-        "➖ <b>Снять варн</b>\n\n"
-        "Введи ID юзера — снимутся <b>все</b> его варны.",
-        kb
-    )
+    await safe_edit(callback, "➖ <b>Снять варн</b>\n\nВведи ID юзера — снимутся все варны.", kb)
     await helpers.safe_answer(callback)
 
 
@@ -635,8 +783,6 @@ async def handle_warn_add(message: types.Message, admin_id: int):
         return
 
     reason = parts[1].strip()[:200]
-
-    # Проверяем юзера
     user = get_user(target_id)
     if not user:
         await message.answer(f"❌ Юзер {target_id} не найден в БД.")
@@ -644,10 +790,8 @@ async def handle_warn_add(message: types.Message, admin_id: int):
 
     add_warning(target_id, reason, admin_id)
     count = get_warnings_count(target_id)
-
     link = helpers.user_link(target_id, user['username'] or str(target_id))
 
-    # Уведомляем юзера
     try:
         await message.bot.send_message(
             target_id,
@@ -657,12 +801,9 @@ async def handle_warn_add(message: types.Message, admin_id: int):
             f"При 3 варнах аккаунт может быть заблокирован."
         )
     except Exception as e:
-        logger.warning(f"⚠️ Не отправил юзеру варн: {e}")
+        logger.warning(f"⚠️ Не отправил варн юзеру: {e}")
 
-    await message.answer(
-        f"✅ Варн выдан {link}\n📊 Всего: <b>{count}</b>",
-        reply_markup=helpers.admin_kb()
-    )
+    await message.answer(f"✅ Варн выдан {link}\n📊 Всего: <b>{count}</b>", reply_markup=helpers.admin_kb())
     helpers.user_pages.pop(admin_id, None)
 
 
@@ -685,10 +826,7 @@ async def handle_warn_remove(message: types.Message, admin_id: int):
     user = get_user(target_id)
     link = helpers.user_link(target_id, (user['username'] if user else None) or str(target_id))
 
-    await message.answer(
-        f"✅ Снято варнов: <b>{count_before}</b> у {link}",
-        reply_markup=helpers.admin_kb()
-    )
+    await message.answer(f"✅ Снято варнов: <b>{count_before}</b> у {link}", reply_markup=helpers.admin_kb())
     helpers.user_pages.pop(admin_id, None)
 
 
@@ -809,8 +947,6 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ==================== СТАТУС БД ====================
-
 @router.callback_query(F.data == "a_db_status")
 async def a_db_status_cb(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
@@ -826,7 +962,7 @@ async def a_logs_cb(callback: types.CallbackQuery):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     size = os.path.getsize(LOG_PATH) if os.path.exists(LOG_PATH) else 0
-    text = f"📜 <b>Логи</b>\n\n📁 {LOG_PATH}\n📦 Размер: {size / 1024:.1f} КБ\n\nВыбери, что показать:"
+    text = f"📜 <b>Логи</b>\n\n📁 {LOG_PATH}\n📦 Размер: {size / 1024:.1f} КБ"
     await safe_edit(callback, text, helpers.logs_kb())
     await helpers.safe_answer(callback)
 
@@ -880,7 +1016,7 @@ async def a_logs_warnings_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "a_logs_download")
 async def a_logs_download_cb(callback: types.CallbackQuery):
     if not os.path.exists(LOG_PATH):
-        await helpers.safe_answer(callback, "❌ Файл логов не найден", show_alert=True)
+        await helpers.safe_answer(callback, "❌ Файл не найден", show_alert=True)
         return
     try:
         with open(LOG_PATH, 'rb') as f:
@@ -895,7 +1031,7 @@ async def a_logs_download_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ==================== АДМИН-ВВОД (главный роутер) ====================
+# ==================== АДМИН-ВВОД ====================
 
 async def handle_admin_input(message: types.Message):
     user_id = message.from_user.id
@@ -925,6 +1061,57 @@ async def handle_admin_input(message: types.Message):
 
     if state_name == "waiting_warn_remove":
         await handle_warn_remove(message, user_id)
+        return
+
+    # === ЦЕНЫ: РЕДАКТИРОВАНИЕ ===
+    if state_name == "waiting_price_edit":
+        tid = state.get("tariff_id")
+        t = get_tariff(tid)
+        if not t:
+            await message.answer("❌ Тариф не найден", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+        try:
+            parts = [p.strip() for p in message.text.split("|")]
+            name = parts[0]
+            price_rub = int(parts[1])
+            tokens = int(parts[2])
+            stars = round(price_rub / STAR_RATE)
+            if t['kind'] == "premium":
+                days = int(parts[3]) if len(parts) > 3 else 30
+                update_tariff(tid, name=name, price_rub=price_rub, stars=stars, tokens=tokens, days=days)
+            else:
+                update_tariff(tid, name=name, price_rub=price_rub, stars=stars, tokens=tokens)
+            await message.answer(
+                f"✅ Обновлено:\n<b>{name}</b>\n💰 {price_rub}₽\n⭐ {stars}\n🪙 {tokens}",
+                reply_markup=helpers.admin_kb()
+            )
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
+        return
+
+    # === ЦЕНЫ: ДОБАВЛЕНИЕ ===
+    if state_name == "waiting_price_add":
+        kind = state.get("kind", "tokens")
+        try:
+            parts = [p.strip() for p in message.text.split("|")]
+            name = parts[0]
+            price_rub = int(parts[1])
+            tokens = int(parts[2])
+            stars = round(price_rub / STAR_RATE)
+            days = 0
+            if kind == "premium":
+                days = int(parts[3]) if len(parts) > 3 else 30
+            add_tariff(kind, name, price_rub, stars, tokens, days)
+            await message.answer(
+                f"✅ Добавлено:\n<b>{name}</b>\n💰 {price_rub}₽\n⭐ {stars}\n🪙 {tokens}"
+                + (f"\n📅 {days} дн." if kind == "premium" else ""),
+                reply_markup=helpers.admin_kb()
+            )
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+        helpers.user_pages.pop(user_id, None)
         return
 
     if state_name == "waiting_promo_code":
