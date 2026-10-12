@@ -133,6 +133,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             )
             return
 
+        # Водяной знак
         try:
             img = Image.open(BytesIO(img_data))
             draw = ImageDraw.Draw(img)
@@ -148,6 +149,7 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
+        # Сохранение
         image_id = None
         try:
             image_id, session_id = save_image_to_history(
@@ -163,6 +165,14 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] БД: {e}")
 
+        # Счётчик для ачивок
+        try:
+            from database.db import increment_counter
+            increment_counter(user_id, "images_total")
+        except Exception as e:
+            logger.warning(f"⚠️ counter images: {e}")
+
+        # Отправка
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
         ])
@@ -179,6 +189,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         )
         await status_msg.delete()
         logger.info(f"✅ [{user_id}] Картинка отправлена")
+
+        # Уведомление об ачивке
+        try:
+            from .bonus import notify_achievements
+            await notify_achievements(message.bot, user_id)
+        except Exception as e:
+            logger.warning(f"⚠️ notify_achievements: {e}")
 
     except Exception as e:
         logger.error(f"❌ [{user_id}] Ошибка: {e}", exc_info=True)

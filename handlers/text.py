@@ -113,11 +113,24 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     action = result.get("action", "reply")
     logger.info(f"📤 [{user_id}] action={action}, reply={result.get('reply', '')[:60]}")
 
+    # Счётчик для ачивок (для любого действия)
+    try:
+        from database.db import increment_counter
+        increment_counter(user_id, "texts_total")
+    except Exception as e:
+        logger.warning(f"⚠️ counter texts: {e}")
+
     if action == "reply":
         reply_text = result.get("reply", "")
         await message.answer(reply_text or "Не понял.")
         if reminder_state:
             helpers.user_pages.pop(user_id, None)
+        # Ачивки
+        try:
+            from .bonus import notify_achievements
+            await notify_achievements(message.bot, user_id)
+        except Exception:
+            pass
         return
 
     if action == "generate_image":
