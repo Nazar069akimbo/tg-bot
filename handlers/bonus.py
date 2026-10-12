@@ -5,8 +5,10 @@ from database.db import (claim_daily_bonus, get_streak_info,
                           check_and_unlock_achievements, get_achievements,
                           achievements_list, get_tokens, add_tokens)
 from . import helpers
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 ACHIEVEMENT_REWARDS = {
@@ -23,13 +25,30 @@ ACHIEVEMENT_REWARDS = {
 }
 
 
+def _save_bonus_to_folder(user_id, streak, last_claim_date):
+    try:
+        from utils.user_storage import save_user_bonus
+        save_user_bonus(user_id, streak, last_claim_date)
+    except Exception as e:
+        logger.warning(f"⚠️ save_user_bonus: {e}")
+
+
+def _save_achievements_to_folder(user_id):
+    try:
+        from database.db import get_achievements
+        from utils.user_storage import save_user_achievements
+        ach = get_achievements(user_id)
+        save_user_achievements(user_id, ach)
+    except Exception as e:
+        logger.warning(f"⚠️ save_user_achievements: {e}")
+
+
 def bonus_menu_kb(streak: int, claimed_today: bool):
     rows = []
     if claimed_today:
         rows.append([InlineKeyboardButton(text="✅ Уже забрал сегодня", callback_data="noop")])
         rows.append([InlineKeyboardButton(text=f"🔥 Streak: {streak} дн.", callback_data="noop")])
     else:
-        # Показываем размер бонуса прямо в кнопке
         amount = min(5 + (streak // 7) * 5, 50) if streak else 5
         rows.append([InlineKeyboardButton(text=f"🎁 Забрать +{amount} токенов", callback_data="claim_bonus")])
     rows.append([InlineKeyboardButton(text="🏆 Мои ачивки", callback_data="my_achievements")])
@@ -52,12 +71,11 @@ async def show_bonus(message: types.Message, user_id: int = None):
     text += f"💰 Токенов: <b>{tokens}</b>\n"
     text += f"🔥 Streak: <b>{streak}</b> дн.\n\n"
 
-    # Прогресс до следующего уровня бонуса
     if streak > 0:
         next_level = ((streak // 7) + 1) * 7
         current_progress = streak % 7 if streak % 7 != 0 else 7
         bar = progress_bar(current_progress, 7)
-        text += f"<b>До следующего уровня бонуса:</b>\n"
+        text += f"<b>До следующего уровня:</b>\n"
         text += f"{bar} {next_level - streak} дн.\n\n"
 
     if claimed_today:
@@ -66,12 +84,12 @@ async def show_bonus(message: types.Message, user_id: int = None):
     else:
         bonus = min(5 + (streak // 7) * 5, 50) if streak else 5
         text += f"📦 <b>Следующий бонус: +{bonus} токенов</b>\n\n"
-        text += "🔥 Заходи каждый день:\n"
+        text += "🔥 Уровни:\n"
         text += "  • 1–6 дней — +5 токенов\n"
         text += "  • 7–13 дней — +10 токенов\n"
         text += "  • 14–20 дней — +15 токенов\n"
         text += "  • 21–27 дней — +20 токенов\n"
-        text += "  • 28+ дней — +25–50 токенов\n"
+        text += "  • 28+ дней — до +50 токенов\n"
 
     try:
         await message.edit_text(text, reply_markup=bonus_menu_kb(streak, claimed_today))
@@ -103,6 +121,10 @@ async def claim_bonus_cb(callback: types.CallbackQuery):
         await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
         return
 
+    # Сохраняем streak в папку
+    from datetime import datetime
+    _save_bonus_to_folder(user_id, streak, datetime.now().date().isoformat())
+
     new_ach = check_and_unlock_achievements(user_id)
     tokens_now = get_tokens(user_id)
 
@@ -125,6 +147,9 @@ async def claim_bonus_cb(callback: types.CallbackQuery):
                 text += f" +{reward}"
                 add_tokens(user_id, reward)
             text += "\n"
+
+        # Сохраняем ачивки в папку
+        _save_achievements_to_folder(user_id)
 
     await callback.message.edit_text(text, reply_markup=bonus_menu_kb(streak, True))
     await helpers.safe_answer(callback, f"✅ +{amount} токенов!")
@@ -165,6 +190,7 @@ async def noop_cb(callback: types.CallbackQuery):
 
 
 async def notify_achievements(bot, user_id: int):
+    """Вызывается после действий — проверяет новые ачивки и уведомляет."""
     try:
         new_ach = check_and_unlock_achievements(user_id)
         if not new_ach:
@@ -181,11 +207,14 @@ async def notify_achievements(bot, user_id: int):
                 lines.append(f"{e} <b>{n}</b> — <b>+{reward} токенов</b>")
             else:
                 lines.append(f"{e} <b>{n}</b>")
+
+        # Сохраняем в папку
+        _save_achievements_to_folder(user_id)
+
         if lines:
             msg = "🏆 <b>Новая ачивка!</b>\n\n" + "\n".join(lines)
             if total_reward:
                 msg += f"\n\n💰 Итого: <b>+{total_reward}</b> токенов"
             await bot.send_message(user_id, msg)
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"⚠️ notify_achievements: {e}")
+        logger.warning(f"⚠️ notify_achievements: {e}")

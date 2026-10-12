@@ -142,6 +142,17 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
+    # Восстанавливаем streak и ачивки
+    try:
+        from database.db import restore_bonus_from_folders
+        count2 = restore_bonus_from_folders()
+        if count2 > 0:
+            logger.info(f"✅ Восстановлено bonus/ачивок: {count2}")
+        else:
+            logger.info("ℹ️ Bonus/ачивки восстанавливать нечего")
+    except Exception as e:
+        logger.warning(f"⚠️ Восстановление bonus: {e}")
+
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()

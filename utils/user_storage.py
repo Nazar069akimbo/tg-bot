@@ -60,6 +60,8 @@ def _settings_path(user_id): return os.path.join(get_user_dir(user_id), "setting
 def _reminders_path(user_id): return os.path.join(get_user_dir(user_id), "reminders.json")
 def _referrals_path(user_id): return os.path.join(get_user_dir(user_id), "referrals.json")
 def _payments_path(user_id): return os.path.join(get_user_dir(user_id), "payments.json")
+def _bonus_path(user_id): return os.path.join(get_user_dir(user_id), "bonus.json")
+def _achievements_path(user_id): return os.path.join(get_user_dir(user_id), "achievements.json")
 
 
 def _backup_users(force=False):
@@ -316,3 +318,57 @@ def clear_memory(user_id):
     for path in (_history_path(user_id), _profile_path(user_id)):
         if os.path.exists(path):
             os.remove(path)
+
+# ===== BONUS (streak) =====
+def save_user_bonus(user_id, streak, last_claim_date):
+    data = {
+        "user_id": user_id,
+        "streak": streak,
+        "last_claim_date": last_claim_date,
+        "updated_at": datetime.now().isoformat()
+    }
+    try:
+        with open(_bonus_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_bonus: {e}")
+
+
+def load_user_bonus(user_id):
+    path = _bonus_path(user_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# ===== ACHIEVEMENTS =====
+def save_user_achievements(user_id, achievements_dict):
+    """achievements_dict: {code: unlocked_at}."""
+    data = {
+        "user_id": user_id,
+        "achievements": achievements_dict,
+        "updated_at": datetime.now().isoformat()
+    }
+    try:
+        with open(_achievements_path(user_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        _backup_users()
+    except Exception as e:
+        logger.error(f"❌ save_user_achievements: {e}")
+
+
+def load_user_achievements(user_id):
+    path = _achievements_path(user_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f).get("achievements", {})
+    except Exception:
+        return {}
+

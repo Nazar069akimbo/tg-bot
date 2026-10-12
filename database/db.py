@@ -1289,6 +1289,13 @@ def claim_daily_bonus(conn, cursor, user_id):
         ON CONFLICT(user_id) DO UPDATE SET days_active = days_active + 1
     """, (user_id,))
 
+    # Сохраняем в папку пользователя
+    try:
+        from utils.user_storage import save_user_bonus
+        save_user_bonus(user_id, streak, today)
+    except Exception as e:
+        print(f"⚠️ save_user_bonus: {e}")
+
     return True, amount, streak, False
 
 
@@ -1418,4 +1425,73 @@ def get_model_usage_total(conn, cursor, days=30):
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("SELECT COUNT(*) FROM usage_stats WHERE used_at >= ?", (since,))
     return cursor.fetchone()[0] or 0
+
+def restore_bonus_from_folders():
+    """Восстанавливает streak и ачивки из папок пользователей."""
+    base = 'data/users'
+    if not os.path.exists(base):
+        return 0
+
+    restored = 0
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        for folder in os.listdir(base):
+            folder_path = os.path.join(base, folder)
+            if not os.path.isdir(folder_path):
+                continue
+
+            id_file = os.path.join(folder_path, "_id.txt")
+            bonus_file = os.path.join(folder_path, "bonus.json")
+            ach_file = os.path.join(folder_path, "achievements.json")
+
+            if not os.path.exists(id_file):
+                continue
+
+            try:
+                with open(id_file, "r", encoding="utf-8") as f:
+                    user_id = int(f.read().strip())
+            except Exception:
+                continue
+
+            # --- Bonus / streak ---
+            if os.path.exists(bonus_file):
+                try:
+                    with open(bonus_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    streak = data.get("streak", 0)
+                    last_date = data.get("last_claim_date")
+
+                    cursor.execute("SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
+                                   (user_id, last_date))
+                    if not cursor.fetchone() and last_date:
+                        cursor.execute(
+                            "INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)",
+                            (user_id, last_date, streak, 0)
+                        )
+                        restored += 1
+                        print(f"✅ Восстановлен streak {user_id}: {streak}")
+                except Exception as e:
+                    print(f"⚠️ Streak {user_id}: {e}")
+
+            # --- Achievements ---
+            if os.path.exists(ach_file):
+                try:
+                    with open(ach_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    achievements = data.get("achievements", {})
+
+                    for code, unlocked_at in achievements.items():
+                        cursor.execute("SELECT 1 FROM achievements WHERE user_id = ? AND code = ?",
+                                       (user_id, code))
+                        if not cursor.fetchone():
+                            cursor.execute(
+                                "INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)",
+                                (user_id, code, unlocked_at)
+                            )
+                            restored += 1
+                except Exception as e:
+                    print(f"⚠️ Achievements {user_id}: {e}")
+
+    return restored
 
