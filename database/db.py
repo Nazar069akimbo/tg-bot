@@ -352,6 +352,16 @@ def init_db():
         ''')
 
         cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usage_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            model TEXT,
+            cost INTEGER DEFAULT 0,
+            used_at TEXT
+        )
+        ''')
+
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS ticket_ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticket_id INTEGER,
@@ -1376,4 +1386,36 @@ def increment_counter(conn, cursor, user_id, field):
         INSERT INTO user_counters (user_id, {field}) VALUES (?, 1)
         ON CONFLICT(user_id) DO UPDATE SET {field} = {field} + 1
     """, (user_id,))
+
+# ===== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ МОДЕЛЕЙ =====
+@db_operation
+def log_model_usage(conn, cursor, user_id, model, cost=0):
+    cursor.execute(
+        "INSERT INTO usage_stats (user_id, model, cost, used_at) VALUES (?, ?, ?, ?)",
+        (user_id, model, cost, datetime.now().isoformat())
+    )
+
+
+@db_operation
+def get_model_usage(conn, cursor, days=30, limit=20):
+    """Топ моделей по использованию за N дней."""
+    from datetime import timedelta
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+    cursor.execute("""
+        SELECT model, COUNT(*) as cnt, SUM(cost) as total_cost
+        FROM usage_stats
+        WHERE used_at >= ?
+        GROUP BY model
+        ORDER BY cnt DESC
+        LIMIT ?
+    """, (since, limit))
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def get_model_usage_total(conn, cursor, days=30):
+    from datetime import timedelta
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+    cursor.execute("SELECT COUNT(*) FROM usage_stats WHERE used_at >= ?", (since,))
+    return cursor.fetchone()[0] or 0
 

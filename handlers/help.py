@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from . import helpers
 
 router = Router()
-ADMIN_EMAIL = "mychannell@gmail.com"
+ADMIN_EMAIL = "mychannell069@gmail.com"
 
 HELP_TEXT = (
     "❓ Помощь\n\n"

@@ -46,9 +46,9 @@ async def search_command(message: types.Message):
     result = search_duckduckgo(query)
 
     if result:
-        await status.edit_text(f"🔍 **Результат:**\n\n{result}")
+        await status.edit_text(f"🔍 <b>Результат:</b>\n\n{result}")
     else:
         # Fallback — через ИИ
         ai_result = smart_reply(message.from_user.id, f"Ответь на вопрос: {query}")
         answer = ai_result.get("reply", "Не смог найти.")
-        await status.edit_text(f"🔍 **Ответ:**\n\n{answer}")
+        await status.edit_text(f"🔍 <b>Ответ:</b>\n\n{answer}")

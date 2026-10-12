@@ -9,7 +9,6 @@ from . import helpers
 router = Router()
 
 
-# Суммы награды за каждую ачивку (в токенах)
 ACHIEVEMENT_REWARDS = {
     "first_step": 10,
     "week_active": 50,
@@ -20,20 +19,27 @@ ACHIEVEMENT_REWARDS = {
     "talker_50": 50,
     "referrer_3": 100,
     "referrer_10": 500,
-    "rich_1000": 0,  # уже богат, без награды
+    "rich_1000": 0,
 }
 
 
 def bonus_menu_kb(streak: int, claimed_today: bool):
     rows = []
     if claimed_today:
-        rows.append([InlineKeyboardButton(text="✅ Уже получен сегодня", callback_data="noop")])
+        rows.append([InlineKeyboardButton(text="✅ Уже забрал сегодня", callback_data="noop")])
         rows.append([InlineKeyboardButton(text=f"🔥 Streak: {streak} дн.", callback_data="noop")])
     else:
-        rows.append([InlineKeyboardButton(text="🎁 Забрать бонус", callback_data="claim_bonus")])
+        # Показываем размер бонуса прямо в кнопке
+        amount = min(5 + (streak // 7) * 5, 50) if streak else 5
+        rows.append([InlineKeyboardButton(text=f"🎁 Забрать +{amount} токенов", callback_data="claim_bonus")])
     rows.append([InlineKeyboardButton(text="🏆 Мои ачивки", callback_data="my_achievements")])
     rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def progress_bar(current: int, target: int, width: int = 10) -> str:
+    filled = min(int(current / target * width), width)
+    return "▰" * filled + "▱" * (width - filled)
 
 
 async def show_bonus(message: types.Message, user_id: int = None):
@@ -42,21 +48,30 @@ async def show_bonus(message: types.Message, user_id: int = None):
     streak, last_date, claimed_today = get_streak_info(user_id)
     tokens = get_tokens(user_id)
 
-    text = (
-        "🎁 <b>Ежедневный бонус</b>\n\n"
-        f"🔥 Streak: <b>{streak}</b> дн.\n"
-        f"💰 Токенов: <b>{tokens}</b>\n\n"
-    )
+    text = "🎁 <b>Ежедневный бонус</b>\n\n"
+    text += f"💰 Токенов: <b>{tokens}</b>\n"
+    text += f"🔥 Streak: <b>{streak}</b> дн.\n\n"
+
+    # Прогресс до следующего уровня бонуса
+    if streak > 0:
+        next_level = ((streak // 7) + 1) * 7
+        current_progress = streak % 7 if streak % 7 != 0 else 7
+        bar = progress_bar(current_progress, 7)
+        text += f"<b>До следующего уровня бонуса:</b>\n"
+        text += f"{bar} {next_level - streak} дн.\n\n"
 
     if claimed_today:
-        text += "✅ Бонус на сегодня уже получен.\nВозвращайся завтра!"
+        text += "✅ Сегодня бонус уже забран.\n"
+        text += "🔥 Не пропусти завтра — streak сохранится!"
     else:
         bonus = min(5 + (streak // 7) * 5, 50) if streak else 5
-        text += (
-            f"📦 Следующий бонус: <b>+{bonus}</b> токенов\n\n"
-            "🔥 Заходи каждый день — streak растёт!\n"
-            "💎 Каждые 7 дней: +5 токенов к бонусу."
-        )
+        text += f"📦 <b>Следующий бонус: +{bonus} токенов</b>\n\n"
+        text += "🔥 Заходи каждый день:\n"
+        text += "  • 1–6 дней — +5 токенов\n"
+        text += "  • 7–13 дней — +10 токенов\n"
+        text += "  • 14–20 дней — +15 токенов\n"
+        text += "  • 21–27 дней — +20 токенов\n"
+        text += "  • 28+ дней — +25–50 токенов\n"
 
     try:
         await message.edit_text(text, reply_markup=bonus_menu_kb(streak, claimed_today))
@@ -81,23 +96,23 @@ async def claim_bonus_cb(callback: types.CallbackQuery):
     ok, amount, streak, already = claim_daily_bonus(user_id)
 
     if not ok and already:
-        await helpers.safe_answer(callback, "✅ Уже получен сегодня", show_alert=True)
+        await helpers.safe_answer(callback, "✅ Уже забрал сегодня", show_alert=True)
         return
 
     if not ok:
         await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
         return
 
-    # Проверяем ачивки
     new_ach = check_and_unlock_achievements(user_id)
+    tokens_now = get_tokens(user_id)
 
-    text = (
-        f"🎁 <b>+{amount} токенов!</b>\n\n"
-        f"🔥 Streak: <b>{streak}</b> дн.\n"
-    )
+    text = f"🎁 <b>+{amount} токенов!</b>\n\n"
+    text += f"💰 Баланс: <b>{tokens_now}</b>\n"
+    text += f"🔥 Streak: <b>{streak}</b> дн.\n\n"
+
     if streak >= 7:
-        bonus_next = min(5 + ((streak + 1) // 7) * 5, 50)
-        text += f"💎 Следующий бонус: +{bonus_next} токенов\n"
+        next_bonus = min(5 + ((streak + 1) // 7) * 5, 50)
+        text += f"💎 Завтра: +{next_bonus} токенов\n"
 
     if new_ach:
         text += "\n🏆 <b>Новые ачивки:</b>\n"
@@ -107,7 +122,7 @@ async def claim_bonus_cb(callback: types.CallbackQuery):
             reward = ACHIEVEMENT_REWARDS.get(code, 0)
             text += f"  {e} <b>{n}</b>"
             if reward:
-                text += f" +{reward} токенов"
+                text += f" +{reward}"
                 add_tokens(user_id, reward)
             text += "\n"
 
@@ -124,7 +139,7 @@ async def achievements_cb(callback: types.CallbackQuery):
     for code, emoji, name, desc in achievements_list():
         mark = "✅" if code in unlocked else "🔒"
         reward = ACHIEVEMENT_REWARDS.get(code, 0)
-        reward_str = f" — <b>+{reward} токенов</b>" if reward else ""
+        reward_str = f" — <b>+{reward}</b>" if reward else ""
         text += f"{mark} {emoji} <b>{name}</b>{reward_str}\n     <i>{desc}</i>\n"
 
     total = len(achievements_list())
@@ -132,7 +147,7 @@ async def achievements_cb(callback: types.CallbackQuery):
     total_reward = sum(ACHIEVEMENT_REWARDS.get(c, 0) for c in unlocked)
     text += f"\n📊 Открыто: <b>{done}/{total}</b>"
     if total_reward:
-        text += f"\n💰 Получено за ачивки: <b>{total_reward}</b> токенов"
+        text += f"\n💰 Заработано: <b>{total_reward}</b> токенов"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="daily_bonus")]
@@ -150,7 +165,6 @@ async def noop_cb(callback: types.CallbackQuery):
 
 
 async def notify_achievements(bot, user_id: int):
-    """Вызывается после действий. Проверяет новые ачивки, начисляет токены, уведомляет."""
     try:
         new_ach = check_and_unlock_achievements(user_id)
         if not new_ach:
@@ -167,7 +181,6 @@ async def notify_achievements(bot, user_id: int):
                 lines.append(f"{e} <b>{n}</b> — <b>+{reward} токенов</b>")
             else:
                 lines.append(f"{e} <b>{n}</b>")
-
         if lines:
             msg = "🏆 <b>Новая ачивка!</b>\n\n" + "\n".join(lines)
             if total_reward:
