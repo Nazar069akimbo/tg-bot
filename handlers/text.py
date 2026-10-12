@@ -213,7 +213,9 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
 
     if action == "show_prices":
         from .payments import prices_text, prices_kb
+        from .balance import balance_cmd
         await message.answer(prices_text(), reply_markup=prices_kb())
+        await balance_cmd(message)
         return
 
     if action == "show_credits":
