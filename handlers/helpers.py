@@ -17,7 +17,7 @@ user_model = {}
 # ==================== ССЫЛКИ ====================
 
 def user_link(user_id, name=None):
-    """HTML-ссылка на пользователя. Работает, если юзер хоть раз писал боту."""
+    """HTML-ссылка на пользователя."""
     display = name or str(user_id)
     display = str(display).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f'<a href="tg://user?id={user_id}">{display}</a>'
@@ -30,7 +30,6 @@ def main_menu():
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="🎁 Ежедневный бонус", callback_data="daily_bonus")],
-        [InlineKeyboardButton(text="🎨 Шаблоны промптов", callback_data="templates")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
         [InlineKeyboardButton(text="⏰ Напоминания", callback_data="my_reminders"),
@@ -69,6 +68,7 @@ def admin_kb():
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
          InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
         [InlineKeyboardButton(text="💰 Управление ценами", callback_data="a_prices_menu")],
+        [InlineKeyboardButton(text="⚙️ Управление моделями", callback_data="a_models_menu")],
         [InlineKeyboardButton(text="📩 Тикеты", callback_data="a_support_tickets"),
          InlineKeyboardButton(text="⚠️ Варны", callback_data="a_warnings")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),

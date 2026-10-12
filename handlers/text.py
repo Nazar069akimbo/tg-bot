@@ -25,7 +25,7 @@ async def handle_text(message: types.Message):
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
         "waiting_user_search", "waiting_admin_reply",
         "waiting_warn_add", "waiting_warn_remove",
-        "waiting_start_dialog_user",
+        "waiting_start_dialog_user", "waiting_model_price_edit",
     ]:
         from .admin import handle_admin_input
         await handle_admin_input(message)
@@ -100,6 +100,13 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
     spend_tokens(user_id, cost)
 
+    # Логируем использование модели
+    try:
+        from database.db import log_model_usage
+        log_model_usage(user_id, current_model, cost)
+    except Exception as e:
+        logger.warning(f"⚠️ log_model_usage: {e}")
+
     status_msg = await message.answer("🤔 Думаю...")
 
     reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
@@ -113,7 +120,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     action = result.get("action", "reply")
     logger.info(f"📤 [{user_id}] action={action}, reply={result.get('reply', '')[:60]}")
 
-    # Счётчик для ачивок (для любого действия)
+    # Счётчик для ачивок
     try:
         from database.db import increment_counter
         increment_counter(user_id, "texts_total")
@@ -125,7 +132,6 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         await message.answer(reply_text or "Не понял.")
         if reminder_state:
             helpers.user_pages.pop(user_id, None)
-        # Ачивки
         try:
             from .bonus import notify_achievements
             await notify_achievements(message.bot, user_id)

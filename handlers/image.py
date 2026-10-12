@@ -54,6 +54,13 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         return
     spend_tokens(user_id, image_cost)
 
+    # Логируем использование модели
+    try:
+        from database.db import log_model_usage
+        log_model_usage(user_id, current_model, image_cost)
+    except Exception as e:
+        logger.warning(f"⚠️ log_model_usage: {e}")
+
     if not API_KEY:
         return await message.answer("❌ API ключ не настроен")
 
@@ -172,7 +179,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ counter images: {e}")
 
-        # Отправка
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
         ])
@@ -190,7 +196,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         await status_msg.delete()
         logger.info(f"✅ [{user_id}] Картинка отправлена")
 
-        # Уведомление об ачивке
         try:
             from .bonus import notify_achievements
             await notify_achievements(message.bot, user_id)

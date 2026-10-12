@@ -144,7 +144,7 @@ async def a_payments_list_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ==================== УПРАВЛЕНИЕ ЦЕНАМИ ====================
+# ==================== УПРАВЛЕНИЕ ЦЕНАМИ (тарифы) ====================
 
 def prices_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -318,6 +318,141 @@ async def a_price_add_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
+# ==================== УПРАВЛЕНИЕ МОДЕЛЯМИ ====================
+
+def models_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎨 Цены на картинки", callback_data="a_models|image_generate")],
+        [InlineKeyboardButton(text="🧠 Цены на текст", callback_data="a_models|text_chat")],
+        [InlineKeyboardButton(text="📊 Статистика (7 дней)", callback_data="a_models_stats|7")],
+        [InlineKeyboardButton(text="📊 Статистика (30 дней)", callback_data="a_models_stats|30")],
+        [back_btn("admin_panel")]
+    ])
+
+
+@router.callback_query(F.data == "a_models_menu")
+async def a_models_menu_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    text = (
+        "⚙️ <b>УПРАВЛЕНИЕ МОДЕЛЯМИ</b>\n\n"
+        "💰 Управляй ценами в токенах\n"
+        "📊 Смотри статистику использования\n\n"
+        "Выбери раздел:"
+    )
+    await safe_edit(callback, text, models_menu_kb())
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_models|"))
+async def a_models_cb(callback: types.CallbackQuery):
+    task = callback.data.split("|")[1]
+    models = helpers.AVAILABLE_MODELS.get(task, [])
+
+    title = "🎨 <b>Цены на картинки</b>" if task == "image_generate" else "🧠 <b>Цены на текст</b>"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for model_id, model_name, cost, min_plan in models:
+        kb.inline_keyboard.append([InlineKeyboardButton(
+            text=f"{model_name} — {cost} ток.",
+            callback_data=f"a_model_edit|{task}|{model_id}"
+        )])
+    kb.inline_keyboard.append([back_btn("a_models_menu")])
+
+    await safe_edit(callback, title, kb)
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_model_edit|"))
+async def a_model_edit_cb(callback: types.CallbackQuery):
+    parts = callback.data.split("|")
+    if len(parts) < 3:
+        return
+    task = parts[1]
+    model_id = parts[2]
+    current = helpers.MODEL_COSTS.get(model_id, 0)
+    name = helpers.MODEL_NAMES.get(model_id, model_id)
+
+    helpers.user_pages[callback.from_user.id] = {
+        "state": "waiting_model_price_edit",
+        "model_id": model_id,
+    }
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_models|{task}", "🔙 Отмена")]])
+
+    await safe_edit(
+        callback,
+        f"✏️ <b>Цена модели</b>\n\n"
+        f"<b>{name}</b>\n"
+        f"Сейчас: <b>{current}</b> токенов\n\n"
+        f"Введи новое число токенов (только цифры):",
+        kb
+    )
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_models_stats|"))
+async def a_models_stats_cb(callback: types.CallbackQuery):
+    days = int(callback.data.split("|")[1])
+    usage = get_model_usage(days=days, limit=20)
+    total = get_model_usage_total(days=days)
+
+    text = f"📊 <b>Статистика за {days} дней</b>\n\n"
+    text += f"Всего запросов: <b>{total}</b>\n\n"
+
+    if not usage:
+        text += "Пока нет данных."
+    else:
+        text += "<b>Топ моделей:</b>\n"
+        for i, u in enumerate(usage, 1):
+            name = helpers.MODEL_NAMES.get(u['model'], u['model'])
+            cnt = u['cnt']
+            cost = u['total_cost'] or 0
+            text += f"{i}. {name}\n     {cnt} исп. · {cost} токенов\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_models_menu")]])
+    await safe_edit(callback, text[:4000], kb)
+    await helpers.safe_answer(callback)
+
+
+async def handle_model_price_edit(message: types.Message):
+    user_id = message.from_user.id
+    state = helpers.user_pages.get(user_id, {})
+    model_id = state.get("model_id")
+    text = message.text.strip()
+
+    if text == "/cancel":
+        helpers.user_pages.pop(user_id, None)
+        await message.answer("✅ Отменено", reply_markup=helpers.admin_kb())
+        return
+
+    try:
+        new_cost = int(text)
+        if new_cost < 0:
+            raise ValueError("Отрицательная цена")
+    except ValueError:
+        await message.answer("❌ Нужно целое число ≥ 0. Попробуй снова или /cancel")
+        return
+
+    helpers.MODEL_COSTS[model_id] = new_cost
+    set_setting(f"model_cost_{model_id}", str(new_cost))
+
+    for task in ["text_chat", "image_generate"]:
+        models = helpers.AVAILABLE_MODELS.get(task, [])
+        for i, (mid, mname, cost, mplan) in enumerate(models):
+            if mid == model_id:
+                models[i] = (mid, mname, new_cost, mplan)
+
+    name = helpers.MODEL_NAMES.get(model_id, model_id)
+
+    helpers.user_pages.pop(user_id, None)
+    await message.answer(
+        f"✅ <b>Цена обновлена</b>\n\n{name} → <b>{new_cost}</b> токенов",
+        reply_markup=helpers.admin_kb()
+    )
+
+
 # ==================== ПОИСК ЮЗЕРОВ ====================
 
 @router.callback_query(F.data == "a_search_users")
@@ -325,9 +460,7 @@ async def a_search_users_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_user_search"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback,
-        "🔍 <b>Поиск пользователей</b>\n\n"
-        "Введи имя, username или ID.\n\n"
-        "⏹ /cancel — отмена",
+        "🔍 <b>Поиск пользователей</b>\n\nВведи имя, username или ID.\n\n⏹ /cancel — отмена",
         kb
     )
     await helpers.safe_answer(callback)
@@ -365,7 +498,6 @@ async def a_filter_cb(callback: types.CallbackQuery):
 
 
 def format_user_line(u):
-    """Строка юзера с кликабельным именем и ID."""
     uid = u['user_id']
     name = u.get('username') or "—"
     name_link = helpers.user_link(uid, name)
@@ -407,12 +539,10 @@ async def a_support_tickets_cb(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for t in tickets:
         name = t['username'] or str(t['user_id'])
-        kb.inline_keyboard.append([
-            InlineKeyboardButton(
-                text=f"💬 #{t['id']} · {name}",
-                callback_data=f"a_ticket_{t['id']}"
-            )
-        ])
+        kb.inline_keyboard.append([InlineKeyboardButton(
+            text=f"💬 #{t['id']} · {name}",
+            callback_data=f"a_ticket_{t['id']}"
+        )])
     kb.inline_keyboard.append([InlineKeyboardButton(text="✍️ Написать юзеру", callback_data="a_start_dialog")])
     kb.inline_keyboard.append([InlineKeyboardButton(text="📋 История (закрытые)", callback_data="a_closed_tickets")])
     kb.inline_keyboard.append([back_btn("admin_panel")])
@@ -429,12 +559,10 @@ async def a_closed_tickets_cb(callback: types.CallbackQuery):
     for t in tickets:
         rating = get_ticket_rating(t['id'])
         r_str = f" {'⭐' * rating['rating']}" if rating else ""
-        kb.inline_keyboard.append([
-            InlineKeyboardButton(
-                text=f"✅ #{t['id']} · {t['username'] or t['user_id']}{r_str}",
-                callback_data=f"a_ticket_{t['id']}"
-            )
-        ])
+        kb.inline_keyboard.append([InlineKeyboardButton(
+            text=f"✅ #{t['id']} · {t['username'] or t['user_id']}{r_str}",
+            callback_data=f"a_ticket_{t['id']}"
+        )])
     kb.inline_keyboard.append([back_btn("a_support_tickets")])
 
     await safe_edit(callback, f"📋 <b>Закрытые тикеты: {len(tickets)}</b>\n\nВыбери:", kb)
@@ -539,8 +667,6 @@ async def a_delete_ticket_cb(callback: types.CallbackQuery):
     await a_support_tickets_cb(callback)
 
 
-# ==================== НАЧАТЬ ДИАЛОГ ПЕРВЫМ ====================
-
 @router.callback_query(F.data == "a_start_dialog")
 async def a_start_dialog_cb(callback: types.CallbackQuery):
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_start_dialog_user"}
@@ -586,8 +712,6 @@ async def handle_start_dialog(message: types.Message, admin_id: int):
     )
 
 
-# ==================== ОТВЕТ АДМИНА ====================
-
 async def handle_admin_reply(message: types.Message):
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
@@ -625,7 +749,7 @@ async def handle_admin_reply(message: types.Message):
     helpers.user_pages.pop(user_id, None)
 
 
-# ==================== ПОЛЬЗОВАТЕЛИ (список) ====================
+# ==================== ПОЛЬЗОВАТЕЛИ ====================
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
@@ -830,7 +954,7 @@ async def handle_warn_remove(message: types.Message, admin_id: int):
     helpers.user_pages.pop(admin_id, None)
 
 
-# ==================== БЭКАП / ВОССТАНОВЛЕНИЕ ====================
+# ==================== БЭКАП ====================
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup_cb(callback: types.CallbackQuery):
@@ -1063,7 +1187,10 @@ async def handle_admin_input(message: types.Message):
         await handle_warn_remove(message, user_id)
         return
 
-    # === ЦЕНЫ: РЕДАКТИРОВАНИЕ ===
+    if state_name == "waiting_model_price_edit":
+        await handle_model_price_edit(message)
+        return
+
     if state_name == "waiting_price_edit":
         tid = state.get("tariff_id")
         t = get_tariff(tid)
@@ -1091,7 +1218,6 @@ async def handle_admin_input(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === ЦЕНЫ: ДОБАВЛЕНИЕ ===
     if state_name == "waiting_price_add":
         kind = state.get("kind", "tokens")
         try:
