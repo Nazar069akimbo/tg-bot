@@ -3,10 +3,25 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import (claim_daily_bonus, get_streak_info,
                           check_and_unlock_achievements, get_achievements,
-                          achievements_list, get_tokens)
+                          achievements_list, get_tokens, add_tokens)
 from . import helpers
 
 router = Router()
+
+
+# Суммы награды за каждую ачивку (в токенах)
+ACHIEVEMENT_REWARDS = {
+    "first_step": 10,
+    "week_active": 50,
+    "month_active": 200,
+    "artist_10": 30,
+    "artist_100": 200,
+    "artist_500": 1000,
+    "talker_50": 50,
+    "referrer_3": 100,
+    "referrer_10": 500,
+    "rich_1000": 0,  # уже богат, без награды
+}
 
 
 def bonus_menu_kb(streak: int, claimed_today: bool):
@@ -16,7 +31,7 @@ def bonus_menu_kb(streak: int, claimed_today: bool):
         rows.append([InlineKeyboardButton(text=f"🔥 Streak: {streak} дн.", callback_data="noop")])
     else:
         rows.append([InlineKeyboardButton(text="🎁 Забрать бонус", callback_data="claim_bonus")])
-    rows.append([InlineKeyboardButton(text="🏆 Ачивки", callback_data="my_achievements")])
+    rows.append([InlineKeyboardButton(text="🏆 Мои ачивки", callback_data="my_achievements")])
     rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -39,8 +54,8 @@ async def show_bonus(message: types.Message, user_id: int = None):
         bonus = min(5 + (streak // 7) * 5, 50) if streak else 5
         text += (
             f"📦 Следующий бонус: <b>+{bonus}</b> токенов\n\n"
-            "🔥 Каждый день подряд = streak растёт!\n"
-            "💎 Каждые 7 дней streak дают +5 токенов к бонусу."
+            "🔥 Заходи каждый день — streak растёт!\n"
+            "💎 Каждые 7 дней: +5 токенов к бонусу."
         )
 
     try:
@@ -85,11 +100,16 @@ async def claim_bonus_cb(callback: types.CallbackQuery):
         text += f"💎 Следующий бонус: +{bonus_next} токенов\n"
 
     if new_ach:
-        ach_names = {c: (e, n) for c, e, n, _ in achievements_list()}
         text += "\n🏆 <b>Новые ачивки:</b>\n"
+        ach_map = {c: (e, n) for c, e, n, _ in achievements_list()}
         for code in new_ach:
-            e, n = ach_names.get(code, ("🏆", code))
-            text += f"  {e} {n}\n"
+            e, n = ach_map.get(code, ("🏆", code))
+            reward = ACHIEVEMENT_REWARDS.get(code, 0)
+            text += f"  {e} <b>{n}</b>"
+            if reward:
+                text += f" +{reward} токенов"
+                add_tokens(user_id, reward)
+            text += "\n"
 
     await callback.message.edit_text(text, reply_markup=bonus_menu_kb(streak, True))
     await helpers.safe_answer(callback, f"✅ +{amount} токенов!")
@@ -103,11 +123,16 @@ async def achievements_cb(callback: types.CallbackQuery):
     text = "🏆 <b>Ачивки</b>\n\n"
     for code, emoji, name, desc in achievements_list():
         mark = "✅" if code in unlocked else "🔒"
-        text += f"{mark} {emoji} <b>{name}</b>\n     <i>{desc}</i>\n"
+        reward = ACHIEVEMENT_REWARDS.get(code, 0)
+        reward_str = f" — <b>+{reward} токенов</b>" if reward else ""
+        text += f"{mark} {emoji} <b>{name}</b>{reward_str}\n     <i>{desc}</i>\n"
 
     total = len(achievements_list())
     done = len(unlocked)
+    total_reward = sum(ACHIEVEMENT_REWARDS.get(c, 0) for c in unlocked)
     text += f"\n📊 Открыто: <b>{done}/{total}</b>"
+    if total_reward:
+        text += f"\n💰 Получено за ачивки: <b>{total_reward}</b> токенов"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="daily_bonus")]
@@ -125,20 +150,29 @@ async def noop_cb(callback: types.CallbackQuery):
 
 
 async def notify_achievements(bot, user_id: int):
-    """Вызывается после действий — проверяет новые ачивки и уведомляет."""
+    """Вызывается после действий. Проверяет новые ачивки, начисляет токены, уведомляет."""
     try:
         new_ach = check_and_unlock_achievements(user_id)
         if not new_ach:
             return
-        ach_names = {c: (e, n) for c, e, n, _ in achievements_list()}
+        ach_map = {c: (e, n) for c, e, n, _ in achievements_list()}
         lines = []
+        total_reward = 0
         for code in new_ach:
-            e, n = ach_names.get(code, ("🏆", code))
-            lines.append(f"{e} <b>{n}</b>")
+            e, n = ach_map.get(code, ("🏆", code))
+            reward = ACHIEVEMENT_REWARDS.get(code, 0)
+            if reward:
+                add_tokens(user_id, reward)
+                total_reward += reward
+                lines.append(f"{e} <b>{n}</b> — <b>+{reward} токенов</b>")
+            else:
+                lines.append(f"{e} <b>{n}</b>")
+
         if lines:
-            await bot.send_message(
-                user_id,
-                "🏆 <b>Новая ачивка!</b>\n\n" + "\n".join(lines)
-            )
-    except Exception:
-        pass
+            msg = "🏆 <b>Новая ачивка!</b>\n\n" + "\n".join(lines)
+            if total_reward:
+                msg += f"\n\n💰 Итого: <b>+{total_reward}</b> токенов"
+            await bot.send_message(user_id, msg)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"⚠️ notify_achievements: {e}")

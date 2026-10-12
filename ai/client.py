@@ -5,13 +5,13 @@ import logging
 import requests
 from datetime import datetime, timedelta
 from openai import OpenAI
-from database.db import get_setting, get_model_setting
+from database.db import get_setting, get_model_setting, get_tariffs
 
 logger = logging.getLogger(__name__)
 
-ADMIN_EMAIL = "mychannell@gmail.com"
+ADMIN_EMAIL = "mychannell069@gmail.com"
 
-INTENT_MODEL = "gpt-4.1-nano"  # всегда для разбора
+INTENT_MODEL = "gpt-4.1-nano"
 
 
 def get_openai_client():
@@ -24,6 +24,28 @@ def get_openai_client():
     except Exception as e:
         logger.error(f"❌ Ошибка клиента: {e}")
         return None
+
+
+def _get_prices_context():
+    """Актуальный прайс-лист из БД для системного промпта."""
+    try:
+        tokens_tariffs = get_tariffs("tokens")
+        premium_tariffs = get_tariffs("premium")
+    except Exception as e:
+        logger.warning(f"⚠️ Не получил тарифы: {e}")
+        return ""
+
+    lines = []
+    if tokens_tariffs:
+        lines.append("ПАКЕТЫ ТОКЕНОВ:")
+        for t in tokens_tariffs:
+            lines.append(f"  • {t['name']} — {t['price_rub']}₽ = {t['tokens']} токенов ({t['stars']} ⭐)")
+    if premium_tariffs:
+        lines.append("")
+        lines.append("ПОДПИСКИ:")
+        for t in premium_tariffs:
+            lines.append(f"  • {t['name']} — {t['price_rub']}₽ / {t['days']} дней ({t['stars']} ⭐), +{t['tokens']} токенов")
+    return "\n".join(lines)
 
 
 def _get_user_context(user_id: int):
@@ -66,7 +88,6 @@ def _try_model(client, m, messages, max_tokens=600):
 
 
 def _fallback_models(primary):
-    """Список fallback-моделей."""
     all_models = [primary, "gpt-4.1-nano", "deepseek-v4-flash", "gpt-4.1-mini"]
     seen = set()
     result = []
@@ -78,7 +99,7 @@ def _fallback_models(primary):
 
 
 def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
-    """Разбор намерения (дешёвой) + ответ (выбранной моделью)."""
+    """Разбор намерения + ответ."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return {"action": "reply", "reply": "⚠️ Сервис недоступен. Напиши админу: " + ADMIN_EMAIL}
@@ -106,7 +127,9 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 Последний вопрос: {reminder_state.get('question', '')!r}
 """
 
-    system_prompt = f"""Ты — ИИ-ассистент Telegram-бота. Верни ТОЛЬКО JSON.
+    prices_context = _get_prices_context()
+
+    system_prompt = f"""Ты — ИИ-ассистент Telegram-бота Vertex AI. Верни ТОЛЬКО JSON.
 
 СЕЙЧАС: {now_str}
 СЕГОДНЯ: {today_str}, ЗАВТРА: {tomorrow_str}
@@ -114,6 +137,9 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 О ПОЛЬЗОВАТЕЛЕ:
 {context if context else "(пока ничего)"}
 {reminder_context}
+
+АКТУАЛЬНЫЕ ЦЕНЫ БОТА (отвечай только этими значениями!):
+{prices_context if prices_context else "(нет данных)"}
 
 Формат JSON:
 {{
@@ -139,6 +165,9 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 4. "сегодня" → date="today", "завтра" → date="tomorrow".
 5. Вопросы о хобби/имени → action="reply", используй "О ПОЛЬЗОВАТЕЛЕ".
 6. remember: "я люблю X" → fact="пользователь любит X", reply="Круто! Запомнил 😊".
+7. Вопросы о цене, подписке, тарифах → отвечай ТОЧНЫМИ цифрами из «АКТУАЛЬНЫЕ ЦЕНЫ БОТА». НЕ выдумывай.
+8. Если юзер пишет "Premium", "Premium+" без вопроса — уточни, хочет ли купить, назови цену и скажи /credits.
+9. Если спрашивает «как купить» → подскажи /credits и оплату через звёзды.
 
 Отвечай ТОЛЬКО JSON."""
 
@@ -148,7 +177,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
         messages.append({"role": role, "content": msg.get("text", "")})
     messages.append({"role": "user", "content": text})
 
-    # ШАГ 1: Разбор намерения дешёвой моделью
+    # ШАГ 1: Разбор намерения
     raw = None
     for m in _fallback_models(INTENT_MODEL):
         raw = _try_model(client, m, messages)
@@ -170,7 +199,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 
     action = data.get("action", "reply")
 
-    # ШАГ 2: Если это reply и выбрана другая модель — перегенерируем ответ
+    # ШАГ 2: Перегенерация ответа другой моделью
     if action == "reply" and user_model and user_model != INTENT_MODEL:
         reply_prompt = f"""Ответь пользователю кратко и живо.
 
@@ -179,7 +208,10 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 Контекст о пользователе:
 {context if context else "(нет данных)"}
 
-Ответь 1-3 предложениями, без markdown и звёздочек. Учитывай контекст."""
+Цены бота:
+{prices_context if prices_context else "(нет данных)"}
+
+Ответь 1-3 предложениями, без markdown и звёздочек. Учитывай контекст и точные цены."""
 
         messages2 = [
             {"role": "system", "content": "Ты — Vertex AI, дружелюбный ассистент. Отвечай кратко и по делу."},
