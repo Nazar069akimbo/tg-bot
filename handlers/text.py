@@ -10,6 +10,75 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+async def _open_referral(message: types.Message):
+    """Открывает рефералку как сообщение."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    user_id = message.from_user.id
+    count = get_referral_count(user_id)
+    link = f"https://t.me/Vertex1bot?start={user_id}"
+    text = (
+        "👥 <b>Рефералы</b>\n\n"
+        f"👤 Приглашено: <b>{count}</b>\n"
+        f"🎁 Бонус: <b>+20 токенов</b> за друга\n\n"
+        f"🔗 Твоя ссылка:\n<code>{link}</code>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Vertex AI!")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+    await message.answer(text, reply_markup=kb)
+
+
+async def _buy_tariff_by_name(message: types.Message, user_id: int, tariff_name: str, reply_text: str = ""):
+    """Находит тариф по имени и выбивает инвойс."""
+    from database.db import get_tariffs, create_payment
+    import secrets, os
+    from aiogram.types import LabeledPrice
+
+    if not tariff_name:
+        await message.answer("❌ Какой тариф? Напиши: /credits")
+        return
+
+    all_tariffs = get_tariffs("tokens") + get_tariffs("premium")
+    found = None
+    name_lower = tariff_name.lower()
+    for t in all_tariffs:
+        if t['name'].lower() == name_lower or name_lower in t['name'].lower():
+            found = t
+            break
+
+    if not found:
+        await message.answer(f"❌ Тариф «{tariff_name}» не найден.\n\nВыбери из /credits")
+        return
+
+    if reply_text:
+        await message.answer(reply_text)
+
+    payload = secrets.token_hex(16)
+    plan = found['kind']
+    create_payment(user_id, found['stars'], payload, plan)
+
+    provider_token = os.getenv('PROVIDER_TOKEN', '')
+    try:
+        await message.bot.send_invoice(
+            chat_id=user_id,
+            title=f"{found['name']} · {found['tokens']} токенов",
+            description=f"{found['tokens']} токенов" + (f" · {found['days']} дней" if found['days'] else ""),
+            payload=payload,
+            provider_token=provider_token,
+            currency="XTR",
+            prices=[LabeledPrice(label=found['name'], amount=found['stars'])],
+            start_parameter="buy_tokens"
+        )
+    except Exception as e:
+        logger.error(f"❌ Инвойс: {e}")
+        await message.answer(f"❌ Ошибка оплаты: {str(e)[:150]}")
+
+
+# ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
+
 @router.message(F.text)
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
@@ -100,7 +169,6 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
     spend_tokens(user_id, cost)
 
-    # Логируем использование модели
     try:
         from database.db import log_model_usage
         log_model_usage(user_id, current_model, cost)
@@ -126,6 +194,44 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         increment_counter(user_id, "texts_total")
     except Exception as e:
         logger.warning(f"⚠️ counter texts: {e}")
+
+    # === НОВЫЕ ДЕЙСТВИЯ ===
+
+    if action == "show_profile":
+        from .profile import show_profile
+        await show_profile(message)
+        return
+
+    if action == "show_balance":
+        from .balance import balance_cmd
+        await balance_cmd(message)
+        return
+
+    if action == "show_referral":
+        await _open_referral(message)
+        return
+
+    if action == "show_prices":
+        from .payments import prices_text, prices_kb
+        await message.answer(prices_text(), reply_markup=prices_kb())
+        return
+
+    if action == "show_credits":
+        from .payments import buy_tokens_screen
+        await buy_tokens_screen(message=message)
+        return
+
+    if action == "show_help":
+        from .help import HELP_TEXT
+        await message.answer(HELP_TEXT, reply_markup=helpers.main_menu())
+        return
+
+    if action == "buy_tariff":
+        tariff_name = (result.get("tariff_name") or "").strip()
+        await _buy_tariff_by_name(message, user_id, tariff_name, result.get("reply", ""))
+        return
+
+    # === СТАРЫЕ ДЕЙСТВИЯ ===
 
     if action == "reply":
         reply_text = result.get("reply", "")
@@ -214,6 +320,8 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
 
     await message.answer(result.get("reply", "Не понял."))
 
+
+# ==================== CALLBACK-ХЕНДЛЕРЫ ====================
 
 @router.callback_query(F.data.startswith("pickmodel|"))
 async def pick_model_cb(callback: types.CallbackQuery):

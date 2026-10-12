@@ -143,20 +143,28 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 
 Формат JSON:
 {{
-  "action": "reply | generate_image | set_reminder | cancel_reminder | delete_reminder | delete_all_reminders | list_reminders | search_web | remember",
+  "action": "reply | generate_image | set_reminder | cancel_reminder | delete_reminder | delete_all_reminders | list_reminders | search_web | remember | show_profile | show_balance | show_referral | show_prices | show_credits | show_help | buy_tariff",
   "reply": "текст для пользователя (ВСЕГДА заполняй)",
   "prompt": "...", "text": "...", "time": "HH:MM", "date": "YYYY-MM-DD",
   "need_clarification": true/false, "question": "...",
-  "query": "...", "fact": "..."
+  "query": "...", "fact": "...",
+  "tariff_name": "Старт | Базовый | Выгодный | Профи | Максимум | Premium | Premium+"
 }}
 
 ДЕЙСТВИЯ:
-- reply — ответ. Поле "reply".
+- reply — просто ответ. Поле "reply".
 - generate_image — картинка. Поле "prompt".
 - set_reminder — напоминание. Поля text/time/date.
-- remember — запомнить. Поле "fact" И "reply" (живой ответ).
+- remember — запомнить. Поле "fact" И "reply".
 - search_web — поиск. Поле "query".
 - delete_reminder / delete_all_reminders / list_reminders / cancel_reminder.
+- show_profile — открыть профиль.
+- show_balance — открыть баланс.
+- show_referral — открыть рефералку.
+- show_prices — открыть цены.
+- show_credits — открыть экран покупки токенов.
+- show_help — открыть помощь.
+- buy_tariff — ВЫБИТЬ ИНВОЙС. Поле "tariff_name" = точное имя тарифа.
 
 ПРАВИЛА:
 1. ВСЕГДА заполняй "reply" — живой текст.
@@ -166,8 +174,12 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 5. Вопросы о хобби/имени → action="reply", используй "О ПОЛЬЗОВАТЕЛЕ".
 6. remember: "я люблю X" → fact="пользователь любит X", reply="Круто! Запомнил 😊".
 7. Вопросы о цене, подписке, тарифах → отвечай ТОЧНЫМИ цифрами из «АКТУАЛЬНЫЕ ЦЕНЫ БОТА». НЕ выдумывай.
-8. Если юзер пишет "Premium", "Premium+" без вопроса — уточни, хочет ли купить, назови цену и скажи /credits.
-9. Если спрашивает «как купить» → подскажи /credits и оплату через звёзды.
+8. ЕСЛИ ЮЗЕР ГОВОРИТ «куплю», «хочу купить», «готов купить», «давай», «беру», «оформляй» — это action="buy_tariff", поле "tariff_name" = конкретный тариф (например "Старт", "Базовый", "Premium"). Если тариф не назван — action="reply" с уточнением «какой тариф?».
+9. «Покажи профиль», «мой профиль» → action="show_profile".
+10. «Баланс», «сколько токенов» → action="show_balance".
+11. «Рефералы», «пригласить друга» → action="show_referral".
+12. «Цены», «сколько стоит всё» → action="show_prices".
+13. «Купить токены», «купить пакет» (без конкретного тарифа) → action="show_credits".
 
 Отвечай ТОЛЬКО JSON."""
 
@@ -199,7 +211,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 
     action = data.get("action", "reply")
 
-    # ШАГ 2: Перегенерация ответа другой моделью
+    # ШАГ 2: Перегенерация ответа другой моделью (только для reply)
     if action == "reply" and user_model and user_model != INTENT_MODEL:
         reply_prompt = f"""Ответь пользователю кратко и живо.
 
