@@ -286,6 +286,34 @@ def init_db():
         ''')
 
         cursor.execute('''
+        CREATE TABLE IF NOT EXISTS daily_bonus_claims (
+            user_id INTEGER,
+            claim_date TEXT,
+            streak INTEGER DEFAULT 1,
+            amount INTEGER DEFAULT 5,
+            PRIMARY KEY (user_id, claim_date)
+        )
+        ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS achievements (
+            user_id INTEGER,
+            code TEXT,
+            unlocked_at TEXT,
+            PRIMARY KEY (user_id, code)
+        )
+        ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_counters (
+            user_id INTEGER PRIMARY KEY,
+            images_total INTEGER DEFAULT 0,
+            texts_total INTEGER DEFAULT 0,
+            days_active INTEGER DEFAULT 0
+        )
+        ''')
+
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS subscription_notifications (
             user_id INTEGER PRIMARY KEY,
             last_notified TEXT
@@ -1205,3 +1233,147 @@ def get_queue_info():
     size = _db_queue.qsize()
     status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
     return f"📊 Очередь БД: {size} задач, поток: {status}"
+
+# ===== ЕЖЕДНЕВНЫЙ БОНУС И STREAK =====
+@db_operation
+def claim_daily_bonus(conn, cursor, user_id):
+    """Выдаёт ежедневный бонус. Возвращает (ok, amount, streak, already)."""
+    today = datetime.now().date().isoformat()
+
+    cursor.execute(
+        "SELECT streak FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1",
+        (user_id,)
+    )
+    prev = cursor.fetchone()
+    yesterday_streak = prev[0] if prev else 0
+
+    cursor.execute(
+        "SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
+        (user_id, today)
+    )
+    if cursor.fetchone():
+        return False, 0, yesterday_streak, True
+
+    # streak: если вчера получал — +1, иначе 1
+    from datetime import timedelta
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    cursor.execute(
+        "SELECT streak FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
+        (user_id, yesterday)
+    )
+    y = cursor.fetchone()
+    streak = (y[0] + 1) if y else 1
+
+    # Сумма: базово 5, +5 за каждые 7 дней, максимум 50
+    amount = min(5 + (streak // 7) * 5, 50)
+
+    cursor.execute(
+        "INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)",
+        (user_id, today, streak, amount)
+    )
+    cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
+
+    # Увеличиваем счётчик дней
+    cursor.execute("""
+        INSERT INTO user_counters (user_id, days_active) VALUES (?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET days_active = days_active + 1
+    """, (user_id,))
+
+    return True, amount, streak, False
+
+
+@db_operation
+def get_streak_info(conn, cursor, user_id):
+    """Возвращает (streak, last_claim_date, claimed_today)."""
+    today = datetime.now().date().isoformat()
+    cursor.execute(
+        "SELECT streak, claim_date FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        return 0, None, False
+    return row[0], row[1], row[1] == today
+
+
+# ===== АЧИВКИ =====
+@db_operation
+def check_and_unlock_achievements(conn, cursor, user_id):
+    """Проверяет и выдаёт ачивки. Возвращает список новых."""
+    unlocked_new = []
+
+    cursor.execute("SELECT code FROM achievements WHERE user_id = ?", (user_id,))
+    already = {r[0] for r in cursor.fetchall()}
+
+    cursor.execute("""
+        SELECT u.tokens, COALESCE(c.images_total, 0), COALESCE(c.texts_total, 0), COALESCE(c.days_active, 0)
+        FROM users u
+        LEFT JOIN user_counters c ON c.user_id = u.user_id
+        WHERE u.user_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        return []
+
+    tokens, images, texts, days = row
+
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+    refs = cursor.fetchone()[0] or 0
+
+    # (код, условие, эмодзи, название)
+    defs = [
+        ("first_step", days >= 1, "👣", "Первый шаг"),
+        ("week_active", days >= 7, "📅", "Неделя с нами"),
+        ("month_active", days >= 30, "🗓", "Месяц с нами"),
+        ("artist_10", images >= 10, "🎨", "Художник"),
+        ("artist_100", images >= 100, "🖼", "Мастер"),
+        ("artist_500", images >= 500, "👑", "Легенда"),
+        ("talker_50", texts >= 50, "💬", "Болтун"),
+        ("referrer_3", refs >= 3, "🤝", "Друг"),
+        ("referrer_10", refs >= 10, "🌟", "Амбассадор"),
+        ("rich_1000", tokens >= 1000, "💰", "Богач"),
+    ]
+
+    for code, cond, _, _ in defs:
+        if cond and code not in already:
+            cursor.execute(
+                "INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)",
+                (user_id, code, datetime.now().isoformat())
+            )
+            unlocked_new.append(code)
+
+    return unlocked_new
+
+
+@db_operation
+def get_achievements(conn, cursor, user_id):
+    cursor.execute("SELECT code, unlocked_at FROM achievements WHERE user_id = ?", (user_id,))
+    return {r[0]: r[1] for r in cursor.fetchall()}
+
+
+def achievements_list():
+    """Список всех ачивок: (код, эмодзи, название, описание)."""
+    return [
+        ("first_step", "👣", "Первый шаг", "Зашёл в бота"),
+        ("week_active", "📅", "Неделя с нами", "Активен 7 дней"),
+        ("month_active", "🗓", "Месяц с нами", "Активен 30 дней"),
+        ("artist_10", "🎨", "Художник", "Создал 10 картинок"),
+        ("artist_100", "🖼", "Мастер", "Создал 100 картинок"),
+        ("artist_500", "👑", "Легенда", "Создал 500 картинок"),
+        ("talker_50", "💬", "Болтун", "50 текстовых запросов"),
+        ("referrer_3", "🤝", "Друг", "Пригласил 3 друзей"),
+        ("referrer_10", "🌟", "Амбассадор", "Пригласил 10 друзей"),
+        ("rich_1000", "💰", "Богач", "1000 токенов на балансе"),
+    ]
+
+
+@db_operation
+def increment_counter(conn, cursor, user_id, field):
+    """Увеличивает счётчик: 'images_total' или 'texts_total'."""
+    if field not in ("images_total", "texts_total"):
+        return
+    cursor.execute(f"""
+        INSERT INTO user_counters (user_id, {field}) VALUES (?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET {field} = {field} + 1
+    """, (user_id,))
+

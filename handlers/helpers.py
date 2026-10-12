@@ -29,9 +29,11 @@ def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✨ Купить токены", callback_data="buy_tokens"),
          InlineKeyboardButton(text="📊 Баланс", callback_data="balance")],
+        [InlineKeyboardButton(text="🎁 Ежедневный бонус", callback_data="daily_bonus")],
+        [InlineKeyboardButton(text="🎨 Шаблоны промптов", callback_data="templates")],
         [InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
          InlineKeyboardButton(text="👥 Рефералы", callback_data="referral")],
-        [InlineKeyboardButton(text="⏰ Мои напоминания", callback_data="my_reminders"),
+        [InlineKeyboardButton(text="⏰ Напоминания", callback_data="my_reminders"),
          InlineKeyboardButton(text="⚙️ Сменить модель", callback_data="change_model")],
         [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="promo_use"),
          InlineKeyboardButton(text="💬 Поддержка", callback_data="support")],
