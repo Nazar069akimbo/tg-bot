@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_EMAIL = "mychannell069@gmail.com"
 
-INTENT_MODEL = "gpt-4.1-nano"
+# INTENT_MODEL убран — используем выбранную юзером модель
 
 
 def get_openai_client():
@@ -191,7 +191,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
 
     # ШАГ 1: Разбор намерения
     raw = None
-    for m in _fallback_models(INTENT_MODEL):
+    for m in _fallback_models(user_model):
         raw = _try_model(client, m, messages)
         if raw:
             break
@@ -212,7 +212,7 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
     action = data.get("action", "reply")
 
     # ШАГ 2: Перегенерация ответа другой моделью (только для reply)
-    if action == "reply" and user_model and user_model != INTENT_MODEL:
+    if action == "reply" and user_model and user_model != "gpt-4.1-nano":
         reply_prompt = f"""Ответь пользователю кратко и живо.
 
 Сообщение пользователя: {text}
