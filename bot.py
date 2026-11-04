@@ -110,6 +110,7 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
 
+    # === ШАГ 1: Восстановить БД из GitHub (если нет локально) ===
     db_exists = os.path.exists('data/repsolver.db')
     if not db_exists:
         logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
@@ -123,9 +124,10 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    logger.info("📥 Восстанавливаю папки пользователей из GitHub...")
+    # === ШАГ 2: Восстановить ПАПКИ ЮЗЕРОВ из GitHub (только метаданные, без картинок) ===
+    logger.info("📥 Восстанавливаю папки пользователей из GitHub (без картинок)...")
     try:
-        ok = GitHubBackup().restore_users()
+        ok = GitHubBackup().restore_users(skip_images=True)
         if ok:
             logger.info("✅ Папки пользователей восстановлены из GitHub")
         else:
@@ -133,6 +135,7 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление юзеров из GitHub: {e}")
 
+    # === ШАГ 3: Восстановить токены из папок в БД ===
     try:
         count = restore_from_user_folders()
         if count > 0:
@@ -142,7 +145,7 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
-    # Восстанавливаем streak и ачивки
+    # === ШАГ 4: Восстановить streak и ачивки ===
     try:
         from database.db import restore_bonus_from_folders
         count2 = restore_bonus_from_folders()
@@ -153,6 +156,7 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление bonus: {e}")
 
+    # === ШАГ 5: Настройки ===
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()
@@ -160,6 +164,7 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
 
+    # === ШАГ 6: Фоновый бэкап БД раз в 30 мин ===
     def backup_loop():
         try:
             GitHubBackup().backup_db(reason='при старте')
@@ -194,6 +199,7 @@ async def main():
         types.BotCommand(command="credits", description="🛒 Купить токены"),
         types.BotCommand(command="remind", description="⏰ Напоминание"),
         types.BotCommand(command="reminders", description="📋 Напоминания"),
+        types.BotCommand(command="bonus", description="🎁 Ежедневный бонус"),
         types.BotCommand(command="help", description="❓ Помощь"),
     ])
 

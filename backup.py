@@ -100,8 +100,12 @@ class GitHubBackup:
             for root, dirs, files in os.walk(base):
                 for file in files:
                     full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, base).replace(chr(92)+chr(92), '/')
+                    rel_path = os.path.relpath(full_path, base).replace('\\\\', '/')
                     repo_path = f'users/{rel_path}'
+
+                    # Пропускаем images — не бэкапим каждую картинку при каждом изменении
+                    if '/images/' in repo_path or rel_path.startswith('images/'):
+                        continue
 
                     try:
                         with open(full_path, 'rb') as f:
@@ -127,17 +131,19 @@ class GitHubBackup:
         users_ok = self.backup_users(reason=reason)
         return db_ok and users_ok
 
-    def restore_users(self, base_dir='data/users'):
+    def restore_users(self, base_dir='data/users', skip_images=True):
+        """Скачивает папки пользователей.
+        skip_images=True — только метаданные (JSON/TXT), без картинок."""
         try:
             if not self.repo_users:
-                logger.warning("⚠️ GITHUB_USERS_REPO не задан — пропускаю восстановление юзеров")
+                logger.warning("⚠️ GITHUB_USERS_REPO не задан — пропускаю")
                 return False
 
             url = f'https://api.github.com/repos/{self.repo_users}/contents/users'
             response = requests.get(url, headers=self.headers)
 
             if response.status_code == 404:
-                logger.info("ℹ️ Папка users/ на GitHub не найдена — нечего восстанавливать")
+                logger.info("ℹ️ Папка users/ на GitHub не найдена")
                 return False
             if response.status_code != 200:
                 logger.warning(f"⚠️ GitHub вернул {response.status_code} при запросе users/")
@@ -154,16 +160,16 @@ class GitHubBackup:
             for item in files:
                 if item.get('type') == 'dir':
                     logger.info(f"📁 Восстанавливаю папку: {item['name']}")
-                    self._restore_user_dir(item['name'], item['url'], base_dir)
+                    self._restore_user_dir(item['name'], item['url'], base_dir, skip_images=skip_images)
                     downloaded += 1
 
-            logger.info(f"✅ Восстановлено папок пользователей: {downloaded}")
+            logger.info(f"✅ Восстановлено папок пользователей: {downloaded} (без картинок)" if skip_images else f"✅ Восстановлено папок: {downloaded}")
             return downloaded > 0
         except Exception as e:
             logger.error(f"❌ Ошибка восстановления юзеров: {e}")
             return False
 
-    def _restore_user_dir(self, folder_name, url, base_dir):
+    def _restore_user_dir(self, folder_name, url, base_dir, skip_images=True):
         try:
             response = requests.get(url, headers=self.headers)
             if response.status_code != 200:
@@ -178,12 +184,15 @@ class GitHubBackup:
             file_count = 0
             for item in files:
                 if item['type'] == 'file':
-                    self._download_file(item['download_url'], os.path.join(user_path, item['name']))
-                    file_count += 1
+                    # Качаем только лёгкие файлы (json, txt)
+                    if item['name'].endswith(('.json', '.txt')):
+                        self._download_file(item['download_url'], os.path.join(user_path, item['name']))
+                        file_count += 1
                 elif item['type'] == 'dir' and item['name'] == 'images':
-                    file_count += self._restore_images(item['url'], os.path.join(user_path, "images"))
+                    if not skip_images:
+                        file_count += self._restore_images(item['url'], os.path.join(user_path, "images"))
 
-            logger.info(f"   ✅ {folder_name}: {file_count} файлов")
+            logger.info(f"   ✅ {folder_name}: {file_count} файлов" + (" (без images)" if skip_images else ""))
         except Exception as e:
             logger.warning(f"⚠️ Ошибка папки {folder_name}: {e}")
 
@@ -201,6 +210,45 @@ class GitHubBackup:
             logger.warning(f"⚠️ Ошибка картинок: {e}")
         return count
 
+    def download_user_image(self, user_id, image_name, base_dir='data/users'):
+        """Скачивает 1 картинку юзера из GitHub (для галереи)."""
+        try:
+            # Ищем папку: по ID или по имени
+            folder = str(user_id)
+            if not os.path.exists(os.path.join(base_dir, folder)):
+                # Ищем папку с _id.txt = user_id
+                if os.path.exists(base_dir):
+                    for name in os.listdir(base_dir):
+                        candidate = os.path.join(base_dir, name)
+                        id_file = os.path.join(candidate, "_id.txt")
+                        if os.path.exists(id_file):
+                            try:
+                                with open(id_file, "r") as f:
+                                    if f.read().strip() == str(user_id):
+                                        folder = name
+                                        break
+                            except Exception:
+                                pass
+            path = os.path.join(base_dir, folder, "images", image_name)
+            if os.path.exists(path):
+                return path
+
+            repo_path = f'users/{folder}/images/{image_name}'
+            url = f'https://api.github.com/repos/{self.repo_users}/contents/{repo_path}'
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            download_url = data.get('download_url')
+            if not download_url:
+                return None
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self._download_file(download_url, path)
+            return path if os.path.exists(path) else None
+        except Exception as e:
+            logger.warning(f"⚠️ download_user_image: {e}")
+            return None
+
     def _download_file(self, url, path):
         try:
             response = requests.get(url)
@@ -210,9 +258,8 @@ class GitHubBackup:
         except Exception as e:
             logger.warning(f"⚠️ Не скачал {path}: {e}")
 
-    # ===== UPLOAD (с фиксом 409) =====
+    # ===== UPLOAD =====
     def _upload_file(self, repo, repo_path, content_b64, message, retry=5):
-        """Загружает файл в GitHub. При 409 перечитывает sha."""
         url = f'https://api.github.com/repos/{repo}/contents/{repo_path}'
 
         for attempt in range(retry):
@@ -301,9 +348,11 @@ def schedule_users_backup(delay=30):
 
 def _do_users_backup():
     global _users_backup_timer
+
     if not _users_backup_running.acquire(blocking=False):
         logger.info("⏭ Бэкап юзеров уже идёт, пропускаю")
         return
+
     try:
         GitHubBackup().backup_users(reason='изменение')
     except Exception as e:
