@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 ADMIN_EMAIL = "mychannell069@gmail.com"
 
-# INTENT_MODEL убран — используем выбранную юзером модель
-
 
 def get_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
@@ -68,7 +66,11 @@ def _get_user_context(user_id: int):
         return "", []
 
 
-def _try_model(client, m, messages, max_tokens=600):
+def _try_model(client, m, messages, max_tokens=600, allow_reasoning=False):
+    """
+    allow_reasoning=False (по умолчанию) — возвращаем ТОЛЬКО content.
+    Это критично для шага разбора намерения: reasoning_content — не JSON.
+    """
     try:
         resp = client.chat.completions.create(
             model=m, messages=messages, max_tokens=max_tokens, temperature=0.3
@@ -78,9 +80,10 @@ def _try_model(client, m, messages, max_tokens=600):
         content = getattr(msg_obj, "content", None)
         if content and content.strip():
             return content.strip()
-        reasoning = getattr(msg_obj, "reasoning_content", None)
-        if reasoning and reasoning.strip():
-            return reasoning.strip()
+        if allow_reasoning:
+            reasoning = getattr(msg_obj, "reasoning_content", None)
+            if reasoning and reasoning.strip():
+                return reasoning.strip()
         return None
     except Exception as e:
         logger.error(f"❌ {m}: {e}")
@@ -189,10 +192,10 @@ def smart_reply(user_id: int, text: str, reminder_state: dict = None) -> dict:
         messages.append({"role": role, "content": msg.get("text", "")})
     messages.append({"role": "user", "content": text})
 
-    # ШАГ 1: Разбор намерения
+    # ШАГ 1: Разбор намерения (reasoning НЕ используем — он не JSON)
     raw = None
     for m in _fallback_models(user_model):
-        raw = _try_model(client, m, messages)
+        raw = _try_model(client, m, messages, allow_reasoning=False)
         if raw:
             break
 
@@ -255,7 +258,8 @@ def search_web(query):
         {"role": "user", "content": query}
     ]
     for m in _fallback_models(user_model):
-        answer = _try_model(client, m, messages, max_tokens=500)
+        # Для поиска reasoning допустим — это не JSON-парсинг
+        answer = _try_model(client, m, messages, max_tokens=500, allow_reasoning=True)
         if answer:
             return answer
     return "Не смог найти информацию."

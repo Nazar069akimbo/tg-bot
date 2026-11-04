@@ -54,7 +54,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         return
     spend_tokens(user_id, image_cost)
 
-    # Логируем использование модели
     try:
         from database.db import log_model_usage
         log_model_usage(user_id, current_model, image_cost)
@@ -99,8 +98,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             timeout=120
         )
 
-        logger.info(f"📡 [{user_id}] Статус: {img_resp.status_code}")
-        logger.info(f"📦 [{user_id}] Ответ: {img_resp.text[:300]}")
+        # === ИСПРАВЛЕНО: не логируем тело ответа (может содержать чувствительное) ===
+        logger.info(f"📡 [{user_id}] Статус: {img_resp.status_code}, {len(img_resp.content)} байт")
 
         img_data = None
 
@@ -128,10 +127,12 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
                 elif data.get('message'):
                     err_text = str(data['message'])
                 else:
-                    err_text = img_resp.text
+                    err_text = f"HTTP {img_resp.status_code}"
             except Exception:
-                err_text = img_resp.text
+                err_text = f"HTTP {img_resp.status_code}"
             err_text = str(err_text)[:300]
+            # Экранируем HTML в тексте ошибки, чтобы не сломать parse_mode
+            err_text = err_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
             await status_msg.edit_text(
                 f"❌ Ошибка генерации ({img_resp.status_code})\n\n"
@@ -140,23 +141,21 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             )
             return
 
-        # Водяной знак
         try:
-            img = Image.open(BytesIO(img_data))
+            img = Image.open(BytesIO(img_data)).convert("RGBA")
             draw = ImageDraw.Draw(img)
             try:
                 font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
             except Exception:
                 font = ImageFont.load_default()
-            draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 128))
+            draw.text((10, 10), "Vertex AI", font=font, fill=(255, 255, 255, 200))
             output = BytesIO()
-            img.save(output, format='PNG')
+            img.convert("RGB").save(output, format='PNG')
             output.seek(0)
             img_data = output.getvalue()
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] Водяной знак: {e}")
 
-        # Сохранение
         image_id = None
         try:
             image_id, session_id = save_image_to_history(
@@ -172,7 +171,6 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ [{user_id}] БД: {e}")
 
-        # Счётчик для ачивок
         try:
             from database.db import increment_counter
             increment_counter(user_id, "images_total")
@@ -183,11 +181,14 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
         ])
 
+        # Экранируем prompt для caption
+        safe_prompt = prompt[:50].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
         await message.answer_photo(
             BufferedInputFile(file=img_data, filename="image.png"),
             caption=(
                 f"🖼️ <b>Твоя картинка</b>\n"
-                f"📝 {prompt[:50]}\n"
+                f"📝 {safe_prompt}\n"
                 f"🤖 {helpers.MODEL_NAMES.get(current_model, current_model)}\n"
                 f"💰 -{image_cost} токенов"
             ),
@@ -214,7 +215,8 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
 async def back_main_cb(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     name = helpers.get_user_name(user_id) or "друг"
-    text = f"✨ <b>Vertex AI</b>\n\n👋 Привет, <b>{name}</b>!\n\n📧 Проблемы? Пиши: mychannell069@gmail.com"
+    safe_name = str(name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = f"✨ <b>Vertex AI</b>\n\n👋 Привет, <b>{safe_name}</b>!\n\n📧 Проблемы? Пиши: mychannell069@gmail.com"
     try:
         await callback.message.edit_text(text, reply_markup=helpers.main_menu())
     except Exception:

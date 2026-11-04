@@ -417,9 +417,10 @@ def init_db():
                     (kind, name, price_rub, stars, tokens, days, order)
                 )
 
-        ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
-        cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
-                       (ADMIN_ID, datetime.now().isoformat()))
+        ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+        if ADMIN_ID:
+            cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
+                           (ADMIN_ID, datetime.now().isoformat()))
 
         print("✅ База данных инициализирована")
 
@@ -634,6 +635,8 @@ def get_text_tokens_today(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
     if last_reset != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
+        # === ИСПРАВЛЕНО: бэкап после UPDATE ===
+        _schedule_db_backup()
         used = 0
     return max(0, 10 - used), 10
 
@@ -642,6 +645,7 @@ def get_text_tokens_today(conn, cursor, user_id):
 def spend_text_token(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
     cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + 1, daily_reset = ? WHERE user_id = ?", (today, user_id))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -660,6 +664,8 @@ def get_week_images_used(conn, cursor, user_id):
     monday = (now - timedelta(days=now.weekday())).date().isoformat()
     if week_start != monday:
         cursor.execute("UPDATE users SET week_images_used = 0, week_start = ? WHERE user_id = ?", (monday, user_id))
+        # === ИСПРАВЛЕНО: бэкап после UPDATE ===
+        _schedule_db_backup()
         used = 0
     return used, 2
 
@@ -669,6 +675,7 @@ def use_week_image(conn, cursor, user_id):
     now = datetime.now()
     monday = (now - timedelta(days=now.weekday())).date().isoformat()
     cursor.execute("UPDATE users SET week_images_used = week_images_used + 1, week_start = ? WHERE user_id = ?", (monday, user_id))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -689,6 +696,7 @@ def has_trial(conn, cursor, user_id):
 def activate_trial(conn, cursor, user_id):
     cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 30 WHERE user_id = ?",
                    (datetime.now().isoformat(), user_id))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -734,10 +742,17 @@ def get_referral_count(conn, cursor, user_id):
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
-    cursor.execute("SELECT id, bonus_tokens, max_uses, used FROM promocodes WHERE code = ? AND expires_at > datetime('now')", (code,))
+    # === ИСПРАВЛЕНО: сравнение дат в Python, а не через datetime('now') ===
+    cursor.execute(
+        "SELECT id, bonus_tokens, max_uses, used, expires_at FROM promocodes WHERE code = ?",
+        (code,)
+    )
     promo = cursor.fetchone()
     if not promo:
         return False, "❌ Промокод не найден"
+    now_iso = datetime.now().isoformat()
+    if promo['expires_at'] and promo['expires_at'] < now_iso:
+        return False, "❌ Промокод истёк"
     if promo['used'] >= promo['max_uses']:
         return False, "❌ Промокод использован"
     cursor.execute("SELECT id FROM promocode_uses WHERE promocode_id = ? AND user_id = ?", (promo['id'], user_id))
@@ -748,8 +763,35 @@ def use_promocode(conn, cursor, code, user_id):
     cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
     if promo['bonus_tokens'] > 0:
         cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
-        _schedule_db_backup()
+    _schedule_db_backup()
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
+
+
+@db_operation
+def get_promocodes_list(conn, cursor):
+    """Для админки: список промокодов через очередь (не напрямую)."""
+    cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
+    return [dict(r) for r in cursor.fetchall()]
+
+
+@db_operation
+def create_promocode(conn, cursor, code, bonus_tokens, max_uses=100, days=30):
+    """Для админки: создание промокода через очередь."""
+    code = code.strip().upper()
+    expires = (datetime.now() + timedelta(days=days)).isoformat()
+    cursor.execute(
+        "INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        (code, bonus_tokens, max_uses, datetime.now().isoformat(), expires)
+    )
+    _schedule_db_backup()
+    return cursor.lastrowid
+
+
+@db_operation
+def get_all_active_user_ids(conn, cursor):
+    """Для рассылки/раздачи: ID незаблокированных юзеров."""
+    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+    return [r[0] for r in cursor.fetchall()]
 
 
 @db_operation
@@ -767,8 +809,7 @@ def complete_payment(conn, cursor, payload):
 
 @db_operation
 def get_payments_summary(conn, cursor, days=30):
-    """Возвращает (total_stars, total_count, rub_estimate) за последние N дней."""
-    from datetime import datetime, timedelta
+    """Возвращает (total_stars, total_count) за последние N дней."""
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("""
         SELECT COALESCE(SUM(stars_amount), 0), COUNT(*)
@@ -818,11 +859,13 @@ def add_premium(conn, cursor, user_id, days, plan, paid=False):
 @db_operation
 def block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
 
 
 @db_operation
 def unblock_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -875,6 +918,7 @@ def add_reminder(conn, cursor, user_id, text, time_str):
         print(f"⚠️ Сдвиг времени: {e}")
     cursor.execute("INSERT INTO reminders (user_id, text, time, created_at) VALUES (?, ?, ?, ?)",
                    (user_id, text, time_str, datetime.now().isoformat()))
+    _schedule_db_backup()
     return cursor.lastrowid
 
 
@@ -898,16 +942,19 @@ def get_user_reminders(conn, cursor, user_id):
 @db_operation
 def delete_reminder(conn, cursor, reminder_id):
     cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+    _schedule_db_backup()
 
 
 @db_operation
 def delete_reminder_by_text(conn, cursor, user_id, text):
     cursor.execute("DELETE FROM reminders WHERE user_id = ? AND text LIKE ?", (user_id, f"%{text}%"))
+    _schedule_db_backup()
 
 
 @db_operation
 def delete_all_reminders(conn, cursor, user_id):
     cursor.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -963,6 +1010,7 @@ def get_all_tariffs(conn, cursor, kind=None):
 def add_tariff(conn, cursor, kind, name, price_rub, stars, tokens, days=0):
     cursor.execute("INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
                    (kind, name, price_rub, stars, tokens, days))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -976,11 +1024,13 @@ def update_tariff(conn, cursor, tariff_id, **fields):
         values.append(v)
     values.append(tariff_id)
     cursor.execute(f"UPDATE tariffs SET {', '.join(set_parts)} WHERE id = ?", values)
+    _schedule_db_backup()
 
 
 @db_operation
 def delete_tariff(conn, cursor, tariff_id):
     cursor.execute("DELETE FROM tariffs WHERE id = ?", (tariff_id,))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -1062,6 +1112,7 @@ def create_support_ticket(conn, cursor, user_id, username, first_message=None):
             VALUES (?, 'user', ?, ?)
         """, (ticket_id, first_message, datetime.now().isoformat()))
 
+    _schedule_db_backup()
     return ticket_id
 
 
@@ -1074,6 +1125,7 @@ def add_support_message(conn, cursor, ticket_id, sender, text):
 
     cursor.execute("UPDATE support_tickets SET updated_at = ? WHERE id = ?",
                    (datetime.now().isoformat(), ticket_id))
+    _schedule_db_backup()
     return cursor.lastrowid
 
 
@@ -1105,12 +1157,14 @@ def get_ticket_messages(conn, cursor, ticket_id, limit=100):
 def close_ticket(conn, cursor, ticket_id):
     cursor.execute("UPDATE support_tickets SET status = 'closed', updated_at = ? WHERE id = ?",
                    (datetime.now().isoformat(), ticket_id))
+    _schedule_db_backup()
 
 
 @db_operation
 def reopen_ticket(conn, cursor, ticket_id):
     cursor.execute("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?",
                    (datetime.now().isoformat(), ticket_id))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -1130,6 +1184,15 @@ def get_ticket(conn, cursor, ticket_id):
     return dict(row) if row else None
 
 
+@db_operation
+def delete_support_ticket(conn, cursor, ticket_id):
+    """Удаление тикета + сообщений + оценок через очередь."""
+    cursor.execute("DELETE FROM support_messages WHERE ticket_id = ?", (ticket_id,))
+    cursor.execute("DELETE FROM support_tickets WHERE id = ?", (ticket_id,))
+    cursor.execute("DELETE FROM ticket_ratings WHERE ticket_id = ?", (ticket_id,))
+    _schedule_db_backup()
+
+
 # ===== ОЦЕНКИ ТИКЕТОВ =====
 @db_operation
 def save_ticket_rating(conn, cursor, ticket_id, user_id, rating, comment=None):
@@ -1137,6 +1200,7 @@ def save_ticket_rating(conn, cursor, ticket_id, user_id, rating, comment=None):
         INSERT INTO ticket_ratings (ticket_id, user_id, rating, comment, created_at)
         VALUES (?, ?, ?, ?, ?)
     """, (ticket_id, user_id, rating, comment, datetime.now().isoformat()))
+    _schedule_db_backup()
     return cursor.lastrowid
 
 
@@ -1161,6 +1225,7 @@ def add_warning(conn, cursor, user_id, reason, admin_id):
         INSERT INTO warnings (user_id, reason, admin_id, created_at)
         VALUES (?, ?, ?, ?)
     """, (user_id, reason, admin_id, datetime.now().isoformat()))
+    _schedule_db_backup()
     return cursor.lastrowid
 
 
@@ -1179,11 +1244,13 @@ def get_warnings_count(conn, cursor, user_id):
 @db_operation
 def remove_warning(conn, cursor, warning_id):
     cursor.execute("DELETE FROM warnings WHERE id = ?", (warning_id,))
+    _schedule_db_backup()
 
 
 @db_operation
 def remove_all_warnings(conn, cursor, user_id):
     cursor.execute("DELETE FROM warnings WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
 
 
 @db_operation
@@ -1244,6 +1311,7 @@ def get_queue_info():
     status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
     return f"📊 Очередь БД: {size} задач, поток: {status}"
 
+
 # ===== ЕЖЕДНЕВНЫЙ БОНУС И STREAK =====
 @db_operation
 def claim_daily_bonus(conn, cursor, user_id):
@@ -1264,8 +1332,6 @@ def claim_daily_bonus(conn, cursor, user_id):
     if cursor.fetchone():
         return False, 0, yesterday_streak, True
 
-    # streak: если вчера получал — +1, иначе 1
-    from datetime import timedelta
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     cursor.execute(
         "SELECT streak FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
@@ -1274,7 +1340,6 @@ def claim_daily_bonus(conn, cursor, user_id):
     y = cursor.fetchone()
     streak = (y[0] + 1) if y else 1
 
-    # Сумма: базово 5, +5 за каждые 7 дней, максимум 50
     amount = min(5 + (streak // 7) * 5, 50)
 
     cursor.execute(
@@ -1283,13 +1348,13 @@ def claim_daily_bonus(conn, cursor, user_id):
     )
     cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
 
-    # Увеличиваем счётчик дней
     cursor.execute("""
         INSERT INTO user_counters (user_id, days_active) VALUES (?, 1)
         ON CONFLICT(user_id) DO UPDATE SET days_active = days_active + 1
     """, (user_id,))
 
-    # Сохраняем в папку пользователя
+    _schedule_db_backup()
+
     try:
         from utils.user_storage import save_user_bonus
         save_user_bonus(user_id, streak, today)
@@ -1337,7 +1402,6 @@ def check_and_unlock_achievements(conn, cursor, user_id):
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     refs = cursor.fetchone()[0] or 0
 
-    # (код, условие, эмодзи, название)
     defs = [
         ("first_step", days >= 1, "👣", "Первый шаг"),
         ("week_active", days >= 7, "📅", "Неделя с нами"),
@@ -1358,6 +1422,9 @@ def check_and_unlock_achievements(conn, cursor, user_id):
                 (user_id, code, datetime.now().isoformat())
             )
             unlocked_new.append(code)
+
+    if unlocked_new:
+        _schedule_db_backup()
 
     return unlocked_new
 
@@ -1394,6 +1461,7 @@ def increment_counter(conn, cursor, user_id, field):
         ON CONFLICT(user_id) DO UPDATE SET {field} = {field} + 1
     """, (user_id,))
 
+
 # ===== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ МОДЕЛЕЙ =====
 @db_operation
 def log_model_usage(conn, cursor, user_id, model, cost=0):
@@ -1406,7 +1474,6 @@ def log_model_usage(conn, cursor, user_id, model, cost=0):
 @db_operation
 def get_model_usage(conn, cursor, days=30, limit=20):
     """Топ моделей по использованию за N дней."""
-    from datetime import timedelta
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("""
         SELECT model, COUNT(*) as cnt, SUM(cost) as total_cost
@@ -1421,10 +1488,10 @@ def get_model_usage(conn, cursor, days=30, limit=20):
 
 @db_operation
 def get_model_usage_total(conn, cursor, days=30):
-    from datetime import timedelta
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("SELECT COUNT(*) FROM usage_stats WHERE used_at >= ?", (since,))
     return cursor.fetchone()[0] or 0
+
 
 def restore_bonus_from_folders():
     """Восстанавливает streak и ачивки из папок пользователей."""
@@ -1454,7 +1521,6 @@ def restore_bonus_from_folders():
             except Exception:
                 continue
 
-            # --- Bonus / streak ---
             if os.path.exists(bonus_file):
                 try:
                     with open(bonus_file, "r", encoding="utf-8") as f:
@@ -1474,7 +1540,6 @@ def restore_bonus_from_folders():
                 except Exception as e:
                     print(f"⚠️ Streak {user_id}: {e}")
 
-            # --- Achievements ---
             if os.path.exists(ach_file):
                 try:
                     with open(ach_file, "r", encoding="utf-8") as f:
@@ -1494,4 +1559,3 @@ def restore_bonus_from_folders():
                     print(f"⚠️ Achievements {user_id}: {e}")
 
     return restored
-

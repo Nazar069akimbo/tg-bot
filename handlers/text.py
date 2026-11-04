@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 async def _open_referral(message: types.Message):
-    """Открывает рефералку как сообщение."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     user_id = message.from_user.id
     count = get_referral_count(user_id)
@@ -32,7 +31,6 @@ async def _open_referral(message: types.Message):
 
 
 async def _buy_tariff_by_name(message: types.Message, user_id: int, tariff_name: str, reply_text: str = ""):
-    """Находит тариф по имени и выбивает инвойс."""
     from database.db import get_tariffs, create_payment
     import secrets, os
     from aiogram.types import LabeledPrice
@@ -89,13 +87,19 @@ async def handle_text(message: types.Message):
     state = helpers.user_pages.get(user_id, {})
     state_name = state.get("state")
 
-    # === АДМИН-ВВОД ===
+    # === АДМИН-ВВОД: сначала проверяем, что юзер реально админ ===
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
         "waiting_user_search", "waiting_admin_reply",
         "waiting_warn_add", "waiting_warn_remove",
         "waiting_start_dialog_user", "waiting_model_price_edit",
+        "waiting_price_edit", "waiting_price_add",
     ]:
+        if not is_admin(user_id):
+            helpers.user_pages.pop(user_id, None)
+            await message.answer("⛔ Нет доступа")
+            logger.warning(f"⚠️ Попытка админ-ввода от не-админа {user_id}")
+            return
         from .admin import handle_admin_input
         await handle_admin_input(message)
         return
@@ -122,9 +126,9 @@ async def handle_text(message: types.Message):
 
     # === ВВОД ИМЕНИ ===
     if state_name == "waiting_name":
-        set_user_name(user_id, text)
+        set_user_name(user_id, text[:50])
         helpers.user_pages.pop(user_id, None)
-        await message.answer(f"Ок, <b>{text}</b>! Приятно познакомиться 😊")
+        await message.answer(f"Ок, <b>{text[:50]}</b>! Приятно познакомиться 😊")
         from .start import start_cmd
         await start_cmd(message)
         return
@@ -167,7 +171,29 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
             f"💎 Пополни: /credits"
         )
         return
-    spend_tokens(user_id, cost)
+
+    status_msg = await message.answer("🤔 Думаю...")
+
+    reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
+    result = None
+    try:
+        result = smart_reply(user_id, text, reminder_state=reminder_state)
+    except Exception as e:
+        logger.error(f"❌ smart_reply [{user_id}]: {e}", exc_info=True)
+
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+    # === ИСПРАВЛЕНО: списываем только при успешном ответе ===
+    if not result or not result.get("reply"):
+        await message.answer("😔 Не смог ответить. Токены не списаны. Попробуй ещё раз.")
+        return
+
+    if not spend_tokens(user_id, cost):
+        await message.answer("❌ Не удалось списать токены. Попробуй ещё раз.")
+        return
 
     try:
         from database.db import log_model_usage
@@ -175,20 +201,9 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     except Exception as e:
         logger.warning(f"⚠️ log_model_usage: {e}")
 
-    status_msg = await message.answer("🤔 Думаю...")
-
-    reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
-    result = smart_reply(user_id, text, reminder_state=reminder_state)
-
-    try:
-        await status_msg.delete()
-    except Exception:
-        pass
-
     action = result.get("action", "reply")
     logger.info(f"📤 [{user_id}] action={action}, reply={result.get('reply', '')[:60]}")
 
-    # Счётчик для ачивок
     try:
         from database.db import increment_counter
         increment_counter(user_id, "texts_total")

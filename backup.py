@@ -5,9 +5,36 @@ import base64
 import time
 import threading
 from datetime import datetime
+from urllib.parse import urlparse
 import requests
 
 logger = logging.getLogger(__name__)
+
+# === БЕЗОПАСНОСТЬ: разрешённые хосты для скачивания ===
+_ALLOWED_DOWNLOAD_HOSTS = (
+    "github.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "githubusercontent.com",
+)
+
+
+def _is_safe_download_url(url: str) -> bool:
+    """Разрешаем только https + известные хосты GitHub. Защита от SSRF."""
+    if not url or not isinstance(url, str):
+        return False
+    if not url.startswith("https://"):
+        return False
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    for allowed in _ALLOWED_DOWNLOAD_HOSTS:
+        if host == allowed or host.endswith("." + allowed):
+            return True
+    return False
 
 
 class GitHubBackup:
@@ -100,7 +127,7 @@ class GitHubBackup:
             for root, dirs, files in os.walk(base):
                 for file in files:
                     full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, base).replace('\\\\', '/')
+                    rel_path = os.path.relpath(full_path, base).replace('\\', '/')
                     repo_path = f'users/{rel_path}'
 
                     # Пропускаем images — не бэкапим каждую картинку при каждом изменении
@@ -184,7 +211,6 @@ class GitHubBackup:
             file_count = 0
             for item in files:
                 if item['type'] == 'file':
-                    # Качаем только лёгкие файлы (json, txt)
                     if item['name'].endswith(('.json', '.txt')):
                         self._download_file(item['download_url'], os.path.join(user_path, item['name']))
                         file_count += 1
@@ -213,10 +239,14 @@ class GitHubBackup:
     def download_user_image(self, user_id, image_name, base_dir='data/users'):
         """Скачивает 1 картинку юзера из GitHub (для галереи)."""
         try:
-            # Ищем папку: по ID или по имени
+            # Защита от path traversal в имени файла
+            safe_image_name = os.path.basename(image_name)
+            if not safe_image_name or safe_image_name != image_name:
+                logger.warning(f"⚠️ Подозрительное имя картинки: {image_name}")
+                return None
+
             folder = str(user_id)
             if not os.path.exists(os.path.join(base_dir, folder)):
-                # Ищем папку с _id.txt = user_id
                 if os.path.exists(base_dir):
                     for name in os.listdir(base_dir):
                         candidate = os.path.join(base_dir, name)
@@ -229,11 +259,11 @@ class GitHubBackup:
                                         break
                             except Exception:
                                 pass
-            path = os.path.join(base_dir, folder, "images", image_name)
+            path = os.path.join(base_dir, folder, "images", safe_image_name)
             if os.path.exists(path):
                 return path
 
-            repo_path = f'users/{folder}/images/{image_name}'
+            repo_path = f'users/{folder}/images/{safe_image_name}'
             url = f'https://api.github.com/repos/{self.repo_users}/contents/{repo_path}'
             response = requests.get(url, headers=self.headers)
             if response.status_code != 200:
@@ -250,8 +280,12 @@ class GitHubBackup:
             return None
 
     def _download_file(self, url, path):
+        # === БЕЗОПАСНОСТЬ: только https + известные хосты GitHub ===
+        if not _is_safe_download_url(url):
+            logger.warning(f"⚠️ Заблокирован небезопасный URL для {path}: {url}")
+            return
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=30)
             if response.status_code == 200:
                 with open(path, 'wb') as f:
                     f.write(response.content)

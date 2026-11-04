@@ -35,13 +35,23 @@ if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
 
+# === БЕЗОПАСНОСТЬ: ADMIN_ID обязателен, без дефолта ===
+_admin_raw = os.getenv('ADMIN_ID')
+if not _admin_raw:
+    logger.error("❌ ADMIN_ID не задан в .env — запуск невозможен")
+    sys.exit(1)
+try:
+    ADMIN_ID = int(_admin_raw)
+except ValueError:
+    logger.error("❌ ADMIN_ID должен быть числом")
+    sys.exit(1)
+
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
 )
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
-ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
 
 setup_logging(dp, logger)
 
@@ -78,8 +88,8 @@ async def reminder_worker():
 
 
 async def subscription_worker():
+    # === ИСПРАВЛЕНО: проверка сразу при старте, потом раз в сутки ===
     while True:
-        await asyncio.sleep(86400)
         try:
             subs = get_expiring_subscriptions()
             for row in subs:
@@ -101,6 +111,7 @@ async def subscription_worker():
                     logger.warning(f"⚠️ Не отправил {user_id}: {e}")
         except Exception as e:
             logger.error(f"❌ Ошибка воркера подписок: {e}")
+        await asyncio.sleep(86400)
 
 
 async def main():
@@ -110,7 +121,6 @@ async def main():
     flask_thread.start()
     logger.info("✅ Flask запущен")
 
-    # === ШАГ 1: Восстановить БД из GitHub (если нет локально) ===
     db_exists = os.path.exists('data/repsolver.db')
     if not db_exists:
         logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
@@ -124,7 +134,6 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # === ШАГ 2: Восстановить ПАПКИ ЮЗЕРОВ из GitHub (только метаданные, без картинок) ===
     logger.info("📥 Восстанавливаю папки пользователей из GitHub (без картинок)...")
     try:
         ok = GitHubBackup().restore_users(skip_images=True)
@@ -135,7 +144,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление юзеров из GitHub: {e}")
 
-    # === ШАГ 3: Восстановить токены из папок в БД ===
     try:
         count = restore_from_user_folders()
         if count > 0:
@@ -145,7 +153,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
-    # === ШАГ 4: Восстановить streak и ачивки ===
     try:
         from database.db import restore_bonus_from_folders
         count2 = restore_bonus_from_folders()
@@ -156,7 +163,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Восстановление bonus: {e}")
 
-    # === ШАГ 5: Настройки ===
     try:
         from handlers.helpers import load_settings_from_db
         load_settings_from_db()
@@ -164,7 +170,6 @@ async def main():
     except Exception as e:
         logger.warning(f"⚠️ Настройки: {e}")
 
-    # === ШАГ 6: Фоновый бэкап БД раз в 30 мин ===
     def backup_loop():
         try:
             GitHubBackup().backup_db(reason='при старте')

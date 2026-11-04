@@ -8,7 +8,13 @@ import os, logging
 router = Router()
 logger = logging.getLogger(__name__)
 
-ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
+# === БЕЗОПАСНОСТЬ: без дефолта, только из .env ===
+_admin_raw = os.getenv('ADMIN_ID')
+ADMIN_ID = int(_admin_raw) if _admin_raw and _admin_raw.isdigit() else None
+if not ADMIN_ID:
+    logger.warning("⚠️ ADMIN_ID не задан — уведомления админу не будут отправляться")
+
+MAX_SUPPORT_LEN = 2000
 
 
 # ==================== КЛАВИАТУРЫ ====================
@@ -21,7 +27,6 @@ def support_kb():
 
 
 def rating_kb(ticket_id: int):
-    """Клавиатура оценки 1–5 звёзд."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⭐", callback_data=f"rate|{ticket_id}|1"),
@@ -45,7 +50,6 @@ def support_kb_after_close():
 # ==================== УТИЛИТЫ ====================
 
 async def replace_message(callback: types.CallbackQuery, text: str, reply_markup=None):
-    """Удаляет старое сообщение и отправляет новое на его место."""
     try:
         await callback.message.delete()
     except Exception:
@@ -57,7 +61,6 @@ async def replace_message(callback: types.CallbackQuery, text: str, reply_markup
 
 
 def format_history(msgs: list) -> str:
-    """Форматирует историю диалога. ID — кликабельные."""
     lines = []
     for m in msgs:
         sender = m.get("sender")
@@ -65,7 +68,6 @@ def format_history(msgs: list) -> str:
             who = "👤 <b>Вы</b>"
         else:
             who = "🛡 <b>Поддержка</b>"
-        # Экранируем HTML-символы в тексте
         txt = str(m.get("text", ""))
         txt = txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         lines.append(f"{who}:\n{txt}")
@@ -140,7 +142,8 @@ async def support_history_cb(callback: types.CallbackQuery):
 async def handle_support_message(message: types.Message):
     """Юзер пишет в поддержку. Если тикет закрыт — открываем новый."""
     user_id = message.from_user.id
-    text = (message.text or "").strip()
+    # === ИСПРАВЛЕНО: ограничение длины входящего текста ===
+    text = (message.text or "").strip()[:MAX_SUPPORT_LEN]
 
     if text == "/cancel":
         helpers.user_pages.pop(user_id, None)
@@ -151,13 +154,11 @@ async def handle_support_message(message: types.Message):
         await message.answer("❌ Отправь текст")
         return
 
-    # Экранируем HTML
     safe_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     ticket = get_user_ticket(user_id)
 
     if not ticket:
-        # Создаём новый тикет
         ticket_id = create_support_ticket(user_id, message.from_user.username or "", safe_text)
         user_link = helpers.user_link(user_id, message.from_user.full_name or str(user_id))
         notif = (
@@ -174,7 +175,6 @@ async def handle_support_message(message: types.Message):
             reply_markup=helpers.main_menu()
         )
     else:
-        # Отвечаем в существующий
         add_support_message(ticket['id'], 'user', safe_text)
         user_link = helpers.user_link(user_id, message.from_user.full_name or str(user_id))
         notif = (
@@ -187,15 +187,15 @@ async def handle_support_message(message: types.Message):
 
     helpers.user_pages.pop(user_id, None)
 
-    # Уведомляем админа
-    try:
-        await message.bot.send_message(ADMIN_ID, notif)
-    except Exception as e:
-        logger.warning(f"⚠️ Не отправил админу: {e}")
+    if ADMIN_ID:
         try:
-            add_admin_notification(notif, user_id)
-        except Exception:
-            pass
+            await message.bot.send_message(ADMIN_ID, notif)
+        except Exception as e:
+            logger.warning(f"⚠️ Не отправил админу: {e}")
+            try:
+                add_admin_notification(notif, user_id)
+            except Exception:
+                pass
 
 
 # ==================== ОЦЕНКА ТИКЕТА ====================
@@ -214,15 +214,17 @@ async def rate_cb(callback: types.CallbackQuery):
         await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
         return
 
+    if rating < 1 or rating > 5:
+        await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
+        return
+
     user_id = callback.from_user.id
 
-    # Проверяем, что этот тикет принадлежит юзеру
     ticket = get_ticket(ticket_id)
     if not ticket or ticket['user_id'] != user_id:
         await helpers.safe_answer(callback, "❌ Тикет не найден", show_alert=True)
         return
 
-    # Проверяем, не оценивал ли уже
     existing = get_ticket_rating(ticket_id)
     if existing and existing['user_id'] == user_id:
         await helpers.safe_answer(callback, "✅ Ты уже оценил этот тикет", show_alert=True)
@@ -237,26 +239,25 @@ async def rate_cb(callback: types.CallbackQuery):
     )
     await replace_message(callback, text, support_kb_after_close())
 
-    # Уведомляем админа
-    try:
-        user_link = helpers.user_link(user_id, callback.from_user.full_name or str(user_id))
-        await callback.bot.send_message(
-            ADMIN_ID,
-            f"⭐ <b>Оценка тикета #{ticket_id}</b>\n\n"
-            f"👤 {user_link}\n"
-            f"🆔 <code>{user_id}</code>\n"
-            f"Оценка: {stars} ({rating}/5)"
-        )
-    except Exception as e:
-        logger.warning(f"⚠️ Не отправил оценку админу: {e}")
+    if ADMIN_ID:
+        try:
+            user_link = helpers.user_link(user_id, callback.from_user.full_name or str(user_id))
+            await callback.bot.send_message(
+                ADMIN_ID,
+                f"⭐ <b>Оценка тикета #{ticket_id}</b>\n\n"
+                f"👤 {user_link}\n"
+                f"🆔 <code>{user_id}</code>\n"
+                f"Оценка: {stars} ({rating}/5)"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Не отправил оценку админу: {e}")
 
     await helpers.safe_answer(callback, "✅ Спасибо!")
 
 
-# ==================== ЗАКРЫТИЕ ТИКЕТА (вызов из админки) ====================
+# ==================== ЗАКРЫТИЕ ТИКЕТА ====================
 
 async def notify_user_ticket_closed(bot, ticket_id: int, user_id: int):
-    """Сообщает юзеру, что тикет закрыт, и просит оценку."""
     text = (
         f"✅ <b>Тикет #{ticket_id} закрыт</b>\n\n"
         "Спасибо за обращение! Если хочешь, поставь оценку нашей поддержке:"

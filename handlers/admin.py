@@ -4,12 +4,17 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboar
 from database.db import *
 from . import helpers
 from backup import GitHubBackup
-import logging, os, asyncio
+import logging, os, asyncio, secrets
 from datetime import datetime, timedelta
 
 router = Router()
 logger = logging.getLogger(__name__)
-ADMIN_CODE = os.getenv("ADMIN_CODE", "30121979")
+
+# === БЕЗОПАСНОСТЬ: без дефолтного кода. Если не задан — вход отключён ===
+ADMIN_CODE = os.getenv("ADMIN_CODE")
+if not ADMIN_CODE:
+    logger.warning("⚠️ ADMIN_CODE не задан — вход по коду отключён")
+
 STAR_RATE = 2.0
 LOG_PATH = 'logs/bot.log'
 
@@ -30,6 +35,12 @@ def back_btn(target="admin_panel", text="🔙 Назад"):
     return InlineKeyboardButton(text=text, callback_data=target)
 
 
+def _is_admin_or_alert(callback):
+    if not is_admin(callback.from_user.id):
+        return False
+    return True
+
+
 # ==================== ВХОД ====================
 
 @router.message(Command("admin"))
@@ -37,27 +48,41 @@ async def admin_cmd(message: types.Message):
     if is_admin(message.from_user.id):
         await message.answer("🛡️ <b>АДМИН-ПАНЕЛЬ</b>", reply_markup=helpers.admin_kb())
     else:
-        await message.answer("🔐 /admin_code 30121979")
+        if ADMIN_CODE:
+            await message.answer("🔐 Введи: /admin_code &lt;код&gt;")
+        else:
+            await message.answer("⛔ Вход по коду отключён")
 
 
 @router.message(Command("admin_code"))
 async def admin_code_cmd(message: types.Message):
+    if not ADMIN_CODE:
+        await message.answer("⛔ Вход по коду отключён (ADMIN_CODE не задан)")
+        return
     args = message.text.split() if message.text else []
-    if len(args) > 1 and args[1] == ADMIN_CODE:
+    if len(args) > 1 and secrets.compare_digest(args[1], ADMIN_CODE):
         add_admin(message.from_user.id)
         await message.answer("✅ Вы админ!", reply_markup=helpers.admin_kb())
+    else:
+        logger.warning(f"⚠️ Неверный админ-код от {message.from_user.id}")
 
 
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel_cb(callback: types.CallbackQuery):
-    if is_admin(callback.from_user.id):
-        await safe_edit(callback, "🛡️ <b>АДМИН-ПАНЕЛЬ</b>", helpers.admin_kb())
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    await safe_edit(callback, "🛡️ <b>АДМИН-ПАНЕЛЬ</b>", helpers.admin_kb())
+    await helpers.safe_answer(callback)
 
 
 # ==================== СТАТИСТИКА ====================
 
 @router.callback_query(F.data == "a_stats")
 async def a_stats_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     total, total_tokens, premium_users = get_stats()
     today = get_users_count_today()
     week = get_users_count_week()
@@ -81,7 +106,7 @@ async def a_stats_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_stars_balance")
 async def a_stars_balance_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
 
@@ -122,7 +147,7 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_payments_list")
 async def a_payments_list_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
 
@@ -144,7 +169,7 @@ async def a_payments_list_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ==================== УПРАВЛЕНИЕ ЦЕНАМИ (тарифы) ====================
+# ==================== УПРАВЛЕНИЕ ЦЕНАМИ ====================
 
 def prices_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -158,7 +183,7 @@ def prices_menu_kb():
 
 @router.callback_query(F.data == "a_prices_menu")
 async def a_prices_menu_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
 
@@ -178,6 +203,9 @@ async def a_prices_menu_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_prices|"))
 async def a_prices_list_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     kind = callback.data.split("|")[1]
     tariffs = get_all_tariffs(kind)
 
@@ -205,6 +233,9 @@ async def a_prices_list_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_price_edit|"))
 async def a_price_edit_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tid = int(callback.data.split("|")[1])
     t = get_tariff(tid)
     if not t:
@@ -240,6 +271,9 @@ async def a_price_edit_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_price_do_edit|"))
 async def a_price_do_edit_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tid = int(callback.data.split("|")[1])
     t = get_tariff(tid)
     if not t:
@@ -268,6 +302,9 @@ async def a_price_do_edit_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_price_toggle|"))
 async def a_price_toggle_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tid = int(callback.data.split("|")[1])
     t = get_tariff(tid)
     if not t:
@@ -281,6 +318,9 @@ async def a_price_toggle_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_price_delete|"))
 async def a_price_delete_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tid = int(callback.data.split("|")[1])
     t = get_tariff(tid)
     if not t:
@@ -296,6 +336,9 @@ async def a_price_delete_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_price_add|"))
 async def a_price_add_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     kind = callback.data.split("|")[1]
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_price_add", "kind": kind}
 
@@ -332,7 +375,7 @@ def models_menu_kb():
 
 @router.callback_query(F.data == "a_models_menu")
 async def a_models_menu_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     text = (
@@ -347,6 +390,9 @@ async def a_models_menu_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_models|"))
 async def a_models_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     task = callback.data.split("|")[1]
     models = helpers.AVAILABLE_MODELS.get(task, [])
 
@@ -366,6 +412,9 @@ async def a_models_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_model_edit|"))
 async def a_model_edit_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     parts = callback.data.split("|")
     if len(parts) < 3:
         return
@@ -394,6 +443,9 @@ async def a_model_edit_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_models_stats|"))
 async def a_models_stats_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     days = int(callback.data.split("|")[1])
     usage = get_model_usage(days=days, limit=20)
     total = get_model_usage_total(days=days)
@@ -457,6 +509,9 @@ async def handle_model_price_edit(message: types.Message):
 
 @router.callback_query(F.data == "a_search_users")
 async def a_search_users_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_user_search"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback,
@@ -468,6 +523,9 @@ async def a_search_users_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_filter_users")
 async def a_filter_users_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💎 Только Премиум", callback_data="a_filter|premium")],
         [InlineKeyboardButton(text="👤 Только Базовые", callback_data="a_filter|basic")],
@@ -482,6 +540,9 @@ async def a_filter_users_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_filter|"))
 async def a_filter_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     filter_type = callback.data.split("|")[1]
     users = search_users(filter_type=filter_type, limit=30)
 
@@ -534,6 +595,9 @@ async def handle_user_search(message: types.Message):
 
 @router.callback_query(F.data == "a_support_tickets")
 async def a_support_tickets_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tickets = get_support_tickets(status='open', limit=20)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
@@ -553,6 +617,9 @@ async def a_support_tickets_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_closed_tickets")
 async def a_closed_tickets_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     tickets = get_support_tickets(status='closed', limit=20)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
@@ -571,6 +638,9 @@ async def a_closed_tickets_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_ticket_"))
 async def a_ticket_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     ticket_id = int(callback.data.replace("a_ticket_", ""))
     ticket = get_ticket(ticket_id)
     if not ticket:
@@ -620,6 +690,9 @@ async def noop_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_reply_"))
 async def a_reply_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     ticket_id = int(callback.data.replace("a_reply_", ""))
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_admin_reply", "ticket_id": ticket_id}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_ticket_{ticket_id}", "🔙 Отмена")]])
@@ -629,6 +702,9 @@ async def a_reply_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_close_"))
 async def a_close_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     ticket_id = int(callback.data.replace("a_close_", ""))
     ticket = get_ticket(ticket_id)
     if not ticket:
@@ -649,6 +725,9 @@ async def a_close_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_reopen_"))
 async def a_reopen_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     ticket_id = int(callback.data.replace("a_reopen_", ""))
     reopen_ticket(ticket_id)
     await helpers.safe_answer(callback, "♻️ Тикет переоткрыт", show_alert=True)
@@ -657,18 +736,21 @@ async def a_reopen_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("a_delete_ticket_"))
 async def a_delete_ticket_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     ticket_id = int(callback.data.replace("a_delete_ticket_", ""))
-    with db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM support_messages WHERE ticket_id = ?", (ticket_id,))
-        cursor.execute("DELETE FROM support_tickets WHERE id = ?", (ticket_id,))
-        cursor.execute("DELETE FROM ticket_ratings WHERE ticket_id = ?", (ticket_id,))
+    # === ИСПРАВЛЕНО: через очередь, не напрямую ===
+    delete_support_ticket(ticket_id)
     await helpers.safe_answer(callback, "🗑 Удалён", show_alert=True)
     await a_support_tickets_cb(callback)
 
 
 @router.callback_query(F.data == "a_start_dialog")
 async def a_start_dialog_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_start_dialog_user"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_support_tickets", "🔙 Отмена")]])
     await safe_edit(callback,
@@ -716,7 +798,7 @@ async def handle_admin_reply(message: types.Message):
     user_id = message.from_user.id
     state = helpers.user_pages.get(user_id, {})
     ticket_id = state.get("ticket_id")
-    text = message.text.strip()
+    text = message.text.strip()[:2000]
 
     if text == "/cancel":
         helpers.user_pages.pop(user_id, None)
@@ -753,6 +835,9 @@ async def handle_admin_reply(message: types.Message):
 
 @router.callback_query(F.data == "a_users")
 async def a_users_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     users = search_users(limit=50)
     text = "👥 <b>Топ по токенам</b>\n\n"
     for u in users:
@@ -764,6 +849,9 @@ async def a_users_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_give_tokens")
 async def a_give_tokens_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_give_tokens"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback, "⭐ <b>РАЗДАТЬ ТОКЕНЫ</b>\n\nФормат: <code>ID | кол-во</code>", kb)
@@ -772,6 +860,9 @@ async def a_give_tokens_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_broadcast")
 async def a_broadcast_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_broadcast"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback, "📢 <b>РАССЫЛКА</b>\n\nВведи текст.", kb)
@@ -780,6 +871,9 @@ async def a_broadcast_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_block")
 async def a_block_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     users = search_users(limit=30)
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for u in users:
@@ -793,6 +887,9 @@ async def a_block_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("block_user_"))
 async def block_user_action(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     uid = int(callback.data.replace("block_user_", ""))
     user = get_user(uid)
     if user['is_blocked'] == 1:
@@ -817,7 +914,7 @@ def warnings_menu_kb():
 
 @router.callback_query(F.data == "a_warnings")
 async def a_warnings_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     warned = get_warned_users(limit=50)
@@ -833,6 +930,9 @@ async def a_warnings_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_warn_list")
 async def a_warn_list_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     warned = get_warned_users(limit=50)
     if not warned:
         text = "📋 <b>Список варновых</b>\n\nПусто"
@@ -850,6 +950,9 @@ async def a_warn_list_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_warn_all")
 async def a_warn_all_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     warns = get_all_warnings(limit=50)
     if not warns:
         text = "📜 <b>Все варны</b>\n\nПусто"
@@ -869,6 +972,9 @@ async def a_warn_all_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_warn_add")
 async def a_warn_add_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_warn_add"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_warnings", "🔙 Отмена")]])
     await safe_edit(callback,
@@ -882,6 +988,9 @@ async def a_warn_add_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_warn_remove")
 async def a_warn_remove_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_warn_remove"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_warnings", "🔙 Отмена")]])
     await safe_edit(callback, "➖ <b>Снять варн</b>\n\nВведи ID юзера — снимутся все варны.", kb)
@@ -958,7 +1067,7 @@ async def handle_warn_remove(message: types.Message, admin_id: int):
 
 @router.callback_query(F.data == "a_backup")
 async def a_backup_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     await safe_edit(callback, "⏳ Бэкап...", None)
@@ -980,6 +1089,9 @@ async def a_backup_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_export_db")
 async def export_db_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     if not os.path.exists('data/repsolver.db'):
         await helpers.safe_answer(callback, "❌ Нет БД", show_alert=True)
         return
@@ -992,6 +1104,9 @@ async def export_db_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_restore_github")
 async def restore_github_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     await safe_edit(callback, "⏳ Восстанавливаю БД...", None)
     result = GitHubBackup().restore_latest_backup()
     if result:
@@ -1005,7 +1120,7 @@ async def restore_github_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_restore_users")
 async def restore_users_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
 
@@ -1037,6 +1152,9 @@ async def restore_users_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_promocodes")
 async def a_promocodes_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Создать", callback_data="a_create_promo")],
         [InlineKeyboardButton(text="📋 Список", callback_data="a_list_promos")],
@@ -1048,6 +1166,9 @@ async def a_promocodes_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_create_promo")
 async def a_create_promo_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     helpers.user_pages[callback.from_user.id] = {"state": "waiting_promo_code"}
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("a_promocodes", "🔙 Отмена")]])
     await safe_edit(callback, "🎫 Формат: <code>КОД | токены | дни</code>", kb)
@@ -1056,10 +1177,11 @@ async def a_create_promo_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_list_promos")
 async def a_list_promos_cb(callback: types.CallbackQuery):
-    with db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
-        promos = cursor.fetchall()
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    # === ИСПРАВЛЕНО: через очередь ===
+    promos = get_promocodes_list()
     text = "📋 <b>ПРОМОКОДЫ</b>\n\n"
     if not promos:
         text += "Пусто"
@@ -1073,6 +1195,9 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_db_status")
 async def a_db_status_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn("admin_panel")]])
     await safe_edit(callback, get_queue_info(), kb)
     await helpers.safe_answer(callback)
@@ -1082,7 +1207,7 @@ async def a_db_status_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_logs")
 async def a_logs_cb(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     size = os.path.getsize(LOG_PATH) if os.path.exists(LOG_PATH) else 0
@@ -1109,6 +1234,9 @@ def _read_logs(lines=100, filter_level=None):
 
 @router.callback_query(F.data == "a_logs_tail")
 async def a_logs_tail_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     content = _read_logs(lines=100)
     if len(content) > 3800:
         content = "… (обрезано)\n" + content[-3800:]
@@ -1119,6 +1247,9 @@ async def a_logs_tail_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_logs_errors")
 async def a_logs_errors_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     content = _read_logs(lines=100, filter_level="ERROR")
     if len(content) > 3800:
         content = content[-3800:]
@@ -1129,6 +1260,9 @@ async def a_logs_errors_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_logs_warnings")
 async def a_logs_warnings_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     content = _read_logs(lines=100, filter_level="WARNING")
     if len(content) > 3800:
         content = content[-3800:]
@@ -1139,6 +1273,9 @@ async def a_logs_warnings_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "a_logs_download")
 async def a_logs_download_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
     if not os.path.exists(LOG_PATH):
         await helpers.safe_answer(callback, "❌ Файл не найден", show_alert=True)
         return
@@ -1246,13 +1383,8 @@ async def handle_admin_input(message: types.Message):
             code = parts[0].upper()
             bonus = int(parts[1])
             days = int(parts[2]) if len(parts) > 2 else 30
-            with db_connection() as conn:
-                cursor = conn.cursor()
-                expires = (datetime.now() + timedelta(days=days)).isoformat()
-                cursor.execute(
-                    "INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-                    (code, bonus, 100, datetime.now().isoformat(), expires)
-                )
+            # === ИСПРАВЛЕНО: через очередь ===
+            create_promocode(code, bonus, max_uses=100, days=days)
             await message.answer(f"✅ Промокод <code>{code}</code> создан!", reply_markup=helpers.admin_kb())
         except Exception as e:
             await message.answer(f"❌ {e}", reply_markup=helpers.admin_kb())
@@ -1264,12 +1396,9 @@ async def handle_admin_input(message: types.Message):
             parts = message.text.split("|")
             if parts[0].strip() in ("всем", "all"):
                 amount = int(parts[1])
-                with db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-                    users = cursor.fetchall()
-                for u in users:
-                    add_tokens(u['user_id'], amount)
+                users = get_all_active_user_ids()
+                for uid in users:
+                    add_tokens(uid, amount)
                 await message.answer(f"✅ Раздано {amount} токенов {len(users)} юзерам", reply_markup=helpers.admin_kb())
             else:
                 uid = int(parts[0])
@@ -1282,14 +1411,11 @@ async def handle_admin_input(message: types.Message):
         return
 
     if state_name == "waiting_broadcast":
-        with db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-            users = cursor.fetchall()
+        users = get_all_active_user_ids()
         sent = 0
-        for u in users:
+        for uid in users:
             try:
-                await message.bot.send_message(u['user_id'], f"📢 {message.text}")
+                await message.bot.send_message(uid, f"📢 {message.text}")
                 sent += 1
                 await asyncio.sleep(0.05)
             except Exception:

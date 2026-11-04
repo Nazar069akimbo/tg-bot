@@ -8,7 +8,10 @@ import os, logging
 router = Router()
 logger = logging.getLogger(__name__)
 ADMIN_EMAIL = "mychannell069@gmail.com"
-ADMIN_ID = int(os.getenv('ADMIN_ID', 6957852385))
+
+# === БЕЗОПАСНОСТЬ: без дефолта ===
+_admin_raw = os.getenv('ADMIN_ID')
+ADMIN_ID = int(_admin_raw) if _admin_raw and _admin_raw.isdigit() else None
 
 
 @router.message(Command("start"))
@@ -79,7 +82,7 @@ async def start_cmd(message: types.Message):
     )
     await message.answer(text, reply_markup=helpers.main_menu())
 
-    if is_new:
+    if is_new and ADMIN_ID:
         try:
             notif_text = (
                 f"🆕 <b>Новый пользователь!</b>\n\n"
