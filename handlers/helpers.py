@@ -17,7 +17,6 @@ user_model = {}
 # ==================== ССЫЛКИ ====================
 
 def user_link(user_id, name=None):
-    """HTML-ссылка на пользователя."""
     display = name or str(user_id)
     display = str(display).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f'<a href="tg://user?id={user_id}">{display}</a>'
@@ -113,35 +112,34 @@ def get_user_name(user_id):
         return None
 
 
-# ==================== МОДЕЛИ ====================
+# ==================== МОДЕЛИ (БЕЗ GPT IMAGE 1.5, ПОПУЛЯРНЫЕ НАЗВАНИЯ) ====================
 
 AVAILABLE_MODELS = {
     "text_chat": [
-        ("gpt-4.1-nano", "⚡ GPT-4.1 nano", 1, "free"),
-        ("deepseek-v4-flash", "💰 DeepSeek Flash", 1, "free"),
-        ("gemini-2.5-flash-lite", "🌐 Gemini Flash Lite", 2, "premium"),
-        ("qwen-3.6-flash", "🟣 Qwen Flash", 2, "premium"),
-        ("gpt-4.1-mini", "🧠 GPT-4.1 Mini", 2, "premium"),
-        ("claude-haiku", "🎭 Claude Haiku", 3, "premium_plus"),
-        ("deepseek-v4-pro", "💎 DeepSeek Pro", 4, "premium_plus"),
+        ("gpt-4.1-nano", "⚡ GPT-4o Mini", 1, "free"),
+        ("deepseek-v4-flash", "💰 DeepSeek V3", 3, "free"),
+        ("gemini-2.5-flash-lite", "🌐 Gemini 1.5 Flash", 1, "premium"),
+        ("qwen-3.6-flash", "🟣 Qwen Max", 1, "premium"),
+        ("gpt-4.1-mini", "🧠 GPT-4o", 2, "premium"),
+        ("claude-haiku", "🎭 Claude 3 Haiku", 3, "premium_plus"),
+        ("deepseek-v4-pro", "💎 DeepSeek R1", 5, "premium_plus"),
     ],
     "image_generate": [
-        ("flux-schnell", "⚡ Flux Schnell", 10, "free"),
-        ("gpt-image-1-mini", "🖼️ GPT Image Mini", 10, "free"),
-        ("gpt-image-2.5", "🎨 GPT Image 2.5", 35, "premium"),
-        ("gpt-image-1.5", "🖼️ GPT Image 1.5", 40, "premium"),
-        ("seedream-5-lite", "🌸 Seedream Lite", 135, "premium"),
-        ("qwen-image-2512", "🟣 Qwen Image", 200, "premium_plus"),
+        ("flux-schnell", "⚡ Flux (Быстрая)", 15, "free"),
+        ("gpt-image-1-mini", "🖼️ DALL-E Mini", 16, "free"),
+        ("gpt-image-2.5", "🎨 DALL-E 3", 111, "premium"),
+        ("seedream-5-lite", "🌸 Midjourney Lite", 240, "premium"),
+        ("qwen-image-2512", "🟣 Nano Banana", 205, "premium_plus"),
     ],
 }
 
 MODEL_COSTS = {
-    "gpt-4.1-nano": 1, "deepseek-v4-flash": 1,
-    "gemini-2.5-flash-lite": 2, "qwen-3.6-flash": 2, "gpt-4.1-mini": 2,
-    "claude-haiku": 3, "deepseek-v4-pro": 4,
-    "flux-schnell": 10, "gpt-image-1-mini": 10,
-    "gpt-image-2.5": 35, "gpt-image-1.5": 40,
-    "seedream-5-lite": 135, "qwen-image-2512": 200,
+    "gpt-4.1-nano": 1, "deepseek-v4-flash": 3,
+    "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 2,
+    "claude-haiku": 3, "deepseek-v4-pro": 5,
+    "flux-schnell": 15, "gpt-image-1-mini": 16,
+    "gpt-image-2.5": 111,
+    "seedream-5-lite": 240, "qwen-image-2512": 205,
 }
 
 MODEL_NAMES = {m[0]: m[1] for m in AVAILABLE_MODELS["text_chat"] + AVAILABLE_MODELS["image_generate"]}
@@ -157,12 +155,20 @@ MODEL_MIN_LEVEL = {
     "gemini-2.5-flash-lite": 1, "qwen-3.6-flash": 1, "gpt-4.1-mini": 1,
     "claude-haiku": 2, "deepseek-v4-pro": 2,
     "flux-schnell": 0, "gpt-image-1-mini": 0,
-    "gpt-image-2.5": 1, "gpt-image-1.5": 1,
+    "gpt-image-2.5": 1,
     "seedream-5-lite": 1, "qwen-image-2512": 2,
 }
 
+# Модели, которые сейчас отключены (не показываются юзерам)
+def is_model_disabled(model_id):
+    return get_setting(f"model_disabled_{model_id}") == "yes"
+
 
 def can_use_model(user_id, model_id):
+    # Если модель отключена админом — никто не может её использовать
+    if is_model_disabled(model_id):
+        return False
+        
     balance = get_tokens(user_id)
     if balance > 0:
         return True
@@ -180,6 +186,10 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
     has_tokens = user_balance > 0
 
     for model_id, model_name, cost, min_plan in models:
+        # Скрываем отключенные модели
+        if is_model_disabled(model_id):
+            continue
+            
         mark = "✅ " if model_id == current else ""
         cost_str = f" ({cost} ток.)"
         required_level = MODEL_MIN_LEVEL.get(model_id, 0)
@@ -202,17 +212,19 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
 
 
 IMAGE_MODELS = {
-    "flux-schnell": {"name": "⚡ Flux Schnell", "price": 10, "api_model": "flux-schnell"},
-    "gpt-image-1-mini": {"name": "🖼️ GPT Image Mini", "price": 10, "api_model": "gpt-image-1-mini"},
-    "gpt-image-2.5": {"name": "🎨 GPT Image 2.5", "price": 35, "api_model": "gpt-image-2.5"},
-    "gpt-image-1.5": {"name": "🖼️ GPT Image 1.5", "price": 40, "api_model": "gpt-image-1.5"},
-    "seedream-5-lite": {"name": "🌸 Seedream Lite", "price": 135, "api_model": "seedream-5-lite"},
-    "qwen-image-2512": {"name": "🟣 Qwen Image", "price": 200, "api_model": "qwen-image-2512"},
+    "flux-schnell": {"name": "⚡ Flux (Быстрая)", "price": 15, "api_model": "flux-schnell"},
+    "gpt-image-1-mini": {"name": "🖼️ DALL-E Mini", "price": 16, "api_model": "gpt-image-1-mini"},
+    "gpt-image-2.5": {"name": "🎨 DALL-E 3", "price": 111, "api_model": "gpt-image-2.5"},
+    "seedream-5-lite": {"name": "🌸 Midjourney Lite", "price": 240, "api_model": "seedream-5-lite"},
+    "qwen-image-2512": {"name": "🟣 Nano Banana", "price": 205, "api_model": "qwen-image-2512"},
 }
 
 
 def get_model_config(user_id):
     key = get_model_setting("image_generate") or "flux-schnell"
+    # Если текущая модель отключена, откатываемся на самую дешевую доступную
+    if is_model_disabled(key):
+        key = "flux-schnell"
     return IMAGE_MODELS.get(key, IMAGE_MODELS["flux-schnell"])
 
 

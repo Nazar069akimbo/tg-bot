@@ -122,7 +122,12 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     rub30 = stars30 * 0.45
 
     if balance is None:
-        api_line = f"🔌 API: <i>недоступен</i> ({err or 'нужен aiogram 3.7+'})"
+        api_line = (
+            "🔌 API: <i>недоступен</i>\n"
+            "💡 Точный баланс: @BotFather → /mybots → Stars"
+        )
+        if err:
+            api_line += f"\n<i>({err[:120]})</i>"
     else:
         rub_api = balance * 0.45
         api_line = f"💳 Баланс бота: <b>{balance} ⭐</b>\n💵 ≈ {rub_api:.2f} ₽"
@@ -133,8 +138,7 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
         "📊 <b>За последние 30 дней</b>\n"
         f"💰 Оплачено: <b>{stars30} ⭐</b>\n"
         f"🧾 Платежей: <b>{count30}</b>\n"
-        f"💵 ≈ {rub30:.2f} ₽\n\n"
-        "💡 Точный баланс смотри в @BotFather → /mybots → Stars"
+        f"💵 ≈ {rub30:.2f} ₽"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -169,7 +173,7 @@ async def a_payments_list_cb(callback: types.CallbackQuery):
     await helpers.safe_answer(callback)
 
 
-# ==================== УПРАВЛЕНИЕ ЦЕНАМИ ====================
+# ==================== УПРАВЛЕНИЕ ЦЕНАМИ (ТАРИФЫ) ====================
 
 def prices_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -381,6 +385,7 @@ async def a_models_menu_cb(callback: types.CallbackQuery):
     text = (
         "⚙️ <b>УПРАВЛЕНИЕ МОДЕЛЯМИ</b>\n\n"
         "💰 Управляй ценами в токенах\n"
+        "🔄 Включай и отключай модели\n"
         "📊 Смотри статистику использования\n\n"
         "Выбери раздел:"
     )
@@ -400,8 +405,9 @@ async def a_models_cb(callback: types.CallbackQuery):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for model_id, model_name, cost, min_plan in models:
+        status = "❌ " if helpers.is_model_disabled(model_id) else "✅ "
         kb.inline_keyboard.append([InlineKeyboardButton(
-            text=f"{model_name} — {cost} ток.",
+            text=f"{status}{model_name} — {cost} ток.",
             callback_data=f"a_model_edit|{task}|{model_id}"
         )])
     kb.inline_keyboard.append([back_btn("a_models_menu")])
@@ -422,13 +428,69 @@ async def a_model_edit_cb(callback: types.CallbackQuery):
     model_id = parts[2]
     current = helpers.MODEL_COSTS.get(model_id, 0)
     name = helpers.MODEL_NAMES.get(model_id, model_id)
+    disabled = helpers.is_model_disabled(model_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Изменить цену", callback_data=f"a_model_price|{task}|{model_id}")],
+        [InlineKeyboardButton(
+            text="🟢 Включить модель" if disabled else "🔴 Отключить модель",
+            callback_data=f"a_model_toggle|{task}|{model_id}"
+        )],
+        [back_btn(f"a_models|{task}", "🔙 Отмена")]
+    ])
+
+    status = "❌ Отключена" if disabled else "✅ Включена"
+
+    await safe_edit(
+        callback,
+        f"⚙️ <b>Модель: {name}</b>\n\n"
+        f"Цена: <b>{current}</b> токенов\n"
+        f"Статус: <b>{status}</b>\n\n"
+        f"Выбери действие:",
+        kb
+    )
+    await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("a_model_toggle|"))
+async def a_model_toggle_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    parts = callback.data.split("|")
+    task = parts[1]
+    model_id = parts[2]
+    
+    disabled = helpers.is_model_disabled(model_id)
+    new_state = "no" if disabled else "yes"
+    
+    set_setting(f"model_disabled_{model_id}", new_state)
+    
+    action = "включена" if new_state == "no" else "отключена"
+    await helpers.safe_answer(callback, f"✅ Модель {action}", show_alert=True)
+    
+    cb2 = callback
+    cb2.data = f"a_model_edit|{task}|{model_id}"
+    await a_model_edit_cb(cb2)
+
+
+@router.callback_query(F.data.startswith("a_model_price|"))
+async def a_model_price_cb(callback: types.CallbackQuery):
+    if not _is_admin_or_alert(callback):
+        await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
+        return
+    parts = callback.data.split("|")
+    task = parts[1]
+    model_id = parts[2]
+    current = helpers.MODEL_COSTS.get(model_id, 0)
+    name = helpers.MODEL_NAMES.get(model_id, model_id)
 
     helpers.user_pages[callback.from_user.id] = {
         "state": "waiting_model_price_edit",
         "model_id": model_id,
     }
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_models|{task}", "🔙 Отмена")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_model_edit|{task}|{model_id}", "🔙 Отмена")]])
 
     await safe_edit(
         callback,
@@ -740,7 +802,6 @@ async def a_delete_ticket_cb(callback: types.CallbackQuery):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
     ticket_id = int(callback.data.replace("a_delete_ticket_", ""))
-    # === ИСПРАВЛЕНО: через очередь, не напрямую ===
     delete_support_ticket(ticket_id)
     await helpers.safe_answer(callback, "🗑 Удалён", show_alert=True)
     await a_support_tickets_cb(callback)
@@ -1180,7 +1241,6 @@ async def a_list_promos_cb(callback: types.CallbackQuery):
     if not _is_admin_or_alert(callback):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
-    # === ИСПРАВЛЕНО: через очередь ===
     promos = get_promocodes_list()
     text = "📋 <b>ПРОМОКОДЫ</b>\n\n"
     if not promos:
@@ -1383,7 +1443,6 @@ async def handle_admin_input(message: types.Message):
             code = parts[0].upper()
             bonus = int(parts[1])
             days = int(parts[2]) if len(parts) > 2 else 30
-            # === ИСПРАВЛЕНО: через очередь ===
             create_promocode(code, bonus, max_uses=100, days=days)
             await message.answer(f"✅ Промокод <code>{code}</code> создан!", reply_markup=helpers.admin_kb())
         except Exception as e:
