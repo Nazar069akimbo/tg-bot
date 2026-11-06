@@ -5,10 +5,7 @@ from .models import router as models_router
 from .support import router as support_router
 from .prices import router as prices_router
 
-# Создаем главный роутер для всей админки
 router = Router()
-
-# Подключаем к нему дочерние роутеры
 router.include_router(menu_router)
 router.include_router(users_router)
 router.include_router(models_router)

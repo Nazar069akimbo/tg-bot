@@ -18,22 +18,9 @@ from .support import router as support_router
 from .bonus import router as bonus_router
 
 routers = [
-    start_router,
-    balance_router,
-    profile_router,
-    help_router,
-    payments_router,
-    referral_router,
-    promocode_router,
-    reminders_router,
-    bonus_router,
-    admin_router,  # <--- Админка здесь
-    search_router,
-    memory_router,
-    support_router,
-    image_router,
-    file_router,
-    voice_router,
-    inline_router,
-    text_router,   # <--- Текст строго последний
+    start_router, balance_router, profile_router, help_router, payments_router,
+    referral_router, promocode_router, reminders_router, bonus_router,
+    admin_router,
+    search_router, memory_router, support_router, image_router, file_router,
+    voice_router, inline_router, text_router
 ]

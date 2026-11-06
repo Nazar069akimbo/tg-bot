@@ -5,13 +5,14 @@ from . import helpers
 from .image import generate_image
 from utils.user_storage import set_user_name, add_fact, save_user_settings
 import logging
+import asyncio
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 
 async def _open_referral(message: types.Message):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     user_id = message.from_user.id
     count = get_referral_count(user_id)
     link = f"https://t.me/Vertex1bot?start={user_id}"
@@ -80,17 +81,15 @@ async def handle_text(message: types.Message):
     if not text or text.startswith("/"):
         return
 
+    # 1. Проверка блокировок
     user = get_user(user_id)
     if user:
         u_dict = dict(user)
-        
-        # 1. ПОЛНАЯ БЛОКИРОВКА (игнорируем, если не админ и не поддержка)
         if u_dict.get("is_blocked"):
             state = helpers.user_pages.get(user_id, {})
             if state.get("state") != "waiting_support_message" and not text.startswith("/support"):
-                return  # Просто игнорируем сообщение (ничего не отвечаем)
-            
-        # 2. БЛОКИРОВКА РЕПОРТ (доступна только поддержка)
+                return  # Полная блокировка: полный игнор
+                
         if u_dict.get("is_soft_blocked") and not u_dict.get("is_blocked"):
             state = helpers.user_pages.get(user_id, {})
             if state.get("state") != "waiting_support_message" and not text.startswith("/support"):
@@ -100,42 +99,120 @@ async def handle_text(message: types.Message):
     state = helpers.user_pages.get(user_id, {})
     state_name = state.get("state")
 
-    # Обработка поддержки
+    # 2. Поддержка
     if state_name == "waiting_support_message":
         from .support import handle_support_message
         await handle_support_message(message)
         return
 
-    # АДМИН-ВВОД
+    # 3. АДМИН-ВВОД
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
-        "waiting_user_search", "waiting_admin_reply",
-        "waiting_warn_add", "waiting_warn_remove",
-        "waiting_start_dialog_user", "waiting_model_price_edit",
-        "waiting_price_edit", "waiting_price_add",
-        "waiting_admin_reply_to_user",
+        "waiting_user_search", "waiting_admin_reply", "waiting_admin_reply_to_user",
+        "waiting_warn_add", "waiting_warn_remove", "waiting_start_dialog_user", 
+        "waiting_model_price_edit", "waiting_price_edit", "waiting_price_add",
     ]:
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
             await message.answer("⛔ Нет доступа")
             return
         
-        from .admin.users import handle_user_search
-        from .admin.models import handle_model_price_edit
-        from .admin.support import handle_admin_reply
-        
+        # --- Поиск юзера ---
         if state_name == "waiting_user_search":
+            from .admin.users import handle_user_search
             await handle_user_search(message)
             return
-        if state_name == "waiting_model_price_edit":
+            
+        # --- Цены моделей ---
+        elif state_name == "waiting_model_price_edit":
+            from .admin.models import handle_model_price_edit
             await handle_model_price_edit(message)
             return
-        if state_name == "waiting_admin_reply":
+            
+        # --- Ответ в тикете (из списка тикетов) ---
+        elif state_name == "waiting_admin_reply":
+            from .admin.support import handle_admin_reply
             await handle_admin_reply(message)
             return
+            
+        # --- Написать сообщение юзеру напрямую (из карточки) ---
+        elif state_name == "waiting_admin_reply_to_user":
+            target_id = state.get("target_user_id")
+            if not target_id:
+                helpers.user_pages.pop(user_id, None)
+                await message.answer("❌ Ошибка: цель не найдена", reply_markup=helpers.admin_kb())
+                return
+            safe_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✍️ Ответить", callback_data=f"reply_to_ticket|admin")]])
+            try:
+                await message.bot.send_message(target_id, f"🛡 <b>Сообщение от поддержки:</b>\n\n{safe_text}", reply_markup=kb)
+                await message.answer("✅ Отправлено!", reply_markup=helpers.admin_kb())
+            except Exception as e:
+                await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+            
+        # --- Тарифы ---
+        elif state_name == "waiting_price_edit":
+            tid = state.get("tariff_id")
+            t = get_tariff(tid)
+            try:
+                parts = [p.strip() for p in text.split("|")]
+                stars = round(int(parts[1]) / 2.0)
+                if t['kind'] == "premium":
+                    update_tariff(tid, name=parts[0], price_rub=int(parts[1]), stars=stars, tokens=int(parts[2]), days=int(parts[3]))
+                else:
+                    update_tariff(tid, name=parts[0], price_rub=int(parts[1]), stars=stars, tokens=int(parts[2]))
+                await message.answer("✅ Цена обновлена!", reply_markup=helpers.admin_kb())
+            except Exception as e:
+                await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+            
+        elif state_name == "waiting_price_add":
+            kind = state.get("kind", "tokens")
+            try:
+                parts = [p.strip() for p in text.split("|")]
+                stars = round(int(parts[1]) / 2.0)
+                days = int(parts[3]) if kind == "premium" else 0
+                add_tariff(kind, parts[0], int(parts[1]), stars, int(parts[2]), days)
+                await message.answer("✅ Добавлено!", reply_markup=helpers.admin_kb())
+            except Exception as e:
+                await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+            
+        # --- Промокоды ---
+        elif state_name == "waiting_promo_code":
+            try:
+                parts = [p.strip() for p in text.split("|")]
+                create_promocode(parts[0].upper(), int(parts[1]), 100, int(parts[2]) if len(parts) > 2 else 30)
+                await message.answer("✅ Промокод создан!", reply_markup=helpers.admin_kb())
+            except Exception as e:
+                await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+            
+        # --- Рассылка ---
+        elif state_name == "waiting_broadcast":
+            users = get_all_active_user_ids()
+            sent = 0
+            for uid in users:
+                try:
+                    await message.bot.send_message(uid, f"📢 {text}")
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
+            await message.answer(f"✅ Отправлено: {sent}", reply_markup=helpers.admin_kb())
+            helpers.user_pages.pop(user_id, None)
+            return
+            
+        await message.answer("⚙️ Действие не распознано.")
+        helpers.user_pages.pop(user_id, None)
         return
 
-    # ПРОМОКОД
+    # 4. ПРОМОКОД (для юзеров)
     if state_name == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -143,13 +220,13 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # ОТМЕНА
+    # 5. ОТМЕНА
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # ВВОД ИМЕНИ
+    # 6. ВВОД ИМЕНИ
     if state_name == "waiting_name":
         set_user_name(user_id, text[:50])
         helpers.user_pages.pop(user_id, None)
@@ -158,7 +235,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # ВЫБОР МОДЕЛИ
+    # 7. ВЫБОР МОДЕЛИ
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
@@ -176,6 +253,8 @@ async def handle_text(message: types.Message):
 
     await process_text(message, user_id, text, state)
 
+
+# ==================== ОСНОВНОЙ ИИ (process_text) ====================
 
 async def process_text(message: types.Message, user_id: int, text: str, state: dict):
     current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
@@ -235,7 +314,6 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         logger.warning(f"⚠️ counter texts: {e}")
 
     # === НОВЫЕ ДЕЙСТВИЯ ===
-
     if action == "show_profile":
         from .profile import show_profile
         await show_profile(message)
@@ -273,7 +351,6 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
 
     # === СТАРЫЕ ДЕЙСТВИЯ ===
-
     if action == "reply":
         reply_text = result.get("reply", "")
         await message.answer(reply_text or "Не понял.")
