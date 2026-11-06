@@ -84,16 +84,40 @@ async def handle_text(message: types.Message):
     if not text or text.startswith("/"):
         return
 
+    # === 1. ПРОВЕРКА БЛОКИРОВКИ ===
+    user = get_user(user_id)
+    if user and dict(user).get("is_blocked"):
+        await message.answer("⛔ Ваш аккаунт заблокирован. Доступна только поддержка (/support).")
+        return
+
     state = helpers.user_pages.get(user_id, {})
     state_name = state.get("state")
 
-    # === АДМИН-ВВОД: сначала проверяем, что юзер реально админ ===
+    # === 2. ОБРАБОТКА ПОДДЕРЖКИ (только если юзер ждет ввода) ===
+    if state_name == "waiting_support_message":
+        from .support import handle_support_message
+        await handle_support_message(message)
+        return
+
+    # === 3. ЗАПРЕТ ПИСАТЬ В ИИ, ЕСЛИ ЕСТЬ ОТКРЫТЫЙ ТИКЕТ ===
+    active_ticket = get_user_ticket(user_id)
+    if active_ticket:
+        await message.answer(
+            "💬 У вас открыт диалог с поддержкой.\n\n"
+            "Чтобы ответить, нажмите кнопку <b>✍️ Ответить</b> под последним сообщением от поддержки.\n"
+            "Или напишите /cancel, чтобы закрыть диалог и вернуться к ИИ.",
+            reply_markup=helpers.main_menu()
+        )
+        return
+
+    # === 4. АДМИН-ВВОД ===
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
         "waiting_user_search", "waiting_admin_reply",
         "waiting_warn_add", "waiting_warn_remove",
         "waiting_start_dialog_user", "waiting_model_price_edit",
         "waiting_price_edit", "waiting_price_add",
+        "waiting_admin_reply_to_user",
     ]:
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
@@ -104,13 +128,7 @@ async def handle_text(message: types.Message):
         await handle_admin_input(message)
         return
 
-    # === ПОДДЕРЖКА ===
-    if state_name == "waiting_support_message":
-        from .support import handle_support_message
-        await handle_support_message(message)
-        return
-
-    # === ПРОМОКОД ===
+    # === 5. ПРОМОКОД ===
     if state_name == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -118,13 +136,13 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === ОТМЕНА ===
+    # === 6. ОТМЕНА ===
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # === ВВОД ИМЕНИ ===
+    # === 7. ВВОД ИМЕНИ ===
     if state_name == "waiting_name":
         set_user_name(user_id, text[:50])
         helpers.user_pages.pop(user_id, None)
@@ -133,7 +151,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # === ВЫБОР МОДЕЛИ ===
+    # === 8. ВЫБОР МОДЕЛИ ===
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
@@ -186,7 +204,6 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     except Exception:
         pass
 
-    # === ИСПРАВЛЕНО: списываем только при успешном ответе ===
     if not result or not result.get("reply"):
         await message.answer("😔 Не смог ответить. Токены не списаны. Попробуй ещё раз.")
         return

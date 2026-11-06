@@ -16,13 +16,11 @@ from .help import router as help_router
 from .memory import router as memory_router
 from .support import router as support_router
 from .bonus import router as bonus_router
-from .helpers import user_pages, user_model
 
 # ВАЖНО: специфичные роутеры идут ПЕРВЫМИ,
 # а text_router (который ловит всё) — В САМОМ КОНЦЕ!
 
 routers = [
-    # 1. Команды и специальные хендлеры
     start_router,
     balance_router,
     profile_router,
@@ -36,13 +34,9 @@ routers = [
     search_router,
     memory_router,
     support_router,
-
-    # 2. Медиа
     image_router,
     file_router,
     voice_router,
     inline_router,
-
-    # 3. Текст — САМЫЙ ПОСЛЕДНИЙ!
     text_router,
 ]

@@ -73,7 +73,6 @@ def _backup_users(force=False):
 
 
 def _json_unchanged(path, new_data, ignore_keys=("updated_at",)):
-    """True, если файл существует и его содержимое (без ignore_keys) совпадает."""
     if not os.path.exists(path):
         return False
     try:
@@ -89,16 +88,17 @@ def _json_unchanged(path, new_data, ignore_keys=("updated_at",)):
         return False
 
 
-# ===== PROFILE =====
 def load_profile(user_id):
     path = _profile_path(user_id)
     if not os.path.exists(path):
         return {"user_id": user_id, "name": None, "preferences": {"facts": []},
+                "is_blocked": False,
                 "created_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()}
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             data.setdefault("preferences", {}).setdefault("facts", [])
+            data.setdefault("is_blocked", False)
             return data
     except Exception:
         return {}
@@ -107,7 +107,6 @@ def load_profile(user_id):
 def save_profile(user_id, data):
     data["updated_at"] = datetime.now().isoformat()
     path = _profile_path(user_id)
-    # Не пишем и не бэкапим, если содержимое не изменилось
     if _json_unchanged(path, data):
         return
     try:
@@ -116,6 +115,7 @@ def save_profile(user_id, data):
         _backup_users()
     except Exception as e:
         logger.error(f"❌ save_profile: {e}")
+
 
 def set_user_name(user_id, name):
     profile = load_profile(user_id)
@@ -141,7 +141,6 @@ def add_fact(user_id, fact):
     save_profile(user_id, profile)
 
 
-# ===== HISTORY =====
 def load_history(user_id):
     path = _history_path(user_id)
     if not os.path.exists(path):
@@ -171,7 +170,6 @@ def get_recent_history(user_id, limit=10):
     return history[-limit:] if len(history) > limit else history
 
 
-# ===== META =====
 def load_meta(user_id):
     path = _meta_path(user_id)
     if not os.path.exists(path):
@@ -199,7 +197,6 @@ def update_meta(user_id, **kwargs):
         pass
 
 
-# ===== TOKENS =====
 def save_user_tokens(user_id, tokens, plan, premium_until=None):
     data = {
         "user_id": user_id,
@@ -227,7 +224,6 @@ def load_user_tokens(user_id):
         return None
 
 
-# ===== SETTINGS =====
 def save_user_settings(user_id, **kwargs):
     data = load_user_settings(user_id) or {"user_id": user_id}
     for k, v in kwargs.items():
@@ -252,7 +248,6 @@ def load_user_settings(user_id):
         return None
 
 
-# ===== REMINDERS =====
 def save_user_reminders(user_id, reminders_list):
     data = {"user_id": user_id, "reminders": reminders_list, "updated_at": datetime.now().isoformat()}
     try:
@@ -274,7 +269,6 @@ def load_user_reminders(user_id):
         return []
 
 
-# ===== REFERRALS =====
 def save_user_referrals(user_id, referrals_list):
     data = {"user_id": user_id, "referrals": referrals_list, "updated_at": datetime.now().isoformat()}
     try:
@@ -285,7 +279,6 @@ def save_user_referrals(user_id, referrals_list):
         logger.error(f"❌ save_user_referrals: {e}")
 
 
-# ===== PAYMENTS =====
 def save_user_payments(user_id, payments_list):
     data = {"user_id": user_id, "payments": payments_list, "updated_at": datetime.now().isoformat()}
     try:
@@ -296,7 +289,6 @@ def save_user_payments(user_id, payments_list):
         logger.error(f"❌ save_user_payments: {e}")
 
 
-# ===== IMAGES =====
 def save_user_image(user_id, image_id, image_bytes):
     path = os.path.join(get_user_dir(user_id), "images", f"{image_id}.png")
     try:
@@ -313,13 +305,12 @@ def save_user_image(user_id, image_id, image_bytes):
         return ""
 
 
-# ===== CLEAR =====
 def clear_memory(user_id):
     for path in (_history_path(user_id), _profile_path(user_id)):
         if os.path.exists(path):
             os.remove(path)
 
-# ===== BONUS (streak) =====
+
 def save_user_bonus(user_id, streak, last_claim_date):
     data = {
         "user_id": user_id,
@@ -346,9 +337,7 @@ def load_user_bonus(user_id):
         return None
 
 
-# ===== ACHIEVEMENTS =====
 def save_user_achievements(user_id, achievements_dict):
-    """achievements_dict: {code: unlocked_at}."""
     data = {
         "user_id": user_id,
         "achievements": achievements_dict,
@@ -371,4 +360,3 @@ def load_user_achievements(user_id):
             return json.load(f).get("achievements", {})
     except Exception:
         return {}
-

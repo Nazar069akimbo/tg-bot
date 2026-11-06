@@ -22,6 +22,25 @@ def user_link(user_id, name=None):
     return f'<a href="tg://user?id={user_id}">{display}</a>'
 
 
+# ==================== ПРОФИЛЬ И МОДЕЛИ ====================
+
+def get_user_profile(user_id):
+    """Безопасно загружает профиль пользователя из JSON."""
+    try:
+        from utils.user_storage import load_profile
+        return load_profile(user_id)
+    except Exception:
+        return None
+
+
+def is_model_disabled(model_id):
+    """Проверяет, отключена ли модель админом."""
+    try:
+        return get_setting(f"model_disabled_{model_id}") == "yes"
+    except Exception:
+        return False
+
+
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
 def main_menu():
@@ -62,24 +81,17 @@ def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="a_stats"),
          InlineKeyboardButton(text="⭐ Баланс Stars", callback_data="a_stars_balance")],
-        [InlineKeyboardButton(text="🔍 Поиск юзера", callback_data="a_search_users"),
-         InlineKeyboardButton(text="🎯 Фильтры", callback_data="a_filter_users")],
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="a_users"),
-         InlineKeyboardButton(text="⭐ Раздать токены", callback_data="a_give_tokens")],
-        [InlineKeyboardButton(text="💰 Управление ценами", callback_data="a_prices_menu")],
-        [InlineKeyboardButton(text="⚙️ Управление моделями", callback_data="a_models_menu")],
+        [InlineKeyboardButton(text="🔍 Поиск юзера / Действия", callback_data="a_search_users"),
+         InlineKeyboardButton(text="👥 Топ юзеров", callback_data="a_users")],
+        [InlineKeyboardButton(text="💰 Управление ценами", callback_data="a_prices_menu"),
+         InlineKeyboardButton(text="⚙️ Управление моделями", callback_data="a_models_menu")],
         [InlineKeyboardButton(text="📩 Тикеты", callback_data="a_support_tickets"),
          InlineKeyboardButton(text="⚠️ Варны", callback_data="a_warnings")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast"),
-         InlineKeyboardButton(text="🚫 Блокировка", callback_data="a_block")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup"),
-         InlineKeyboardButton(text="📤 Выгрузить БД", callback_data="a_export_db")],
-        [InlineKeyboardButton(text="📥 Восстановить БД", callback_data="a_restore_github"),
-         InlineKeyboardButton(text="📥 Восстановить юзеров", callback_data="a_restore_users")],
+         InlineKeyboardButton(text="💾 Бэкап", callback_data="a_backup")],
         [InlineKeyboardButton(text="🎫 Промокоды", callback_data="a_promocodes"),
-         InlineKeyboardButton(text="📊 Статус БД", callback_data="a_db_status")],
-        [InlineKeyboardButton(text="📜 Логи", callback_data="a_logs")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+         InlineKeyboardButton(text="📜 Логи", callback_data="a_logs")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
     ])
 
 
@@ -112,7 +124,7 @@ def get_user_name(user_id):
         return None
 
 
-# ==================== МОДЕЛИ (БЕЗ GPT IMAGE 1.5, ПОПУЛЯРНЫЕ НАЗВАНИЯ) ====================
+# ==================== МОДЕЛИ (С НОВЫМИ НАЗВАНИЯМИ И ЦЕНАМИ) ====================
 
 AVAILABLE_MODELS = {
     "text_chat": [
@@ -159,13 +171,8 @@ MODEL_MIN_LEVEL = {
     "seedream-5-lite": 1, "qwen-image-2512": 2,
 }
 
-# Модели, которые сейчас отключены (не показываются юзерам)
-def is_model_disabled(model_id):
-    return get_setting(f"model_disabled_{model_id}") == "yes"
-
 
 def can_use_model(user_id, model_id):
-    # Если модель отключена админом — никто не может её использовать
     if is_model_disabled(model_id):
         return False
         
@@ -186,7 +193,6 @@ def model_choice_kb(task: str, current: str = None, plan: str = "basic", user_ba
     has_tokens = user_balance > 0
 
     for model_id, model_name, cost, min_plan in models:
-        # Скрываем отключенные модели
         if is_model_disabled(model_id):
             continue
             
@@ -222,7 +228,6 @@ IMAGE_MODELS = {
 
 def get_model_config(user_id):
     key = get_model_setting("image_generate") or "flux-schnell"
-    # Если текущая модель отключена, откатываемся на самую дешевую доступную
     if is_model_disabled(key):
         key = "flux-schnell"
     return IMAGE_MODELS.get(key, IMAGE_MODELS["flux-schnell"])
