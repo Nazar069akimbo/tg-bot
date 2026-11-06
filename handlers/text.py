@@ -99,17 +99,6 @@ async def handle_text(message: types.Message):
         await handle_support_message(message)
         return
 
-    # === 3. ЗАПРЕТ ПИСАТЬ В ИИ, ЕСЛИ ЕСТЬ ОТКРЫТЫЙ ТИКЕТ ===
-    active_ticket = get_user_ticket(user_id)
-    if active_ticket:
-        await message.answer(
-            "💬 У вас открыт диалог с поддержкой.\n\n"
-            "Чтобы ответить, нажмите кнопку <b>✍️ Ответить</b> под последним сообщением от поддержки.\n"
-            "Или напишите /cancel, чтобы закрыть диалог и вернуться к ИИ.",
-            reply_markup=helpers.main_menu()
-        )
-        return
-
     # === 4. АДМИН-ВВОД ===
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
