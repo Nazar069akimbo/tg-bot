@@ -149,6 +149,7 @@ def init_db():
             trial_start TEXT,
             trial_active INTEGER DEFAULT 0,
             is_blocked INTEGER DEFAULT 0,
+            is_soft_blocked INTEGER DEFAULT 0,
             plan TEXT DEFAULT "basic",
             premium_until TEXT,
             daily_requests INTEGER DEFAULT 30,
@@ -435,6 +436,7 @@ def migrate_db():
             ("week_images_used", "INTEGER", "0"),
             ("week_start", "TEXT", None),
             ("daily_reset", "TEXT", None),
+            ("is_soft_blocked", "INTEGER", "0"),
         ]:
             try:
                 if default:
@@ -447,8 +449,6 @@ def migrate_db():
 
 
 def restore_from_user_folders():
-    """Восстанавливает токены/план из папок.
-    Если у пользователя несколько папок — берёт МАКСИМУМ токенов."""
     base = 'data/users'
     if not os.path.exists(base):
         return 0
@@ -549,7 +549,6 @@ def restore_from_user_folders():
     return restored
 
 
-# ===== ПОЛЬЗОВАТЕЛИ =====
 @db_operation
 def get_user(conn, cursor, user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -635,7 +634,6 @@ def get_text_tokens_today(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
     if last_reset != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
-        # === ИСПРАВЛЕНО: бэкап после UPDATE ===
         _schedule_db_backup()
         used = 0
     return max(0, 10 - used), 10
@@ -664,7 +662,6 @@ def get_week_images_used(conn, cursor, user_id):
     monday = (now - timedelta(days=now.weekday())).date().isoformat()
     if week_start != monday:
         cursor.execute("UPDATE users SET week_images_used = 0, week_start = ? WHERE user_id = ?", (monday, user_id))
-        # === ИСПРАВЛЕНО: бэкап после UPDATE ===
         _schedule_db_backup()
         used = 0
     return used, 2
@@ -742,7 +739,6 @@ def get_referral_count(conn, cursor, user_id):
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
-    # === ИСПРАВЛЕНО: сравнение дат в Python, а не через datetime('now') ===
     cursor.execute(
         "SELECT id, bonus_tokens, max_uses, used, expires_at FROM promocodes WHERE code = ?",
         (code,)
@@ -769,14 +765,12 @@ def use_promocode(conn, cursor, code, user_id):
 
 @db_operation
 def get_promocodes_list(conn, cursor):
-    """Для админки: список промокодов через очередь (не напрямую)."""
     cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
     return [dict(r) for r in cursor.fetchall()]
 
 
 @db_operation
 def create_promocode(conn, cursor, code, bonus_tokens, max_uses=100, days=30):
-    """Для админки: создание промокода через очередь."""
     code = code.strip().upper()
     expires = (datetime.now() + timedelta(days=days)).isoformat()
     cursor.execute(
@@ -789,7 +783,6 @@ def create_promocode(conn, cursor, code, bonus_tokens, max_uses=100, days=30):
 
 @db_operation
 def get_all_active_user_ids(conn, cursor):
-    """Для рассылки/раздачи: ID незаблокированных юзеров."""
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
     return [r[0] for r in cursor.fetchall()]
 
@@ -809,7 +802,6 @@ def complete_payment(conn, cursor, payload):
 
 @db_operation
 def get_payments_summary(conn, cursor, days=30):
-    """Возвращает (total_stars, total_count) за последние N дней."""
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("""
         SELECT COALESCE(SUM(stars_amount), 0), COUNT(*)
@@ -860,12 +852,52 @@ def add_premium(conn, cursor, user_id, days, plan, paid=False):
 def block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
     _schedule_db_backup()
+    try:
+        from utils.user_storage import load_profile, save_profile
+        profile = load_profile(user_id)
+        profile["is_blocked"] = True
+        save_profile(user_id, profile)
+    except Exception as e:
+        print(f"⚠️ Не синхронизировал блокировку: {e}")
 
 
 @db_operation
 def unblock_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
     _schedule_db_backup()
+    try:
+        from utils.user_storage import load_profile, save_profile
+        profile = load_profile(user_id)
+        profile["is_blocked"] = False
+        save_profile(user_id, profile)
+    except Exception as e:
+        print(f"⚠️ Не синхронизировал разблокировку: {e}")
+
+
+@db_operation
+def soft_block_user(conn, cursor, user_id):
+    cursor.execute("UPDATE users SET is_soft_blocked = 1 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
+    try:
+        from utils.user_storage import load_profile, save_profile
+        profile = load_profile(user_id)
+        profile["is_soft_blocked"] = True
+        save_profile(user_id, profile)
+    except Exception as e:
+        print(f"⚠️ Не синхронизировал soft-блокировку: {e}")
+
+
+@db_operation
+def unsoft_block_user(conn, cursor, user_id):
+    cursor.execute("UPDATE users SET is_soft_blocked = 0 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
+    try:
+        from utils.user_storage import load_profile, save_profile
+        profile = load_profile(user_id)
+        profile["is_soft_blocked"] = False
+        save_profile(user_id, profile)
+    except Exception as e:
+        print(f"⚠️ Не синхронизировал soft-разблокировку: {e}")
 
 
 @db_operation
@@ -1042,7 +1074,7 @@ def get_tariff(conn, cursor, tariff_id):
 
 @db_operation
 def search_users(conn, cursor, query=None, filter_type=None, limit=50):
-    sql = "SELECT user_id, username, tokens, plan, joined, is_blocked FROM users WHERE 1=1"
+    sql = "SELECT user_id, username, tokens, plan, joined, is_blocked, is_soft_blocked FROM users WHERE 1=1"
     params = []
 
     if query:
@@ -1097,7 +1129,6 @@ def get_premium_count(conn, cursor):
     return cursor.fetchone()[0] or 0
 
 
-# ===== ПОДДЕРЖКА (ТИКЕТЫ) =====
 @db_operation
 def create_support_ticket(conn, cursor, user_id, username, first_message=None):
     cursor.execute("""
@@ -1186,14 +1217,12 @@ def get_ticket(conn, cursor, ticket_id):
 
 @db_operation
 def delete_support_ticket(conn, cursor, ticket_id):
-    """Удаление тикета + сообщений + оценок через очередь."""
     cursor.execute("DELETE FROM support_messages WHERE ticket_id = ?", (ticket_id,))
     cursor.execute("DELETE FROM support_tickets WHERE id = ?", (ticket_id,))
     cursor.execute("DELETE FROM ticket_ratings WHERE ticket_id = ?", (ticket_id,))
     _schedule_db_backup()
 
 
-# ===== ОЦЕНКИ ТИКЕТОВ =====
 @db_operation
 def save_ticket_rating(conn, cursor, ticket_id, user_id, rating, comment=None):
     cursor.execute("""
@@ -1218,7 +1247,6 @@ def get_avg_rating(conn, cursor):
     return (round(row[0], 2) if row[0] else 0, row[1] or 0)
 
 
-# ===== ВАРНЫ =====
 @db_operation
 def add_warning(conn, cursor, user_id, reason, admin_id):
     cursor.execute("""
@@ -1273,7 +1301,6 @@ def get_all_warnings(conn, cursor, limit=100):
     return [dict(r) for r in cursor.fetchall()]
 
 
-# ===== УВЕДОМЛЕНИЯ АДМИНУ =====
 @db_operation
 def add_admin_notification(conn, cursor, text, user_id=None):
     cursor.execute("""
@@ -1297,7 +1324,6 @@ def mark_notification_sent(conn, cursor, notif_id):
     cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
 
 
-# ===== СЛУЖЕБНОЕ =====
 def do_backup():
     try:
         from backup import GitHubBackup
@@ -1312,10 +1338,8 @@ def get_queue_info():
     return f"📊 Очередь БД: {size} задач, поток: {status}"
 
 
-# ===== ЕЖЕДНЕВНЫЙ БОНУС И STREAK =====
 @db_operation
 def claim_daily_bonus(conn, cursor, user_id):
-    """Выдаёт ежедневный бонус. Возвращает (ok, amount, streak, already)."""
     today = datetime.now().date().isoformat()
 
     cursor.execute(
@@ -1366,7 +1390,6 @@ def claim_daily_bonus(conn, cursor, user_id):
 
 @db_operation
 def get_streak_info(conn, cursor, user_id):
-    """Возвращает (streak, last_claim_date, claimed_today)."""
     today = datetime.now().date().isoformat()
     cursor.execute(
         "SELECT streak, claim_date FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1",
@@ -1378,10 +1401,8 @@ def get_streak_info(conn, cursor, user_id):
     return row[0], row[1], row[1] == today
 
 
-# ===== АЧИВКИ =====
 @db_operation
 def check_and_unlock_achievements(conn, cursor, user_id):
-    """Проверяет и выдаёт ачивки. Возвращает список новых."""
     unlocked_new = []
 
     cursor.execute("SELECT code FROM achievements WHERE user_id = ?", (user_id,))
@@ -1436,7 +1457,6 @@ def get_achievements(conn, cursor, user_id):
 
 
 def achievements_list():
-    """Список всех ачивок: (код, эмодзи, название, описание)."""
     return [
         ("first_step", "👣", "Первый шаг", "Зашёл в бота"),
         ("week_active", "📅", "Неделя с нами", "Активен 7 дней"),
@@ -1453,7 +1473,6 @@ def achievements_list():
 
 @db_operation
 def increment_counter(conn, cursor, user_id, field):
-    """Увеличивает счётчик: 'images_total' или 'texts_total'."""
     if field not in ("images_total", "texts_total"):
         return
     cursor.execute(f"""
@@ -1462,7 +1481,6 @@ def increment_counter(conn, cursor, user_id, field):
     """, (user_id,))
 
 
-# ===== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ МОДЕЛЕЙ =====
 @db_operation
 def log_model_usage(conn, cursor, user_id, model, cost=0):
     cursor.execute(
@@ -1473,7 +1491,6 @@ def log_model_usage(conn, cursor, user_id, model, cost=0):
 
 @db_operation
 def get_model_usage(conn, cursor, days=30, limit=20):
-    """Топ моделей по использованию за N дней."""
     since = (datetime.now() - timedelta(days=days)).isoformat()
     cursor.execute("""
         SELECT model, COUNT(*) as cnt, SUM(cost) as total_cost
@@ -1494,7 +1511,6 @@ def get_model_usage_total(conn, cursor, days=30):
 
 
 def restore_bonus_from_folders():
-    """Восстанавливает streak и ачивки из папок пользователей."""
     base = 'data/users'
     if not os.path.exists(base):
         return 0

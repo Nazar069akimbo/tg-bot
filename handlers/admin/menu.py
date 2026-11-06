@@ -87,24 +87,43 @@ async def a_stars_balance_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await helpers.safe_answer(callback, "⛔ Нет доступа", show_alert=True)
         return
+    
     balance = None
-    err = None
     try:
         if hasattr(callback.bot, "get_my_star_balance"):
             balance = await callback.bot.get_my_star_balance()
-    except Exception as e:
-        err = str(e)
+    except Exception:
+        pass
+
     stars30, count30 = get_payments_summary(days=30)
     rub30 = stars30 * 0.45
-    if balance is None:
-        api_line = "🔌 API: <i>недоступен</i>\n💡 Точный баланс: @BotFather → Stars"
-        if err: api_line += f"\n<i>({err[:120]})</i>"
-    else:
+
+    if balance is not None:
         rub_api = balance * 0.45
-        api_line = f"💳 Баланс бота: <b>{balance} ⭐</b>\n💵 ≈ {rub_api:.2f} ₽"
-    text = (f"⭐ <b>БАЛАНС STARS</b>\n\n{api_line}\n\n"
-            f"📊 <b>За последние 30 дней</b>\n💰 Оплачено: <b>{stars30} ⭐</b>\n"
-            f"🧾 Платежей: <b>{count30}</b>\n💵 ≈ {rub30:.2f} ₽")
+        api_line = f"💳 Баланс бота: <b>{balance} ⭐</b>
+💵 ≈ {rub_api:.2f} ₽"
+    else:
+        api_line = (
+            "🔌 API: <i>недоступен (нужна новая версия aiogram)</i>
+"
+            "💡 Точный баланс: @BotFather → /mybots → Stars"
+        )
+
+    text = (
+        "⭐ <b>БАЛАНС STARS</b>
+
+"
+        f"{api_line}
+
+"
+        "📊 <b>За последние 30 дней</b>
+"
+        f"💰 Оплачено: <b>{stars30} ⭐</b>
+"
+        f"🧾 Платежей: <b>{count30}</b>
+"
+        f"💵 ≈ {rub30:.2f} ₽"
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧾 Последние платежи", callback_data="a_payments_list")],
         [back_btn("admin_panel")]

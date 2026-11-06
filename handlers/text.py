@@ -10,8 +10,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-
 async def _open_referral(message: types.Message):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     user_id = message.from_user.id
@@ -75,8 +73,6 @@ async def _buy_tariff_by_name(message: types.Message, user_id: int, tariff_name:
         await message.answer(f"❌ Ошибка оплаты: {str(e)[:150]}")
 
 
-# ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
-
 @router.message(F.text)
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
@@ -84,22 +80,33 @@ async def handle_text(message: types.Message):
     if not text or text.startswith("/"):
         return
 
-    # 1. Проверка блокировки
     user = get_user(user_id)
-    if user and dict(user).get("is_blocked"):
-        await message.answer("⛔ Ваш аккаунт заблокирован. Доступна только поддержка (/support).")
-        return
+    if user:
+        u_dict = dict(user)
+        
+        # 1. ПОЛНАЯ БЛОКИРОВКА (игнорируем, если не админ и не поддержка)
+        if u_dict.get("is_blocked"):
+            state = helpers.user_pages.get(user_id, {})
+            if state.get("state") != "waiting_support_message" and not text.startswith("/support"):
+                return  # Просто игнорируем сообщение (ничего не отвечаем)
+            
+        # 2. БЛОКИРОВКА РЕПОРТ (доступна только поддержка)
+        if u_dict.get("is_soft_blocked") and not u_dict.get("is_blocked"):
+            state = helpers.user_pages.get(user_id, {})
+            if state.get("state") != "waiting_support_message" and not text.startswith("/support"):
+                await message.answer("🔇 Ваш аккаунт ограничен (Репорт). Доступна только поддержка (/support).")
+                return
 
     state = helpers.user_pages.get(user_id, {})
     state_name = state.get("state")
 
-    # 2. Обработка поддержки (только если юзер в режиме ответа)
+    # Обработка поддержки
     if state_name == "waiting_support_message":
         from .support import handle_support_message
         await handle_support_message(message)
         return
 
-    # 3. АДМИН-ВВОД (все состояния из папки admin)
+    # АДМИН-ВВОД
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
         "waiting_user_search", "waiting_admin_reply",
@@ -111,13 +118,11 @@ async def handle_text(message: types.Message):
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
             await message.answer("⛔ Нет доступа")
-            logger.warning(f"⚠️ Попытка админ-ввода от не-админа {user_id}")
             return
         
         from .admin.users import handle_user_search
         from .admin.models import handle_model_price_edit
         from .admin.support import handle_admin_reply
-        from .admin.menu import safe_edit # Для других состояний, если нужно
         
         if state_name == "waiting_user_search":
             await handle_user_search(message)
@@ -128,13 +133,9 @@ async def handle_text(message: types.Message):
         if state_name == "waiting_admin_reply":
             await handle_admin_reply(message)
             return
-            
-        # Обработка ввода для тарифов и рассылки (из menu.py или prices.py)
-        # Если ты перенес handle_admin_input куда-то, добавь его вызов здесь
-        await message.answer("⚙️ Обработка этого ввода временно недоступна.")
         return
 
-    # 4. ПРОМОКОД
+    # ПРОМОКОД
     if state_name == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -142,13 +143,13 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # 5. ОТМЕНА
+    # ОТМЕНА
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # 6. ВВОД ИМЕНИ
+    # ВВОД ИМЕНИ
     if state_name == "waiting_name":
         set_user_name(user_id, text[:50])
         helpers.user_pages.pop(user_id, None)
@@ -157,7 +158,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # 7. ВЫБОР МОДЕЛИ
+    # ВЫБОР МОДЕЛИ
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
