@@ -17,9 +17,6 @@ from .memory import router as memory_router
 from .support import router as support_router
 from .bonus import router as bonus_router
 
-# ВАЖНО: специфичные роутеры идут ПЕРВЫМИ,
-# а text_router (который ловит всё) — В САМОМ КОНЦЕ!
-
 routers = [
     start_router,
     balance_router,
@@ -30,7 +27,7 @@ routers = [
     promocode_router,
     reminders_router,
     bonus_router,
-    admin_router,
+    admin_router,  # <--- Админка здесь
     search_router,
     memory_router,
     support_router,
@@ -38,5 +35,5 @@ routers = [
     file_router,
     voice_router,
     inline_router,
-    text_router,
+    text_router,   # <--- Текст строго последний
 ]
