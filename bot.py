@@ -35,16 +35,11 @@ if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
 
-# === БЕЗОПАСНОСТЬ: ADMIN_ID обязателен, без дефолта ===
 _admin_raw = os.getenv('ADMIN_ID')
 if not _admin_raw:
-    logger.error("❌ ADMIN_ID не задан в .env — запуск невозможен")
+    logger.error("❌ ADMIN_ID не задан")
     sys.exit(1)
-try:
-    ADMIN_ID = int(_admin_raw)
-except ValueError:
-    logger.error("❌ ADMIN_ID должен быть числом")
-    sys.exit(1)
+ADMIN_ID = int(_admin_raw)
 
 bot = Bot(
     token=BOT_TOKEN,
@@ -80,7 +75,6 @@ async def reminder_worker():
                     try:
                         await bot.send_message(row['user_id'], f"⏰ <b>Напоминание:</b>\n{row['text']}")
                         cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (row['id'],))
-                        logger.info(f"✅ Напоминание {row['id']} отправлено {row['user_id']}")
                     except Exception as e:
                         logger.warning(f"⚠️ Напоминание {row['id']} не отправлено: {e}")
         except Exception as e:
@@ -88,7 +82,6 @@ async def reminder_worker():
 
 
 async def subscription_worker():
-    # === ИСПРАВЛЕНО: проверка сразу при старте, потом раз в сутки ===
     while True:
         try:
             subs = get_expiring_subscriptions()
@@ -106,7 +99,6 @@ async def subscription_worker():
                         f"Продлить: /credits"
                     )
                     mark_subscription_notified(user_id)
-                    logger.info(f"📩 Напоминание о подписке: {user_id}")
                 except Exception as e:
                     logger.warning(f"⚠️ Не отправил {user_id}: {e}")
         except Exception as e:
@@ -119,82 +111,61 @@ async def main():
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    logger.info("✅ Flask запущен")
 
+    # 1. Восстановление БД (если файла нет)
     db_exists = os.path.exists('data/repsolver.db')
     if not db_exists:
         logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
         try:
             GitHubBackup().restore_latest_backup()
-            logger.info("✅ БД восстановлена из бэкапа")
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось восстановить: {e}")
+            logger.warning(f"⚠️ Не удалось восстановить БД: {e}")
 
     init_db()
     migrate_db()
     logger.info("✅ База данных готова")
 
-    logger.info("📥 Восстанавливаю папки пользователей из GitHub (без картинок)...")
-    try:
-        ok = GitHubBackup().restore_users(skip_images=True)
-        if ok:
-            logger.info("✅ Папки пользователей восстановлены из GitHub")
-        else:
-            logger.info("ℹ️ Папок пользователей на GitHub нет (или пусто)")
-    except Exception as e:
-        logger.warning(f"⚠️ Восстановление юзеров из GitHub: {e}")
+    # 2. Восстановление папок юзеров (ТОЛЬКО если их нет локально)
+    if not os.path.exists('data/users') or len(os.listdir('data/users')) == 0:
+        logger.info("📥 Папки юзеров пусты — восстанавливаю из GitHub...")
+        try:
+            GitHubBackup().restore_users(skip_images=True)
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось восстановить папки: {e}")
+    else:
+        logger.info("⏭ Папки юзеров уже на месте — пропускаю скачивание (экономия трафика)")
 
+    # 3. Восстановление токенов из папок в БД
     try:
         count = restore_from_user_folders()
         if count > 0:
             logger.info(f"✅ Восстановлено из папок: {count} пользователей")
-        else:
-            logger.info("ℹ️ Из папок восстанавливать нечего")
     except Exception as e:
         logger.warning(f"⚠️ Восстановление из папок: {e}")
 
-    try:
-        from database.db import restore_bonus_from_folders
-        count2 = restore_bonus_from_folders()
-        if count2 > 0:
-            logger.info(f"✅ Восстановлено bonus/ачивок: {count2}")
-        else:
-            logger.info("ℹ️ Bonus/ачивки восстанавливать нечего")
-    except Exception as e:
-        logger.warning(f"⚠️ Восстановление bonus: {e}")
-
-    try:
-        from handlers.helpers import load_settings_from_db
-        load_settings_from_db()
-        logger.info("✅ Настройки загружены из БД")
-    except Exception as e:
-        logger.warning(f"⚠️ Настройки: {e}")
-
+    # 4. Бэкап БД раз в 15 минут (вместо 30)
     def backup_loop():
         try:
             GitHubBackup().backup_db(reason='при старте')
-            logger.info("✅ Бэкап БД при старте")
         except Exception as e:
             logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
 
         while True:
-            time.sleep(1800)
+            time.sleep(900) # 15 минут
             try:
-                GitHubBackup().backup_db(reason='по расписанию (30 мин)')
+                GitHubBackup().backup_db(reason='по расписанию')
             except Exception as e:
                 logger.warning(f"⚠️ Ошибка бэкапа БД: {e}")
 
     backup_thread = threading.Thread(target=backup_loop, daemon=True)
     backup_thread.start()
-    logger.info("✅ Бэкап-воркер запущен (БД раз в 30 мин)")
+    logger.info("✅ Бэкап-воркер запущен (БД раз в 15 мин)")
 
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
-        logger.info(f"✅ Админ {ADMIN_ID} добавлен")
 
     for router in routers:
         dp.include_router(router)
-        logger.info(f"✅ Роутер: {router}")
 
     await bot.set_my_commands([
         types.BotCommand(command="start", description="🚀 Старт"),
@@ -209,10 +180,7 @@ async def main():
     ])
 
     asyncio.create_task(reminder_worker())
-    logger.info("✅ Воркер напоминаний запущен")
-
     asyncio.create_task(subscription_worker())
-    logger.info("✅ Воркер подписок запущен")
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("🚀 Бот готов!")

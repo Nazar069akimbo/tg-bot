@@ -104,7 +104,7 @@ def _schedule_db_backup():
     with _db_backup_lock:
         if _db_backup_timer is not None:
             _db_backup_timer.cancel()
-        _db_backup_timer = threading.Timer(10, _do_db_backup)
+        _db_backup_timer = threading.Timer(180, _do_db_backup)
         _db_backup_timer.daemon = True
         _db_backup_timer.start()
 
