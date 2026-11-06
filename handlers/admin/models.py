@@ -3,10 +3,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import *
 from .. import helpers
 from .menu import back_btn, safe_edit
-import logging
 
 router = Router()
-logger = logging.getLogger(__name__)
 
 def models_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[

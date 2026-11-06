@@ -84,7 +84,7 @@ async def handle_text(message: types.Message):
     if not text or text.startswith("/"):
         return
 
-    # === 1. ПРОВЕРКА БЛОКИРОВКИ ===
+    # 1. Проверка блокировки
     user = get_user(user_id)
     if user and dict(user).get("is_blocked"):
         await message.answer("⛔ Ваш аккаунт заблокирован. Доступна только поддержка (/support).")
@@ -93,13 +93,13 @@ async def handle_text(message: types.Message):
     state = helpers.user_pages.get(user_id, {})
     state_name = state.get("state")
 
-    # === 2. ОБРАБОТКА ПОДДЕРЖКИ (только если юзер ждет ввода) ===
+    # 2. Обработка поддержки (только если юзер в режиме ответа)
     if state_name == "waiting_support_message":
         from .support import handle_support_message
         await handle_support_message(message)
         return
 
-    # === 4. АДМИН-ВВОД ===
+    # 3. АДМИН-ВВОД (все состояния из папки admin)
     if state_name in [
         "waiting_broadcast", "waiting_give_tokens", "waiting_promo_code",
         "waiting_user_search", "waiting_admin_reply",
@@ -113,11 +113,28 @@ async def handle_text(message: types.Message):
             await message.answer("⛔ Нет доступа")
             logger.warning(f"⚠️ Попытка админ-ввода от не-админа {user_id}")
             return
-        from .admin import handle_admin_input
-        await handle_admin_input(message)
+        
+        from .admin.users import handle_user_search
+        from .admin.models import handle_model_price_edit
+        from .admin.support import handle_admin_reply
+        from .admin.menu import safe_edit # Для других состояний, если нужно
+        
+        if state_name == "waiting_user_search":
+            await handle_user_search(message)
+            return
+        if state_name == "waiting_model_price_edit":
+            await handle_model_price_edit(message)
+            return
+        if state_name == "waiting_admin_reply":
+            await handle_admin_reply(message)
+            return
+            
+        # Обработка ввода для тарифов и рассылки (из menu.py или prices.py)
+        # Если ты перенес handle_admin_input куда-то, добавь его вызов здесь
+        await message.answer("⚙️ Обработка этого ввода временно недоступна.")
         return
 
-    # === 5. ПРОМОКОД ===
+    # 4. ПРОМОКОД
     if state_name == "waiting_promo_use":
         code = text.strip().upper()
         success, msg = use_promocode(code, user_id)
@@ -125,13 +142,13 @@ async def handle_text(message: types.Message):
         helpers.user_pages.pop(user_id, None)
         return
 
-    # === 6. ОТМЕНА ===
+    # 5. ОТМЕНА
     if text.strip() == "/cancel":
         helpers.user_pages.pop(user_id, None)
         await message.answer("✅ Отменено", reply_markup=helpers.main_menu())
         return
 
-    # === 7. ВВОД ИМЕНИ ===
+    # 6. ВВОД ИМЕНИ
     if state_name == "waiting_name":
         set_user_name(user_id, text[:50])
         helpers.user_pages.pop(user_id, None)
@@ -140,7 +157,7 @@ async def handle_text(message: types.Message):
         await start_cmd(message)
         return
 
-    # === 8. ВЫБОР МОДЕЛИ ===
+    # 7. ВЫБОР МОДЕЛИ
     ask_model = get_setting(f"ask_model_{user_id}") != "no"
 
     if ask_model:
