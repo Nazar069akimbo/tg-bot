@@ -100,14 +100,9 @@ def reload_db_connection():
 
 
 def _schedule_db_backup():
-    global _db_backup_timer
-    with _db_backup_lock:
-        if _db_backup_timer is not None:
-            _db_backup_timer.cancel()
-        _db_backup_timer = threading.Timer(180, _do_db_backup)
-        _db_backup_timer.daemon = True
-        _db_backup_timer.start()
-
+    # ОТКЛЮЧЕНО для экономии трафика Render.
+    # Бэкап базы данных делается строго в 05:00 через bot.py
+    pass
 
 def _do_db_backup():
     global _db_backup_timer
