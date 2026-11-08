@@ -192,23 +192,8 @@ _users_backup_lock = threading.Lock()
 _users_backup_running = threading.Lock()
 
 def schedule_users_backup(delay=60):
-    """Увеличили задержку до 60 секунд, чтобы реже дергать GitHub"""
-    global _users_backup_timer
-    with _users_backup_lock:
-        if _users_backup_timer is not None:
-            _users_backup_timer.cancel()
-        _users_backup_timer = threading.Timer(delay, _do_users_backup)
-        _users_backup_timer.daemon = True
-        _users_backup_timer.start()
+    """Отключено для экономии трафика. Бэкап только в 05:00 через bot.py."""
+    pass
 
 def _do_users_backup():
-    global _users_backup_timer
-    if not _users_backup_running.acquire(blocking=False): return
-    try:
-        GitHubBackup().backup_users(reason='изменение')
-    except Exception as e:
-        logger.warning(f"⚠️ Бэкап пользователей: {e}")
-    finally:
-        _users_backup_running.release()
-        with _users_backup_lock:
-            _users_backup_timer = None
+    pass

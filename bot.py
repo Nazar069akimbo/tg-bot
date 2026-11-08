@@ -1,6 +1,6 @@
 import os, sys, asyncio, logging, threading, time
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -32,35 +32,26 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN не найден!")
     sys.exit(1)
 
 _admin_raw = os.getenv('ADMIN_ID')
 if not _admin_raw:
-    logger.error("❌ ADMIN_ID не задан")
     sys.exit(1)
 ADMIN_ID = int(_admin_raw)
 
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
-
 setup_logging(dp, logger)
-
 
 @app.route('/')
 @app.route('/healthz')
 def health():
     return "OK", 200
 
-
 def run_flask():
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
 
 async def reminder_worker():
     while True:
@@ -70,16 +61,13 @@ async def reminder_worker():
                 cursor = conn.cursor()
                 now_utc = datetime.now(timezone.utc).isoformat()
                 cursor.execute("SELECT id, user_id, text FROM reminders WHERE sent = 0 AND time <= ?", (now_utc,))
-                rows = cursor.fetchall()
-                for row in rows:
+                for row in cursor.fetchall():
                     try:
                         await bot.send_message(row['user_id'], f"⏰ <b>Напоминание:</b>\n{row['text']}")
                         cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (row['id'],))
-                    except Exception as e:
-                        logger.warning(f"⚠️ Напоминание {row['id']} не отправлено: {e}")
+                    except: pass
         except Exception as e:
             logger.error(f"❌ Ошибка воркера напоминаний: {e}")
-
 
 async def subscription_worker():
     while True:
@@ -87,35 +75,42 @@ async def subscription_worker():
             subs = get_expiring_subscriptions()
             for row in subs:
                 user_id = row['user_id']
-                if was_subscription_notified_today(user_id):
-                    continue
+                if was_subscription_notified_today(user_id): continue
                 try:
                     until = datetime.fromisoformat(row['premium_until'])
                     days_left = (until - datetime.now()).days
                     plan_name = "Premium+" if row['plan'] == "premium_plus" else "Premium"
-                    await bot.send_message(
-                        user_id,
-                        f"⚠️ Твоя подписка <b>{plan_name}</b> заканчивается через <b>{days_left}</b> дн.\n\n"
-                        f"Продлить: /credits"
-                    )
+                    await bot.send_message(user_id, f"⚠️ Твоя подписка <b>{plan_name}</b> заканчивается через <b>{days_left}</b> дн.\n\nПродлить: /credits")
                     mark_subscription_notified(user_id)
-                except Exception as e:
-                    logger.warning(f"⚠️ Не отправил {user_id}: {e}")
+                except: pass
         except Exception as e:
             logger.error(f"❌ Ошибка воркера подписок: {e}")
         await asyncio.sleep(86400)
 
+# === ВОРКЕР ЕЖЕДНЕВНОГО БЭКАПА (СТРОГО В 05:00) ===
+def daily_backup_worker():
+    logger.info("✅ Воркер ежедневного бэкапа запущен (строго в 05:00)")
+    last_backup_date = None
+    
+    while True:
+        try:
+            now = datetime.now()
+            if now.hour == 5 and last_backup_date != now.date():
+                logger.info("⏳ Запуск ежедневного бэкапа в 05:00...")
+                GitHubBackup().backup_all(reason='ежедневный (05:00)')
+                last_backup_date = now.date()
+                logger.info("✅ Ежедневный бэкап завершен!")
+            
+            time.sleep(60) # Проверяем каждую минуту
+        except Exception as e:
+            logger.error(f"❌ Ошибка воркера бэкапа: {e}")
+            time.sleep(60)
 
 async def main():
     logger.info("🚀 Запуск...")
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-
-    # 1. Восстановление БД (если файла нет)
-    db_exists = os.path.exists('data/repsolver.db')
-    if not db_exists:
-        logger.info("📥 БД не найдена — восстанавливаю из GitHub...")
+    if not os.path.exists('data/repsolver.db'):
         try:
             GitHubBackup().restore_latest_backup()
         except Exception as e:
@@ -125,41 +120,21 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # 2. Восстановление папок юзеров (ТОЛЬКО если их нет локально)
+    # Скачиваем папки юзеров ТОЛЬКО если их нет
     if not os.path.exists('data/users') or len(os.listdir('data/users')) == 0:
-        logger.info("📥 Папки юзеров пусты — восстанавливаю из GitHub...")
         try:
             GitHubBackup().restore_users(skip_images=True)
         except Exception as e:
             logger.warning(f"⚠️ Не удалось восстановить папки: {e}")
     else:
-        logger.info("⏭ Папки юзеров уже на месте — пропускаю скачивание (экономия трафика)")
+        logger.info("⏭ Папки юзеров уже на месте")
 
-    # 3. Восстановление токенов из папок в БД
     try:
-        count = restore_from_user_folders()
-        if count > 0:
-            logger.info(f"✅ Восстановлено из папок: {count} пользователей")
-    except Exception as e:
-        logger.warning(f"⚠️ Восстановление из папок: {e}")
+        restore_from_user_folders()
+    except Exception: pass
 
-    # 4. Бэкап БД раз в 15 минут (вместо 30)
-    def backup_loop():
-        try:
-            GitHubBackup().backup_db(reason='при старте')
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка первого бэкапа: {e}")
-
-        while True:
-            time.sleep(900) # 15 минут
-            try:
-                GitHubBackup().backup_db(reason='по расписанию')
-            except Exception as e:
-                logger.warning(f"⚠️ Ошибка бэкапа БД: {e}")
-
-    backup_thread = threading.Thread(target=backup_loop, daemon=True)
-    backup_thread.start()
-    logger.info("✅ Бэкап-воркер запущен (БД раз в 15 мин)")
+    # Запускаем поток ежедневного бэкапа
+    threading.Thread(target=daily_backup_worker, daemon=True).start()
 
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)
@@ -173,9 +148,6 @@ async def main():
         types.BotCommand(command="profile", description="👤 Профиль"),
         types.BotCommand(command="prices", description="💰 Цены"),
         types.BotCommand(command="credits", description="🛒 Купить токены"),
-        types.BotCommand(command="remind", description="⏰ Напоминание"),
-        types.BotCommand(command="reminders", description="📋 Напоминания"),
-        types.BotCommand(command="bonus", description="🎁 Ежедневный бонус"),
         types.BotCommand(command="help", description="❓ Помощь"),
     ])
 
@@ -184,12 +156,10 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("🚀 Бот готов!")
-
     await dp.start_polling(bot, skip_updates=True)
-
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("⏹️ Бот остановлен")
+        pass
