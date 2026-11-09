@@ -433,6 +433,13 @@ def migrate_db():
                     cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
             except Exception:
                 pass
+        # === НОВАЯ МИГРАЦИЯ ДЛЯ ТАРИФОВ ===
+        try:
+            cursor.execute("ALTER TABLE tariffs ADD COLUMN tribute_link TEXT DEFAULT ''")
+            print("✅ Добавлена колонка tribute_link в таблицу tariffs")
+        except Exception:
+            pass # Колонка уже есть
+
         print("✅ БД в порядке")
 
 
