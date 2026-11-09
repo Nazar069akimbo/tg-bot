@@ -9,7 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask
 from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection,
                           get_expiring_subscriptions, mark_subscription_notified,
-                          was_subscription_notified_today, restore_from_user_folders)
+                          was_subscription_notified_today, restore_from_user_folders,
+                          get_setting)
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
@@ -87,24 +88,44 @@ async def subscription_worker():
             logger.error(f"❌ Ошибка воркера подписок: {e}")
         await asyncio.sleep(86400)
 
-# === ВОРКЕР ЕЖЕДНЕВНОГО БЭКАПА (СТРОГО В 05:00) ===
-def daily_backup_worker():
-    logger.info("✅ Воркер ежедневного бэкапа запущен (строго в 05:00)")
-    last_backup_date = None
+def smart_backup_worker():
+    logger.info("✅ Умный воркер бэкапов запущен")
+    last_db_time = 0
+    last_users_time = 0
+    last_daily_date = None
     
     while True:
         try:
             now = datetime.now()
-            if now.hour == 5 and last_backup_date != now.date():
-                logger.info("⏳ Запуск ежедневного бэкапа в 05:00...")
-                GitHubBackup().backup_all(reason='ежедневный (05:00)')
-                last_backup_date = now.date()
-                logger.info("✅ Ежедневный бэкап завершен!")
+            current_time = time.time()
             
-            time.sleep(60) # Проверяем каждую минуту
+            db_freq = int(get_setting("backup_db_freq") or "0")
+            users_freq = int(get_setting("backup_users_freq") or "0")
+            daily_time_str = get_setting("backup_time") or "05:00"
+            
+            if db_freq > 0 and (current_time - last_db_time) >= (db_freq * 60):
+                logger.info(f"⏳ Авто-бэкап БД (интервал: {db_freq} мин)")
+                GitHubBackup().backup_db(reason='по расписанию')
+                last_db_time = current_time
+                
+            if users_freq > 0 and (current_time - last_users_time) >= (users_freq * 60):
+                logger.info(f"⏳ Авто-бэкап юзеров (интервал: {users_freq} мин)")
+                GitHubBackup().backup_users(reason='по расписанию')
+                last_users_time = current_time
+                
+            try:
+                target_h, target_m = map(int, daily_time_str.split(":"))
+                if now.hour == target_h and now.minute == target_m and last_daily_date != now.date():
+                    logger.info(f"⏳ Ежедневный бэкап ({daily_time_str})")
+                    GitHubBackup().backup_all(reason='ежедневный')
+                    last_daily_date = now.date()
+            except ValueError:
+                pass
+                
+            time.sleep(30)
         except Exception as e:
-            logger.error(f"❌ Ошибка воркера бэкапа: {e}")
-            time.sleep(60)
+            logger.error(f"❌ Ошибка умного воркера: {e}")
+            time.sleep(30)
 
 async def main():
     logger.info("🚀 Запуск...")
@@ -120,7 +141,6 @@ async def main():
     migrate_db()
     logger.info("✅ База данных готова")
 
-    # Скачиваем папки юзеров ТОЛЬКО если их нет
     if not os.path.exists('data/users') or len(os.listdir('data/users')) == 0:
         try:
             GitHubBackup().restore_users(skip_images=True)
@@ -133,8 +153,7 @@ async def main():
         restore_from_user_folders()
     except Exception: pass
 
-    # Запускаем поток ежедневного бэкапа
-    threading.Thread(target=daily_backup_worker, daemon=True).start()
+    threading.Thread(target=smart_backup_worker, daemon=True).start()
 
     if not is_admin(ADMIN_ID):
         add_admin(ADMIN_ID)

@@ -100,19 +100,12 @@ def reload_db_connection():
 
 
 def _schedule_db_backup():
-    # ОТКЛЮЧЕНО для экономии трафика Render.
-    # Бэкап базы данных делается строго в 05:00 через bot.py
+    # ОТКЛЮЧЕНО для экономии трафика. Бэкап управляется из bot.py
     pass
 
+
 def _do_db_backup():
-    global _db_backup_timer
-    try:
-        from backup import GitHubBackup
-        GitHubBackup().backup_db(reason='изменение')
-    except Exception as e:
-        print(f"⚠️ Бэкап БД: {e}")
-    with _db_backup_lock:
-        _db_backup_timer = None
+    pass
 
 
 @contextmanager
@@ -492,19 +485,9 @@ def restore_from_user_folders():
 
         if user_id in collected:
             if tokens > collected[user_id]["tokens"]:
-                collected[user_id] = {
-                    "tokens": tokens,
-                    "plan": plan,
-                    "premium_until": premium_until,
-                    "name": name,
-                }
+                collected[user_id] = {"tokens": tokens, "plan": plan, "premium_until": premium_until, "name": name}
         else:
-            collected[user_id] = {
-                "tokens": tokens,
-                "plan": plan,
-                "premium_until": premium_until,
-                "name": name,
-            }
+            collected[user_id] = {"tokens": tokens, "plan": plan, "premium_until": premium_until, "name": name}
 
     restored = 0
     with db_connection() as conn:
@@ -520,7 +503,6 @@ def restore_from_user_folders():
             row = cursor.fetchone()
 
             if not tokens and row and row[1] and row[1] > 0:
-                print(f"⏭ {name or user_id}: папка пустая, в БД {row[1]}, пропуск")
                 continue
 
             if row:
@@ -533,13 +515,10 @@ def restore_from_user_folders():
                     INSERT INTO users (user_id, username, joined, trial_start, trial_active,
                                        tokens, plan, premium_until, daily_reset)
                     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
-                """, (user_id, name or str(user_id),
-                      datetime.now().isoformat(), datetime.now().isoformat(),
-                      tokens, plan, premium_until,
-                      datetime.now().date().isoformat()))
+                """, (user_id, name or str(user_id), datetime.now().isoformat(), datetime.now().isoformat(),
+                      tokens, plan, premium_until, datetime.now().date().isoformat()))
 
             restored += 1
-            print(f"✅ Восстановлен {name or user_id}: {tokens} токенов")
 
     return restored
 
@@ -549,30 +528,23 @@ def get_user(conn, cursor, user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone()
 
-
 @db_operation
 def create_user(conn, cursor, user_id, username):
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if cursor.fetchone():
         return True
     now = datetime.now().isoformat()
-    cursor.execute("""
-        INSERT INTO users (user_id, username, joined, trial_start, trial_active, daily_reset)
-        VALUES (?, ?, ?, ?, 0, ?)
-    """, (user_id, username, now, now, now))
+    cursor.execute("INSERT INTO users (user_id, username, joined, trial_start, trial_active, daily_reset) VALUES (?, ?, ?, ?, 0, ?)", (user_id, username, now, now, now))
     return True
-
 
 def force_create_user(user_id, username=None):
     try:
         user = get_user(user_id)
-        if user:
-            return user
+        if user: return user
         create_user(user_id, username or str(user_id))
         return get_user(user_id)
     except Exception:
         return None
-
 
 @db_operation
 def get_tokens(conn, cursor, user_id):
@@ -580,20 +552,15 @@ def get_tokens(conn, cursor, user_id):
     row = cursor.fetchone()
     return row[0] if row else 0
 
-
 @db_operation
 def add_tokens(conn, cursor, user_id, amount):
     cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
-    _schedule_db_backup()
     try:
         from utils.user_storage import save_user_tokens
         cursor.execute("SELECT tokens, plan, premium_until FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
-        if row:
-            save_user_tokens(user_id, row[0], row[1], row[2])
-    except Exception as e:
-        print(f"⚠️ save_user_tokens: {e}")
-
+        if row: save_user_tokens(user_id, row[0], row[1], row[2])
+    except Exception: pass
 
 @db_operation
 def spend_tokens(conn, cursor, user_id, amount):
@@ -601,192 +568,119 @@ def spend_tokens(conn, cursor, user_id, amount):
     row = cursor.fetchone()
     if row and row[0] >= amount:
         cursor.execute("UPDATE users SET tokens = tokens - ? WHERE user_id = ?", (amount, user_id))
-        _schedule_db_backup()
         try:
             from utils.user_storage import save_user_tokens
             cursor.execute("SELECT tokens, plan, premium_until FROM users WHERE user_id = ?", (user_id,))
             row2 = cursor.fetchone()
-            if row2:
-                save_user_tokens(user_id, row2[0], row2[1], row2[2])
-        except Exception as e:
-            print(f"⚠️ save_user_tokens: {e}")
+            if row2: save_user_tokens(user_id, row2[0], row2[1], row2[2])
+        except Exception: pass
         return True
     return False
-
 
 @db_operation
 def get_text_tokens_today(conn, cursor, user_id):
     cursor.execute("SELECT plan, daily_requests_used, daily_reset, tokens FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return 0, 10
-    plan = row[0] or "basic"
-    used = row[1] or 0
-    last_reset = row[2]
+    if not row: return 0, 10
     balance = row[3] or 0
-    if balance > 0:
-        return balance, 9999
+    if balance > 0: return balance, 9999
     today = datetime.now().date().isoformat()
-    if last_reset != today:
+    if row[2] != today:
         cursor.execute("UPDATE users SET daily_requests_used = 0, daily_reset = ? WHERE user_id = ?", (today, user_id))
-        _schedule_db_backup()
-        used = 0
-    return max(0, 10 - used), 10
-
+        return 10, 10
+    return max(0, 10 - (row[1] or 0)), 10
 
 @db_operation
 def spend_text_token(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
     cursor.execute("UPDATE users SET daily_requests_used = daily_requests_used + 1, daily_reset = ? WHERE user_id = ?", (today, user_id))
-    _schedule_db_backup()
-
 
 @db_operation
 def get_week_images_used(conn, cursor, user_id):
     cursor.execute("SELECT plan, week_images_used, week_start, tokens FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return 0, 2
-    plan = row[0] or "basic"
-    used = row[1] or 0
-    week_start = row[2]
+    if not row: return 0, 2
     balance = row[3] or 0
-    if balance > 0:
-        return used, 9999
+    if balance > 0: return row[1] or 0, 9999
     now = datetime.now()
     monday = (now - timedelta(days=now.weekday())).date().isoformat()
-    if week_start != monday:
+    if row[2] != monday:
         cursor.execute("UPDATE users SET week_images_used = 0, week_start = ? WHERE user_id = ?", (monday, user_id))
-        _schedule_db_backup()
-        used = 0
-    return used, 2
-
+        return 0, 2
+    return row[1] or 0, 2
 
 @db_operation
 def use_week_image(conn, cursor, user_id):
     now = datetime.now()
     monday = (now - timedelta(days=now.weekday())).date().isoformat()
     cursor.execute("UPDATE users SET week_images_used = week_images_used + 1, week_start = ? WHERE user_id = ?", (monday, user_id))
-    _schedule_db_backup()
-
 
 @db_operation
 def has_trial(conn, cursor, user_id):
     cursor.execute("SELECT trial_start, trial_active FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return False
-    trial_start = row[0]
-    trial_active = row[1] or 0
-    if not trial_start or not trial_active:
-        return False
-    start_date = datetime.fromisoformat(trial_start)
-    return (datetime.now() - start_date).days < 30
-
+    if not row or not row[0] or not row[1]: return False
+    return (datetime.now() - datetime.fromisoformat(row[0])).days < 30
 
 @db_operation
 def activate_trial(conn, cursor, user_id):
-    cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 30 WHERE user_id = ?",
-                   (datetime.now().isoformat(), user_id))
-    _schedule_db_backup()
-
+    cursor.execute("UPDATE users SET trial_start = ?, trial_active = 1, tokens = tokens + 30 WHERE user_id = ?", (datetime.now().isoformat(), user_id))
 
 @db_operation
 def save_image_to_history(conn, cursor, user_id, prompt, enhanced_prompt, model, image_data):
     session_id = secrets.token_hex(8)
-    cursor.execute("""
-        INSERT INTO images_history (user_id, prompt, enhanced_prompt, model, image_data, session_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, prompt, enhanced_prompt, model, image_data, session_id, datetime.now().isoformat()))
+    cursor.execute("INSERT INTO images_history (user_id, prompt, enhanced_prompt, model, image_data, session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (user_id, prompt, enhanced_prompt, model, image_data, session_id, datetime.now().isoformat()))
     return cursor.lastrowid, session_id
-
-
-@db_operation
-def get_last_image(conn, cursor, user_id):
-    cursor.execute("SELECT * FROM images_history WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,))
-    row = cursor.fetchone()
-    return dict(row) if row else None
-
 
 @db_operation
 def add_referral(conn, cursor, referrer_id, referred_id):
-    if referrer_id == referred_id:
-        return False, "Нельзя пригласить себя!"
+    if referrer_id == referred_id: return False, "Нельзя пригласить себя!"
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (referred_id,))
-    if not cursor.fetchone():
-        return False, "Пользователь не найден!"
+    if not cursor.fetchone(): return False, "Пользователь не найден!"
     cursor.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
-    if cursor.fetchone():
-        return False, "Уже приглашён!"
-    cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)",
-                   (referrer_id, referred_id, datetime.now().isoformat()))
+    if cursor.fetchone(): return False, "Уже приглашён!"
+    cursor.execute("INSERT INTO referrals (referrer_id, referred_id, joined) VALUES (?, ?, ?)", (referrer_id, referred_id, datetime.now().isoformat()))
     cursor.execute("UPDATE users SET tokens = tokens + 20 WHERE user_id = ?", (referrer_id,))
-    _schedule_db_backup()
     return True, "✅ +20 токенов!"
-
 
 @db_operation
 def get_referral_count(conn, cursor, user_id):
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     return cursor.fetchone()[0] or 0
 
-
 @db_operation
 def use_promocode(conn, cursor, code, user_id):
     code = code.strip().upper()
-    cursor.execute(
-        "SELECT id, bonus_tokens, max_uses, used, expires_at FROM promocodes WHERE code = ?",
-        (code,)
-    )
+    cursor.execute("SELECT id, bonus_tokens, max_uses, used, expires_at FROM promocodes WHERE code = ?", (code,))
     promo = cursor.fetchone()
-    if not promo:
-        return False, "❌ Промокод не найден"
-    now_iso = datetime.now().isoformat()
-    if promo['expires_at'] and promo['expires_at'] < now_iso:
-        return False, "❌ Промокод истёк"
-    if promo['used'] >= promo['max_uses']:
-        return False, "❌ Промокод использован"
+    if not promo: return False, "❌ Промокод не найден"
+    if promo['expires_at'] and promo['expires_at'] < datetime.now().isoformat(): return False, "❌ Промокод истёк"
+    if promo['used'] >= promo['max_uses']: return False, "❌ Промокод использован"
     cursor.execute("SELECT id FROM promocode_uses WHERE promocode_id = ? AND user_id = ?", (promo['id'], user_id))
-    if cursor.fetchone():
-        return False, "❌ Вы уже использовали"
-    cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)",
-                   (promo['id'], user_id, datetime.now().isoformat()))
+    if cursor.fetchone(): return False, "❌ Вы уже использовали"
+    cursor.execute("INSERT INTO promocode_uses (promocode_id, user_id, used_at) VALUES (?, ?, ?)", (promo['id'], user_id, datetime.now().isoformat()))
     cursor.execute("UPDATE promocodes SET used = used + 1 WHERE id = ?", (promo['id'],))
-    if promo['bonus_tokens'] > 0:
-        cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
-    _schedule_db_backup()
+    if promo['bonus_tokens'] > 0: cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (promo['bonus_tokens'], user_id))
     return True, f"✅ +{promo['bonus_tokens']} токенов!"
-
 
 @db_operation
 def get_promocodes_list(conn, cursor):
     cursor.execute("SELECT * FROM promocodes ORDER BY created_at DESC")
     return [dict(r) for r in cursor.fetchall()]
 
-
 @db_operation
 def create_promocode(conn, cursor, code, bonus_tokens, max_uses=100, days=30):
-    code = code.strip().upper()
     expires = (datetime.now() + timedelta(days=days)).isoformat()
-    cursor.execute(
-        "INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-        (code, bonus_tokens, max_uses, datetime.now().isoformat(), expires)
-    )
-    _schedule_db_backup()
-    return cursor.lastrowid
-
+    cursor.execute("INSERT INTO promocodes (code, bonus_tokens, max_uses, created_at, expires_at) VALUES (?, ?, ?, ?, ?)", (code.strip().upper(), bonus_tokens, max_uses, datetime.now().isoformat(), expires))
 
 @db_operation
 def get_all_active_user_ids(conn, cursor):
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
     return [r[0] for r in cursor.fetchall()]
 
-
 @db_operation
 def create_payment(conn, cursor, user_id, stars, payload, plan):
-    cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)",
-                   (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
-
+    cursor.execute("INSERT INTO payments (user_id, stars_amount, telegram_payload, status, timestamp, plan) VALUES (?, ?, ?, ?, ?, ?)", (user_id, stars, payload, "pending", datetime.now().isoformat(), plan))
 
 @db_operation
 def complete_payment(conn, cursor, payload):
@@ -794,106 +688,72 @@ def complete_payment(conn, cursor, payload):
     cursor.execute("SELECT user_id, stars_amount, plan FROM payments WHERE telegram_payload = ?", (payload,))
     return cursor.fetchone()
 
-
 @db_operation
 def get_payments_summary(conn, cursor, days=30):
     since = (datetime.now() - timedelta(days=days)).isoformat()
-    cursor.execute("""
-        SELECT COALESCE(SUM(stars_amount), 0), COUNT(*)
-        FROM payments
-        WHERE status = 'completed' AND timestamp >= ?
-    """, (since,))
+    cursor.execute("SELECT COALESCE(SUM(stars_amount), 0), COUNT(*) FROM payments WHERE status = 'completed' AND timestamp >= ?", (since,))
     row = cursor.fetchone()
-    stars = row[0] or 0
-    count = row[1] or 0
-    return stars, count
-
+    return row[0] or 0, row[1] or 0
 
 @db_operation
 def get_payments_list(conn, cursor, limit=20):
-    cursor.execute("""
-        SELECT p.*, u.username
-        FROM payments p
-        LEFT JOIN users u ON u.user_id = p.user_id
-        WHERE p.status = 'completed'
-        ORDER BY p.timestamp DESC
-        LIMIT ?
-    """, (limit,))
+    cursor.execute("SELECT p.*, u.username FROM payments p LEFT JOIN users u ON u.user_id = p.user_id WHERE p.status = 'completed' ORDER BY p.timestamp DESC LIMIT ?", (limit,))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def is_admin(conn, cursor, user_id):
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
     return cursor.fetchone() is not None
 
-
 @db_operation
 def add_admin(conn, cursor, user_id):
-    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
-                   (user_id, datetime.now().isoformat()))
-
+    cursor.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, datetime.now().isoformat()))
 
 @db_operation
 def add_premium(conn, cursor, user_id, days, plan, paid=False):
     new_date = (datetime.now() + timedelta(days=days)).isoformat()
     cursor.execute("UPDATE users SET premium_until = ?, plan = ? WHERE user_id = ?", (new_date, plan, user_id))
-    if paid:
-        cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
-
+    if paid: cursor.execute("UPDATE users SET paid_premium = 1 WHERE user_id = ?", (user_id,))
 
 @db_operation
 def block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
     try:
         from utils.user_storage import load_profile, save_profile
         profile = load_profile(user_id)
         profile["is_blocked"] = True
         save_profile(user_id, profile)
-    except Exception as e:
-        print(f"⚠️ Не синхронизировал блокировку: {e}")
-
+    except Exception: pass
 
 @db_operation
 def unblock_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
     try:
         from utils.user_storage import load_profile, save_profile
         profile = load_profile(user_id)
         profile["is_blocked"] = False
         save_profile(user_id, profile)
-    except Exception as e:
-        print(f"⚠️ Не синхронизировал разблокировку: {e}")
-
+    except Exception: pass
 
 @db_operation
 def soft_block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_soft_blocked = 1 WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
     try:
         from utils.user_storage import load_profile, save_profile
         profile = load_profile(user_id)
         profile["is_soft_blocked"] = True
         save_profile(user_id, profile)
-    except Exception as e:
-        print(f"⚠️ Не синхронизировал soft-блокировку: {e}")
-
+    except Exception: pass
 
 @db_operation
 def unsoft_block_user(conn, cursor, user_id):
     cursor.execute("UPDATE users SET is_soft_blocked = 0 WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
     try:
         from utils.user_storage import load_profile, save_profile
         profile = load_profile(user_id)
         profile["is_soft_blocked"] = False
         save_profile(user_id, profile)
-    except Exception as e:
-        print(f"⚠️ Не синхронизировал soft-разблокировку: {e}")
-
+    except Exception: pass
 
 @db_operation
 def get_stats(conn, cursor):
@@ -905,84 +765,53 @@ def get_stats(conn, cursor):
     premium_users = cursor.fetchone()[0] or 0
     return total, total_tokens, premium_users
 
-
 @db_operation
 def get_expiring_subscriptions(conn, cursor):
     now = datetime.now()
     in_4_days = (now + timedelta(days=4)).isoformat()
-    cursor.execute("""
-        SELECT user_id, plan, premium_until FROM users
-        WHERE plan IN ('premium', 'premium_plus')
-        AND premium_until > ? AND premium_until <= ?
-    """, (now.isoformat(), in_4_days))
+    cursor.execute("SELECT user_id, plan, premium_until FROM users WHERE plan IN ('premium', 'premium_plus') AND premium_until > ? AND premium_until <= ?", (now.isoformat(), in_4_days))
     return cursor.fetchall()
-
 
 @db_operation
 def mark_subscription_notified(conn, cursor, user_id):
-    today = datetime.now().date().isoformat()
-    cursor.execute("INSERT OR REPLACE INTO subscription_notifications (user_id, last_notified) VALUES (?, ?)",
-                   (user_id, today))
-
+    cursor.execute("INSERT OR REPLACE INTO subscription_notifications (user_id, last_notified) VALUES (?, ?)", (user_id, datetime.now().date().isoformat()))
 
 @db_operation
 def was_subscription_notified_today(conn, cursor, user_id):
-    today = datetime.now().date().isoformat()
     cursor.execute("SELECT last_notified FROM subscription_notifications WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return False
-    return row[0] == today
-
+    return bool(row and row[0] == datetime.now().date().isoformat())
 
 @db_operation
 def add_reminder(conn, cursor, user_id, text, time_str):
     try:
         dt_local = datetime.fromisoformat(time_str)
-        dt_utc = dt_local - timedelta(hours=TIMEZONE_OFFSET)
-        time_str = dt_utc.isoformat()
-    except Exception as e:
-        print(f"⚠️ Сдвиг времени: {e}")
-    cursor.execute("INSERT INTO reminders (user_id, text, time, created_at) VALUES (?, ?, ?, ?)",
-                   (user_id, text, time_str, datetime.now().isoformat()))
-    _schedule_db_backup()
-    return cursor.lastrowid
-
+        time_str = (dt_local - timedelta(hours=TIMEZONE_OFFSET)).isoformat()
+    except Exception: pass
+    cursor.execute("INSERT INTO reminders (user_id, text, time, created_at) VALUES (?, ?, ?, ?)", (user_id, text, time_str, datetime.now().isoformat()))
 
 @db_operation
 def get_user_reminders(conn, cursor, user_id):
     cursor.execute("SELECT * FROM reminders WHERE user_id = ? AND sent = 0 ORDER BY time ASC", (user_id,))
-    rows = cursor.fetchall()
     result = []
-    for r in rows:
+    for r in cursor.fetchall():
         d = dict(r)
-        try:
-            dt_utc = datetime.fromisoformat(d['time'])
-            dt_local = dt_utc + timedelta(hours=TIMEZONE_OFFSET)
-            d['time_local'] = dt_local.isoformat()
-        except Exception:
-            d['time_local'] = d['time']
+        try: d['time_local'] = (datetime.fromisoformat(d['time']) + timedelta(hours=TIMEZONE_OFFSET)).isoformat()
+        except Exception: d['time_local'] = d['time']
         result.append(d)
     return result
-
 
 @db_operation
 def delete_reminder(conn, cursor, reminder_id):
     cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-    _schedule_db_backup()
-
 
 @db_operation
 def delete_reminder_by_text(conn, cursor, user_id, text):
     cursor.execute("DELETE FROM reminders WHERE user_id = ? AND text LIKE ?", (user_id, f"%{text}%"))
-    _schedule_db_backup()
-
 
 @db_operation
 def delete_all_reminders(conn, cursor, user_id):
     cursor.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
-
 
 @db_operation
 def get_setting(conn, cursor, key):
@@ -990,11 +819,9 @@ def get_setting(conn, cursor, key):
     row = cursor.fetchone()
     return row[0] if row else None
 
-
 @db_operation
 def set_setting(conn, cursor, key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-
 
 @db_operation
 def get_model_setting(conn, cursor, task):
@@ -1002,63 +829,41 @@ def get_model_setting(conn, cursor, task):
     row = cursor.fetchone()
     return row[0] if row else None
 
-
 @db_operation
 def set_model_setting(conn, cursor, task, model):
-    cursor.execute("INSERT OR REPLACE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)",
-                   (task, model, datetime.now().isoformat()))
-
+    cursor.execute("INSERT OR REPLACE INTO model_settings (task, model, updated_at) VALUES (?, ?, ?)", (task, model, datetime.now().isoformat()))
 
 @db_operation
 def get_all_model_settings(conn, cursor):
     cursor.execute("SELECT task, model FROM model_settings")
     return {row[0]: row[1] for row in cursor.fetchall()}
 
-
 @db_operation
 def get_tariffs(conn, cursor, kind=None):
-    if kind:
-        cursor.execute("SELECT * FROM tariffs WHERE active = 1 AND kind = ? ORDER BY sort_order", (kind,))
-    else:
-        cursor.execute("SELECT * FROM tariffs WHERE active = 1 ORDER BY kind, sort_order")
+    if kind: cursor.execute("SELECT * FROM tariffs WHERE active = 1 AND kind = ? ORDER BY sort_order", (kind,))
+    else: cursor.execute("SELECT * FROM tariffs WHERE active = 1 ORDER BY kind, sort_order")
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def get_all_tariffs(conn, cursor, kind=None):
-    if kind:
-        cursor.execute("SELECT * FROM tariffs WHERE kind = ? ORDER BY sort_order", (kind,))
-    else:
-        cursor.execute("SELECT * FROM tariffs ORDER BY kind, sort_order")
+    if kind: cursor.execute("SELECT * FROM tariffs WHERE kind = ? ORDER BY sort_order", (kind,))
+    else: cursor.execute("SELECT * FROM tariffs ORDER BY kind, sort_order")
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def add_tariff(conn, cursor, kind, name, price_rub, stars, tokens, days=0):
-    cursor.execute("INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)",
-                   (kind, name, price_rub, stars, tokens, days))
-    _schedule_db_backup()
-
+    cursor.execute("INSERT INTO tariffs (kind, name, price_rub, stars, tokens, days, sort_order) VALUES (?, ?, ?, ?, ?, ?, 99)", (kind, name, price_rub, stars, tokens, days))
 
 @db_operation
 def update_tariff(conn, cursor, tariff_id, **fields):
-    if not fields:
-        return
-    set_parts = []
-    values = []
-    for k, v in fields.items():
-        set_parts.append(f"{k} = ?")
-        values.append(v)
-    values.append(tariff_id)
+    if not fields: return
+    set_parts = [f"{k} = ?" for k in fields]
+    values = list(fields.values()) + [tariff_id]
     cursor.execute(f"UPDATE tariffs SET {', '.join(set_parts)} WHERE id = ?", values)
-    _schedule_db_backup()
-
 
 @db_operation
 def delete_tariff(conn, cursor, tariff_id):
     cursor.execute("DELETE FROM tariffs WHERE id = ?", (tariff_id,))
-    _schedule_db_backup()
-
 
 @db_operation
 def get_tariff(conn, cursor, tariff_id):
@@ -1066,142 +871,75 @@ def get_tariff(conn, cursor, tariff_id):
     row = cursor.fetchone()
     return dict(row) if row else None
 
-
 @db_operation
 def search_users(conn, cursor, query=None, filter_type=None, limit=50):
     sql = "SELECT user_id, username, tokens, plan, joined, is_blocked, is_soft_blocked FROM users WHERE 1=1"
     params = []
-
     if query:
-        sql += """ AND (
-            username LIKE ?
-            OR CAST(user_id AS TEXT) LIKE ?
-            OR user_id IN (SELECT user_id FROM user_memory WHERE name LIKE ?)
-        )"""
-        params.append(f"%{query}%")
-        params.append(f"%{query}%")
-        params.append(f"%{query}%")
-
-    if filter_type == "premium":
-        sql += " AND plan IN ('premium', 'premium_plus')"
-    elif filter_type == "basic":
-        sql += " AND plan = 'basic'"
-    elif filter_type == "recent":
-        sql += " AND joined > datetime('now', '-7 days')"
-    elif filter_type == "rich":
-        sql += " AND tokens > 1000"
-    elif filter_type == "poor":
-        sql += " AND tokens < 100"
-
+        sql += " AND (username LIKE ? OR CAST(user_id AS TEXT) LIKE ? OR user_id IN (SELECT user_id FROM user_memory WHERE name LIKE ?))"
+        params.extend([f"%{query}%", f"%{query}%", f"%{query}%"])
+    if filter_type == "premium": sql += " AND plan IN ('premium', 'premium_plus')"
+    elif filter_type == "basic": sql += " AND plan = 'basic'"
+    elif filter_type == "recent": sql += " AND joined > datetime('now', '-7 days')"
+    elif filter_type == "rich": sql += " AND tokens > 1000"
+    elif filter_type == "poor": sql += " AND tokens < 100"
     sql += " ORDER BY tokens DESC LIMIT ?"
     params.append(limit)
-
     cursor.execute(sql, params)
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def get_users_count(conn, cursor):
     cursor.execute("SELECT COUNT(*) FROM users")
     return cursor.fetchone()[0] or 0
 
-
 @db_operation
 def get_users_count_today(conn, cursor):
     cursor.execute("SELECT COUNT(*) FROM users WHERE joined > datetime('now', '-1 day')")
     return cursor.fetchone()[0] or 0
-
 
 @db_operation
 def get_users_count_week(conn, cursor):
     cursor.execute("SELECT COUNT(*) FROM users WHERE joined > datetime('now', '-7 days')")
     return cursor.fetchone()[0] or 0
 
-
-@db_operation
-def get_premium_count(conn, cursor):
-    cursor.execute("SELECT COUNT(*) FROM users WHERE plan IN ('premium', 'premium_plus')")
-    return cursor.fetchone()[0] or 0
-
-
 @db_operation
 def create_support_ticket(conn, cursor, user_id, username, first_message=None):
-    cursor.execute("""
-        INSERT INTO support_tickets (user_id, username, status, created_at, updated_at)
-        VALUES (?, ?, 'open', ?, ?)
-    """, (user_id, username, datetime.now().isoformat(), datetime.now().isoformat()))
-    ticket_id = cursor.lastrowid
-
+    cursor.execute("INSERT INTO support_tickets (user_id, username, status, created_at, updated_at) VALUES (?, ?, 'open', ?, ?)", (user_id, username, datetime.now().isoformat(), datetime.now().isoformat()))
+    tid = cursor.lastrowid
     if first_message:
-        cursor.execute("""
-            INSERT INTO support_messages (ticket_id, sender, text, created_at)
-            VALUES (?, 'user', ?, ?)
-        """, (ticket_id, first_message, datetime.now().isoformat()))
-
-    _schedule_db_backup()
-    return ticket_id
-
+        cursor.execute("INSERT INTO support_messages (ticket_id, sender, text, created_at) VALUES (?, 'user', ?, ?)", (tid, first_message, datetime.now().isoformat()))
+    return tid
 
 @db_operation
 def add_support_message(conn, cursor, ticket_id, sender, text):
-    cursor.execute("""
-        INSERT INTO support_messages (ticket_id, sender, text, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (ticket_id, sender, text, datetime.now().isoformat()))
-
-    cursor.execute("UPDATE support_tickets SET updated_at = ? WHERE id = ?",
-                   (datetime.now().isoformat(), ticket_id))
-    _schedule_db_backup()
-    return cursor.lastrowid
-
+    cursor.execute("INSERT INTO support_messages (ticket_id, sender, text, created_at) VALUES (?, ?, ?, ?)", (ticket_id, sender, text, datetime.now().isoformat()))
+    cursor.execute("UPDATE support_tickets SET updated_at = ? WHERE id = ?", (datetime.now().isoformat(), ticket_id))
 
 @db_operation
 def get_support_tickets(conn, cursor, status=None, limit=30):
-    if status:
-        cursor.execute("""
-            SELECT * FROM support_tickets WHERE status = ?
-            ORDER BY updated_at DESC LIMIT ?
-        """, (status, limit))
-    else:
-        cursor.execute("""
-            SELECT * FROM support_tickets
-            ORDER BY updated_at DESC LIMIT ?
-        """, (limit,))
+    if status: cursor.execute("SELECT * FROM support_tickets WHERE status = ? ORDER BY updated_at DESC LIMIT ?", (status, limit))
+    else: cursor.execute("SELECT * FROM support_tickets ORDER BY updated_at DESC LIMIT ?", (limit,))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def get_ticket_messages(conn, cursor, ticket_id, limit=100):
-    cursor.execute("""
-        SELECT * FROM support_messages WHERE ticket_id = ?
-        ORDER BY id ASC LIMIT ?
-    """, (ticket_id, limit))
+    cursor.execute("SELECT * FROM support_messages WHERE ticket_id = ? ORDER BY id ASC LIMIT ?", (ticket_id, limit))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def close_ticket(conn, cursor, ticket_id):
-    cursor.execute("UPDATE support_tickets SET status = 'closed', updated_at = ? WHERE id = ?",
-                   (datetime.now().isoformat(), ticket_id))
-    _schedule_db_backup()
-
+    cursor.execute("UPDATE support_tickets SET status = 'closed', updated_at = ? WHERE id = ?", (datetime.now().isoformat(), ticket_id))
 
 @db_operation
 def reopen_ticket(conn, cursor, ticket_id):
-    cursor.execute("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?",
-                   (datetime.now().isoformat(), ticket_id))
-    _schedule_db_backup()
-
+    cursor.execute("UPDATE support_tickets SET status = 'open', updated_at = ? WHERE id = ?", (datetime.now().isoformat(), ticket_id))
 
 @db_operation
 def get_user_ticket(conn, cursor, user_id):
-    cursor.execute("""
-        SELECT * FROM support_tickets WHERE user_id = ? AND status = 'open'
-        ORDER BY id DESC LIMIT 1
-    """, (user_id,))
+    cursor.execute("SELECT * FROM support_tickets WHERE user_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", (user_id,))
     row = cursor.fetchone()
     return dict(row) if row else None
-
 
 @db_operation
 def get_ticket(conn, cursor, ticket_id):
@@ -1209,24 +947,15 @@ def get_ticket(conn, cursor, ticket_id):
     row = cursor.fetchone()
     return dict(row) if row else None
 
-
 @db_operation
 def delete_support_ticket(conn, cursor, ticket_id):
     cursor.execute("DELETE FROM support_messages WHERE ticket_id = ?", (ticket_id,))
     cursor.execute("DELETE FROM support_tickets WHERE id = ?", (ticket_id,))
     cursor.execute("DELETE FROM ticket_ratings WHERE ticket_id = ?", (ticket_id,))
-    _schedule_db_backup()
-
 
 @db_operation
 def save_ticket_rating(conn, cursor, ticket_id, user_id, rating, comment=None):
-    cursor.execute("""
-        INSERT INTO ticket_ratings (ticket_id, user_id, rating, comment, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (ticket_id, user_id, rating, comment, datetime.now().isoformat()))
-    _schedule_db_backup()
-    return cursor.lastrowid
-
+    cursor.execute("INSERT INTO ticket_ratings (ticket_id, user_id, rating, comment, created_at) VALUES (?, ?, ?, ?, ?)", (ticket_id, user_id, rating, comment, datetime.now().isoformat()))
 
 @db_operation
 def get_ticket_rating(conn, cursor, ticket_id):
@@ -1234,269 +963,104 @@ def get_ticket_rating(conn, cursor, ticket_id):
     row = cursor.fetchone()
     return dict(row) if row else None
 
-
 @db_operation
 def get_avg_rating(conn, cursor):
     cursor.execute("SELECT AVG(rating), COUNT(*) FROM ticket_ratings")
     row = cursor.fetchone()
     return (round(row[0], 2) if row[0] else 0, row[1] or 0)
 
-
 @db_operation
 def add_warning(conn, cursor, user_id, reason, admin_id):
-    cursor.execute("""
-        INSERT INTO warnings (user_id, reason, admin_id, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, reason, admin_id, datetime.now().isoformat()))
-    _schedule_db_backup()
-    return cursor.lastrowid
-
-
-@db_operation
-def get_warnings(conn, cursor, user_id):
-    cursor.execute("SELECT * FROM warnings WHERE user_id = ? ORDER BY id DESC", (user_id,))
-    return [dict(r) for r in cursor.fetchall()]
-
+    cursor.execute("INSERT INTO warnings (user_id, reason, admin_id, created_at) VALUES (?, ?, ?, ?)", (user_id, reason, admin_id, datetime.now().isoformat()))
 
 @db_operation
 def get_warnings_count(conn, cursor, user_id):
     cursor.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
     return cursor.fetchone()[0] or 0
 
-
-@db_operation
-def remove_warning(conn, cursor, warning_id):
-    cursor.execute("DELETE FROM warnings WHERE id = ?", (warning_id,))
-    _schedule_db_backup()
-
-
-@db_operation
-def remove_all_warnings(conn, cursor, user_id):
-    cursor.execute("DELETE FROM warnings WHERE user_id = ?", (user_id,))
-    _schedule_db_backup()
-
-
 @db_operation
 def get_warned_users(conn, cursor, limit=50):
-    cursor.execute("""
-        SELECT user_id, COUNT(*) as cnt, MAX(created_at) as last_date
-        FROM warnings
-        GROUP BY user_id
-        ORDER BY cnt DESC, last_date DESC
-        LIMIT ?
-    """, (limit,))
+    cursor.execute("SELECT user_id, COUNT(*) as cnt, MAX(created_at) as last_date FROM warnings GROUP BY user_id ORDER BY cnt DESC, last_date DESC LIMIT ?", (limit,))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def get_all_warnings(conn, cursor, limit=100):
-    cursor.execute("""
-        SELECT * FROM warnings ORDER BY id DESC LIMIT ?
-    """, (limit,))
+    cursor.execute("SELECT * FROM warnings ORDER BY id DESC LIMIT ?", (limit,))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def add_admin_notification(conn, cursor, text, user_id=None):
-    cursor.execute("""
-        INSERT INTO admin_notifications (text, user_id, created_at)
-        VALUES (?, ?, ?)
-    """, (text, user_id, datetime.now().isoformat()))
-    return cursor.lastrowid
-
-
-@db_operation
-def get_pending_notifications(conn, cursor, limit=20):
-    cursor.execute("""
-        SELECT * FROM admin_notifications WHERE sent = 0
-        ORDER BY id ASC LIMIT ?
-    """, (limit,))
-    return [dict(r) for r in cursor.fetchall()]
-
-
-@db_operation
-def mark_notification_sent(conn, cursor, notif_id):
-    cursor.execute("UPDATE admin_notifications SET sent = 1 WHERE id = ?", (notif_id,))
-
-
-def do_backup():
-    try:
-        from backup import GitHubBackup
-        GitHubBackup().backup_all(reason='после изменения')
-    except Exception:
-        pass
-
-
-def get_queue_info():
-    size = _db_queue.qsize()
-    status = "✅ Работает" if _db_thread and _db_thread.is_alive() else "❌ Остановлен"
-    return f"📊 Очередь БД: {size} задач, поток: {status}"
-
+    cursor.execute("INSERT INTO admin_notifications (text, user_id, created_at) VALUES (?, ?, ?)", (text, user_id, datetime.now().isoformat()))
 
 @db_operation
 def claim_daily_bonus(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
-
-    cursor.execute(
-        "SELECT streak FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1",
-        (user_id,)
-    )
+    cursor.execute("SELECT streak FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1", (user_id,))
     prev = cursor.fetchone()
-    yesterday_streak = prev[0] if prev else 0
-
-    cursor.execute(
-        "SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
-        (user_id, today)
-    )
-    if cursor.fetchone():
-        return False, 0, yesterday_streak, True
-
+    cursor.execute("SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?", (user_id, today))
+    if cursor.fetchone(): return False, 0, prev[0] if prev else 0, True
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
-    cursor.execute(
-        "SELECT streak FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
-        (user_id, yesterday)
-    )
+    cursor.execute("SELECT streak FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?", (user_id, yesterday))
     y = cursor.fetchone()
     streak = (y[0] + 1) if y else 1
-
     amount = min(5 + (streak // 7) * 5, 50)
-
-    cursor.execute(
-        "INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)",
-        (user_id, today, streak, amount)
-    )
+    cursor.execute("INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)", (user_id, today, streak, amount))
     cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
-
-    cursor.execute("""
-        INSERT INTO user_counters (user_id, days_active) VALUES (?, 1)
-        ON CONFLICT(user_id) DO UPDATE SET days_active = days_active + 1
-    """, (user_id,))
-
-    _schedule_db_backup()
-
+    cursor.execute("INSERT INTO user_counters (user_id, days_active) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET days_active = days_active + 1", (user_id,))
     try:
         from utils.user_storage import save_user_bonus
         save_user_bonus(user_id, streak, today)
-    except Exception as e:
-        print(f"⚠️ save_user_bonus: {e}")
-
+    except Exception: pass
     return True, amount, streak, False
-
 
 @db_operation
 def get_streak_info(conn, cursor, user_id):
     today = datetime.now().date().isoformat()
-    cursor.execute(
-        "SELECT streak, claim_date FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1",
-        (user_id,)
-    )
+    cursor.execute("SELECT streak, claim_date FROM daily_bonus_claims WHERE user_id = ? ORDER BY claim_date DESC LIMIT 1", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return 0, None, False
+    if not row: return 0, None, False
     return row[0], row[1], row[1] == today
-
 
 @db_operation
 def check_and_unlock_achievements(conn, cursor, user_id):
-    unlocked_new = []
-
     cursor.execute("SELECT code FROM achievements WHERE user_id = ?", (user_id,))
     already = {r[0] for r in cursor.fetchall()}
-
-    cursor.execute("""
-        SELECT u.tokens, COALESCE(c.images_total, 0), COALESCE(c.texts_total, 0), COALESCE(c.days_active, 0)
-        FROM users u
-        LEFT JOIN user_counters c ON c.user_id = u.user_id
-        WHERE u.user_id = ?
-    """, (user_id,))
+    cursor.execute("SELECT u.tokens, COALESCE(c.images_total, 0), COALESCE(c.texts_total, 0), COALESCE(c.days_active, 0) FROM users u LEFT JOIN user_counters c ON c.user_id = u.user_id WHERE u.user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if not row:
-        return []
-
+    if not row: return []
     tokens, images, texts, days = row
-
     cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
     refs = cursor.fetchone()[0] or 0
-
-    defs = [
-        ("first_step", days >= 1, "👣", "Первый шаг"),
-        ("week_active", days >= 7, "📅", "Неделя с нами"),
-        ("month_active", days >= 30, "🗓", "Месяц с нами"),
-        ("artist_10", images >= 10, "🎨", "Художник"),
-        ("artist_100", images >= 100, "🖼", "Мастер"),
-        ("artist_500", images >= 500, "👑", "Легенда"),
-        ("talker_50", texts >= 50, "💬", "Болтун"),
-        ("referrer_3", refs >= 3, "🤝", "Друг"),
-        ("referrer_10", refs >= 10, "🌟", "Амбассадор"),
-        ("rich_1000", tokens >= 1000, "💰", "Богач"),
-    ]
-
-    for code, cond, _, _ in defs:
+    defs = [("first_step", days >= 1), ("week_active", days >= 7), ("month_active", days >= 30), ("artist_10", images >= 10), ("artist_100", images >= 100), ("artist_500", images >= 500), ("talker_50", texts >= 50), ("referrer_3", refs >= 3), ("referrer_10", refs >= 10), ("rich_1000", tokens >= 1000)]
+    unlocked = []
+    for code, cond in defs:
         if cond and code not in already:
-            cursor.execute(
-                "INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)",
-                (user_id, code, datetime.now().isoformat())
-            )
-            unlocked_new.append(code)
-
-    if unlocked_new:
-        _schedule_db_backup()
-
-    return unlocked_new
-
+            cursor.execute("INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)", (user_id, code, datetime.now().isoformat()))
+            unlocked.append(code)
+    return unlocked
 
 @db_operation
 def get_achievements(conn, cursor, user_id):
     cursor.execute("SELECT code, unlocked_at FROM achievements WHERE user_id = ?", (user_id,))
     return {r[0]: r[1] for r in cursor.fetchall()}
 
-
 def achievements_list():
-    return [
-        ("first_step", "👣", "Первый шаг", "Зашёл в бота"),
-        ("week_active", "📅", "Неделя с нами", "Активен 7 дней"),
-        ("month_active", "🗓", "Месяц с нами", "Активен 30 дней"),
-        ("artist_10", "🎨", "Художник", "Создал 10 картинок"),
-        ("artist_100", "🖼", "Мастер", "Создал 100 картинок"),
-        ("artist_500", "👑", "Легенда", "Создал 500 картинок"),
-        ("talker_50", "💬", "Болтун", "50 текстовых запросов"),
-        ("referrer_3", "🤝", "Друг", "Пригласил 3 друзей"),
-        ("referrer_10", "🌟", "Амбассадор", "Пригласил 10 друзей"),
-        ("rich_1000", "💰", "Богач", "1000 токенов на балансе"),
-    ]
-
+    return [("first_step", "👣", "Первый шаг", "Зашёл в бота"), ("week_active", "📅", "Неделя с нами", "Активен 7 дней"), ("month_active", "🗓", "Месяц с нами", "Активен 30 дней"), ("artist_10", "🎨", "Художник", "Создал 10 картинок"), ("artist_100", "🖼", "Мастер", "Создал 100 картинок"), ("artist_500", "👑", "Легенда", "Создал 500 картинок"), ("talker_50", "💬", "Болтун", "50 текстовых запросов"), ("referrer_3", "🤝", "Друг", "Пригласил 3 друзей"), ("referrer_10", "🌟", "Амбассадор", "Пригласил 10 друзей"), ("rich_1000", "💰", "Богач", "1000 токенов на балансе")]
 
 @db_operation
 def increment_counter(conn, cursor, user_id, field):
-    if field not in ("images_total", "texts_total"):
-        return
-    cursor.execute(f"""
-        INSERT INTO user_counters (user_id, {field}) VALUES (?, 1)
-        ON CONFLICT(user_id) DO UPDATE SET {field} = {field} + 1
-    """, (user_id,))
-
+    if field not in ("images_total", "texts_total"): return
+    cursor.execute(f"INSERT INTO user_counters (user_id, {field}) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET {field} = {field} + 1", (user_id,))
 
 @db_operation
 def log_model_usage(conn, cursor, user_id, model, cost=0):
-    cursor.execute(
-        "INSERT INTO usage_stats (user_id, model, cost, used_at) VALUES (?, ?, ?, ?)",
-        (user_id, model, cost, datetime.now().isoformat())
-    )
-
+    cursor.execute("INSERT INTO usage_stats (user_id, model, cost, used_at) VALUES (?, ?, ?, ?)", (user_id, model, cost, datetime.now().isoformat()))
 
 @db_operation
 def get_model_usage(conn, cursor, days=30, limit=20):
     since = (datetime.now() - timedelta(days=days)).isoformat()
-    cursor.execute("""
-        SELECT model, COUNT(*) as cnt, SUM(cost) as total_cost
-        FROM usage_stats
-        WHERE used_at >= ?
-        GROUP BY model
-        ORDER BY cnt DESC
-        LIMIT ?
-    """, (since, limit))
+    cursor.execute("SELECT model, COUNT(*) as cnt, SUM(cost) as total_cost FROM usage_stats WHERE used_at >= ? GROUP BY model ORDER BY cnt DESC LIMIT ?", (since, limit))
     return [dict(r) for r in cursor.fetchall()]
-
 
 @db_operation
 def get_model_usage_total(conn, cursor, days=30):
@@ -1504,69 +1068,45 @@ def get_model_usage_total(conn, cursor, days=30):
     cursor.execute("SELECT COUNT(*) FROM usage_stats WHERE used_at >= ?", (since,))
     return cursor.fetchone()[0] or 0
 
-
 def restore_bonus_from_folders():
     base = 'data/users'
-    if not os.path.exists(base):
-        return 0
-
+    if not os.path.exists(base): return 0
     restored = 0
     with db_connection() as conn:
         cursor = conn.cursor()
-
         for folder in os.listdir(base):
             folder_path = os.path.join(base, folder)
-            if not os.path.isdir(folder_path):
-                continue
-
+            if not os.path.isdir(folder_path): continue
             id_file = os.path.join(folder_path, "_id.txt")
-            bonus_file = os.path.join(folder_path, "bonus.json")
-            ach_file = os.path.join(folder_path, "achievements.json")
-
-            if not os.path.exists(id_file):
-                continue
-
+            if not os.path.exists(id_file): continue
             try:
                 with open(id_file, "r", encoding="utf-8") as f:
                     user_id = int(f.read().strip())
-            except Exception:
-                continue
-
+            except Exception: continue
+            
+            bonus_file = os.path.join(folder_path, "bonus.json")
             if os.path.exists(bonus_file):
                 try:
                     with open(bonus_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     streak = data.get("streak", 0)
                     last_date = data.get("last_claim_date")
-
-                    cursor.execute("SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?",
-                                   (user_id, last_date))
+                    cursor.execute("SELECT 1 FROM daily_bonus_claims WHERE user_id = ? AND claim_date = ?", (user_id, last_date))
                     if not cursor.fetchone() and last_date:
-                        cursor.execute(
-                            "INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)",
-                            (user_id, last_date, streak, 0)
-                        )
+                        cursor.execute("INSERT INTO daily_bonus_claims (user_id, claim_date, streak, amount) VALUES (?, ?, ?, ?)", (user_id, last_date, streak, 0))
                         restored += 1
-                        print(f"✅ Восстановлен streak {user_id}: {streak}")
-                except Exception as e:
-                    print(f"⚠️ Streak {user_id}: {e}")
-
+                except Exception: pass
+                
+            ach_file = os.path.join(folder_path, "achievements.json")
             if os.path.exists(ach_file):
                 try:
                     with open(ach_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     achievements = data.get("achievements", {})
-
                     for code, unlocked_at in achievements.items():
-                        cursor.execute("SELECT 1 FROM achievements WHERE user_id = ? AND code = ?",
-                                       (user_id, code))
+                        cursor.execute("SELECT 1 FROM achievements WHERE user_id = ? AND code = ?", (user_id, code))
                         if not cursor.fetchone():
-                            cursor.execute(
-                                "INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)",
-                                (user_id, code, unlocked_at)
-                            )
+                            cursor.execute("INSERT INTO achievements (user_id, code, unlocked_at) VALUES (?, ?, ?)", (user_id, code, unlocked_at))
                             restored += 1
-                except Exception as e:
-                    print(f"⚠️ Achievements {user_id}: {e}")
-
+                except Exception: pass
     return restored

@@ -111,6 +111,7 @@ async def handle_text(message: types.Message):
         "waiting_user_search", "waiting_admin_reply", "waiting_admin_reply_to_user",
         "waiting_warn_add", "waiting_warn_remove", "waiting_start_dialog_user", 
         "waiting_model_price_edit", "waiting_price_edit", "waiting_price_add",
+        "waiting_backup_time",
     ]:
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
@@ -129,13 +130,13 @@ async def handle_text(message: types.Message):
             await handle_model_price_edit(message)
             return
             
-        # --- Ответ в тикете (из списка тикетов) ---
+        # --- Ответ в тикете ---
         elif state_name == "waiting_admin_reply":
             from .admin.support import handle_admin_reply
             await handle_admin_reply(message)
             return
             
-        # --- Написать сообщение юзеру напрямую (из карточки) ---
+        # --- Написать сообщение юзеру напрямую ---
         elif state_name == "waiting_admin_reply_to_user":
             target_id = state.get("target_user_id")
             if not target_id:
@@ -150,6 +151,12 @@ async def handle_text(message: types.Message):
             except Exception as e:
                 await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
+            return
+            
+        # --- Время ежедневного бэкапа ---
+        elif state_name == "waiting_backup_time":
+            from .admin.backup_settings import handle_backup_time
+            await handle_backup_time(message)
             return
             
         # --- Тарифы ---
