@@ -70,19 +70,38 @@ async def buy_tokens_screen(callback=None, message=None):
     prem = is_premium(user_id)
     tariffs = get_tariffs("tokens")
     kb_rows = []
+    
     for t in tariffs:
-        kb_rows.append([InlineKeyboardButton(
-            text=f"{t['name']} — {t['price_rub']}₽ ({t['stars']} ⭐)",
-            callback_data=f"buy_tariff_{t['id']}"
-        )])
+        # Берем ссылку из базы данных
+        link = t.get('tribute_link')
+        
+        if link:
+            # Если ссылка есть — ведем на Tribute
+            kb_rows.append([InlineKeyboardButton(
+                text=f"{t['name']} — {t['price_rub']}₽",
+                url=link
+            )])
+        else:
+            # Если ссылки нет — показываем кнопку Stars (как раньше)
+            kb_rows.append([InlineKeyboardButton(
+                text=f"{t['name']} — {t['price_rub']}₽ ({t['stars']} ⭐)",
+                callback_data=f"buy_tariff_{t['id']}"
+            )])
+            
     kb_rows.append([InlineKeyboardButton(text="💎 Подписки", callback_data="subscription")])
     kb_rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    text = "🛒 Купить токены\n\n"
+    
+    text = "🛒 Купить токены
+
+"
     if prem:
-        text += "💎 У тебя Premium!\n"
+        text += "💎 У тебя Premium!
+"
     for t in tariffs:
-        text += f"• {t['name']} — {t['price_rub']}₽ = {t['tokens']} токенов ({t['stars']} ⭐)\n"
+        text += f"• {t['name']} — {t['price_rub']}₽ = {t['tokens']} токенов
+"
+        
     if callback:
         try:
             await callback.message.edit_text(text, reply_markup=kb)
@@ -91,13 +110,6 @@ async def buy_tokens_screen(callback=None, message=None):
         await helpers.safe_answer(callback)
     else:
         await message.answer(text, reply_markup=kb)
-
-
-@router.callback_query(F.data == "buy_tokens")
-async def buy_tokens_cb(callback: types.CallbackQuery):
-    force_create_user(callback.from_user.id, callback.from_user.username or "")
-    await buy_tokens_screen(callback=callback)
-
 
 @router.message(Command("credits"))
 async def credits_cmd(message: types.Message):
