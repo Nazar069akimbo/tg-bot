@@ -42,15 +42,67 @@ async def a_price_edit_cb(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id): return
     tid = int(callback.data.split("|")[1])
     t = get_tariff(tid)
-    text = f"✏️ <b>{t['name']}</b>\n💰 {t['price_rub']}₽\n⭐ {t['stars']}\n🪙 {t['tokens']}\n👁 {'Вкл' if t.get('active', 1) else 'Выкл'}"
+    
+    link = t.get('tribute_link') or "Не задана"
+    
+    text = (
+        f"✏️ <b>{t['name']}</b>\n\n"
+        f"💰 {t['price_rub']}₽\n"
+        f"⭐ {t['stars']}\n"
+        f"🪙 {t['tokens']} токенов\n"
+        f"🔗 Tribute: <code>{link}</code>\n"
+        f"👁 {'Вкл' if t.get('active', 1) else 'Выкл'}"
+    )
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"a_price_do_edit|{tid}")],
+        [InlineKeyboardButton(text="✏️ Изменить цену", callback_data=f"a_price_do_edit|{tid}")],
+        [InlineKeyboardButton(text="🔗 Ссылка Tribute", callback_data=f"a_price_tribute|{tid}")],
         [InlineKeyboardButton(text="🔄 Вкл/Выкл", callback_data=f"a_price_toggle|{tid}")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"a_price_delete|{tid}")],
         [back_btn(f"a_prices|{t['kind']}")]
     ])
     await safe_edit(callback, text, kb)
     await helpers.safe_answer(callback)
+
+# === НОВЫЕ ОБРАБОТЧИКИ ДЛЯ TRIBUTE ===
+
+@router.callback_query(F.data.startswith("a_price_tribute|"))
+async def a_price_tribute_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id): return
+    tid = int(callback.data.split("|")[1])
+    t = get_tariff(tid)
+    helpers.user_pages[callback.from_user.id] = {"state": "waiting_tribute_link", "tariff_id": tid}
+    
+    current = t.get('tribute_link') or "Не задана"
+    text = (
+        f"🔗 <b>Ссылка Tribute для {t['name']}</b>\n\n"
+        f"Текущая: <code>{current}</code>\n\n"
+        f"Введи новую ссылку (или <code>удалить</code>, чтобы очистить):"
+    )
+    await safe_edit(callback, text, InlineKeyboardMarkup(inline_keyboard=[[back_btn(f"a_price_edit|{tid}", "🔙 Отмена")]]))
+    await helpers.safe_answer(callback)
+
+async def handle_tribute_link(message: types.Message):
+    user_id = message.from_user.id
+    state = helpers.user_pages.get(user_id, {})
+    tid = state.get("tariff_id")
+    text = message.text.strip()
+    
+    if text == "/cancel":
+        helpers.user_pages.pop(user_id, None)
+        from .menu import admin_kb
+        await message.answer("✅ Отменено", reply_markup=admin_kb())
+        return
+    
+    if text.lower() in ("удалить", "clear", "-"):
+        text = ""
+    
+    update_tariff(tid, tribute_link=text)
+    helpers.user_pages.pop(user_id, None)
+    from .menu import admin_kb
+    await message.answer(f"✅ Ссылка обновлена: <code>{text or 'Очищена'}</code>", reply_markup=admin_kb())
+
+# === СТАРЫЕ ОБРАБОТЧИКИ ===
 
 @router.callback_query(F.data.startswith("a_price_do_edit|"))
 async def a_price_do_edit_cb(callback: types.CallbackQuery):

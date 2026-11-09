@@ -112,6 +112,7 @@ async def handle_text(message: types.Message):
         "waiting_warn_add", "waiting_warn_remove", "waiting_start_dialog_user", 
         "waiting_model_price_edit", "waiting_price_edit", "waiting_price_add",
         "waiting_backup_time",
+        "waiting_tribute_link",
     ]:
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
@@ -157,6 +158,11 @@ async def handle_text(message: types.Message):
         elif state_name == "waiting_backup_time":
             from .admin.backup_settings import handle_backup_time
             await handle_backup_time(message)
+            return
+            
+        elif state_name == "waiting_tribute_link":
+            from .admin.prices import handle_tribute_link
+            await handle_tribute_link(message)
             return
             
         # --- Тарифы ---
