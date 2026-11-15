@@ -158,17 +158,38 @@ async def reminder_worker():
 async def subscription_worker():
     while True:
         try:
-            subs = get_expiring_subscriptions()
-            for row in subs:
-                user_id = row['user_id']
-                if was_subscription_notified_today(user_id): continue
-                try:
+            now = datetime.now()
+            in_3_days = (now + timedelta(days=3)).isoformat()
+            
+            with db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT user_id, plan, premium_until FROM users
+                    WHERE plan IN ('premium', 'premium_plus')
+                    AND premium_until > ? AND premium_until <= ?
+                """, (now.isoformat(), in_3_days))
+                
+                for row in cursor.fetchall():
+                    user_id = row['user_id']
                     until = datetime.fromisoformat(row['premium_until'])
-                    days_left = (until - datetime.now()).days
+                    days_left = (until - now).days
                     plan_name = "Premium+" if row['plan'] == "premium_plus" else "Premium"
-                    await bot.send_message(user_id, f"⚠️ Твоя подписка <b>{plan_name}</b> заканчивается через <b>{days_left}</b> дн.\n\nПродлить: /credits")
-                    mark_subscription_notified(user_id)
-                except: pass
+                    
+                    text = (
+                        f"⚠️ <b>Подписка {plan_name} заканчивается!</b>
+
+"
+                        f"Осталось дней: <b>{days_left}</b>
+"
+                        f"Не забудь продлить, чтобы сохранить скидку и отсутствие водяных знаков!
+
+"
+                        f"Продлить: /credits"
+                    )
+                    try:
+                        await bot.send_message(user_id, text)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не отправил {user_id}: {e}")
         except Exception as e:
             logger.error(f"❌ Ошибка воркера подписок: {e}")
         await asyncio.sleep(86400)

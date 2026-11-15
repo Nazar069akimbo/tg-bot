@@ -177,9 +177,12 @@ async def generate_image(message: types.Message, prompt=None, user_id: int = Non
         except Exception as e:
             logger.warning(f"⚠️ counter images: {e}")
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]
-        ])
+        keyboard_rows = []
+        if not has_no_watermark(user_id):
+            keyboard_rows.append([InlineKeyboardButton(text="✨ Убрать водяной знак (10 токенов)", callback_data="buy_no_watermark")])
+            keyboard_rows.append([InlineKeyboardButton(text="💎 Купить Premium (без знака навсегда)", callback_data="subscription")])
+        keyboard_rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
         # Экранируем prompt для caption
         safe_prompt = prompt[:50].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -222,3 +225,19 @@ async def back_main_cb(callback: types.CallbackQuery):
     except Exception:
         await callback.message.answer(text, reply_markup=helpers.main_menu())
     await helpers.safe_answer(callback)
+
+
+@router.callback_query(F.data == "buy_no_watermark")
+async def buy_no_watermark_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if has_no_watermark(user_id):
+        await helpers.safe_answer(callback, "✅ У тебя уже нет водяного знака!", show_alert=True)
+        return
+        
+    if get_tokens(user_id) < 10:
+        await helpers.safe_answer(callback, "❌ Не хватает токенов (нужно 10).", show_alert=True)
+        return
+        
+    spend_tokens(user_id, 10)
+    buy_no_watermark(user_id)
+    await helpers.safe_answer(callback, "✅ Водяной знак убран! Следующие картинки будут без него.", show_alert=True)

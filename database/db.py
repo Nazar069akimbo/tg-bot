@@ -1143,3 +1143,18 @@ def add_tribute_transaction(conn, cursor, tx_id, user_id, product_name, tokens_a
         (tx_id, user_id, product_name, tokens_added, datetime.now().isoformat())
     )
     _schedule_db_backup()
+
+
+@db_operation
+def has_no_watermark(conn, cursor, user_id):
+    cursor.execute("SELECT no_watermark, plan FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row: return False
+    if row[0] == 1 or row[1] in ('premium', 'premium_plus'):
+        return True
+    return False
+
+@db_operation
+def buy_no_watermark(conn, cursor, user_id):
+    cursor.execute("UPDATE users SET no_watermark = 1 WHERE user_id = ?", (user_id,))
+    _schedule_db_backup()
