@@ -71,13 +71,9 @@ async def buy_tokens_screen(callback=None, message=None):
     tariffs = get_tariffs("tokens")
     kb_rows = []
     
-    text = "🛒 Купить токены
-
-"
+    text = "🛒 Купить токены\n\n"
     if prem:
-        text += "💎 <b>У тебя Premium! Скидка 20% на все пакеты!</b>
-
-"
+        text += "💎 <b>У тебя Premium! Скидка 20% на все пакеты!</b>\n\n"
     
     for t in tariffs:
         link = t.get('tribute_link')
@@ -97,8 +93,7 @@ async def buy_tokens_screen(callback=None, message=None):
                 callback_data=f"buy_tariff_{t['id']}"
             )])
             
-        text += f"• {t['name']} — {price}₽ = {t['tokens']} токенов
-"
+        text += f"• {t['name']} — {price}₽ = {t['tokens']} токенов\n"
         
     kb_rows.append([InlineKeyboardButton(text="💎 Подписки", callback_data="subscription")])
     kb_rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")])
@@ -112,6 +107,13 @@ async def buy_tokens_screen(callback=None, message=None):
         await helpers.safe_answer(callback)
     else:
         await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "buy_tokens")
+async def buy_tokens_cb(callback: types.CallbackQuery):
+    force_create_user(callback.from_user.id, callback.from_user.username or "")
+    await buy_tokens_screen(callback=callback)
+
 
 @router.message(Command("credits"))
 async def credits_cmd(message: types.Message):
