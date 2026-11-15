@@ -31,16 +31,15 @@ async def show_profile(message: types.Message, user_id: int = None):
     premium_line = ""
     if plan in ("premium", "premium_plus"):
         emoji = "💎" if plan == "premium" else "👑"
-        premium_line = f"
-{emoji} <b>Подписка {plan_name}</b>"
+        premium_line = f"\n{emoji} <b>Подписка {plan_name}</b>"
         if premium_until:
             try:
                 until_dt = datetime.fromisoformat(premium_until)
                 days_left = (until_dt - datetime.now()).days
                 premium_line += f" (осталось {days_left} дн.)"
-            except: pass
-        premium_line += "
-✨ <i>Приоритетная поддержка, без водяных знаков и скидка 20%!</i>"
+            except Exception:
+                pass
+        premium_line += "\n✨ <i>Приоритетная поддержка, без водяных знаков и скидка 20%!</i>"
 
     text = (
         f"👤 <b>Профиль</b>\n\n"
