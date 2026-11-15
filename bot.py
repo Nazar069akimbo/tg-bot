@@ -1,6 +1,6 @@
 import os, sys, asyncio, logging, threading, time
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -10,7 +10,8 @@ from flask import Flask
 from database.db import (init_db, migrate_db, is_admin, add_admin, db_connection,
                           get_expiring_subscriptions, mark_subscription_notified,
                           was_subscription_notified_today, restore_from_user_folders,
-                          get_setting)
+                          get_setting, check_tribute_transaction, add_tribute_transaction,
+                          add_tokens)
 from handlers import routers
 from handlers.logging_hub import setup_logging
 from backup import GitHubBackup
@@ -56,7 +57,6 @@ def tribute_webhook():
     import hashlib
     from flask import request, jsonify
     
-    # 1. Проверка подписи
     signature = request.headers.get('trbt-signature')
     api_key = os.getenv('TRIBUTE_API_KEY')
     
@@ -69,11 +69,8 @@ def tribute_webhook():
         logger.warning("⚠️ Неверная подпись Tribute")
         return jsonify({"error": "Invalid signature"}), 401
     
-    # 2. Парсим данные
     data = request.json
-    event_name = data.get('name')
-    
-    if event_name != 'new_digital_product':
+    if data.get('name') != 'new_digital_product':
         return jsonify({"status": "ignored"}), 200
     
     payload = data.get('payload', {})
@@ -82,55 +79,38 @@ def tribute_webhook():
     product_name = payload.get('product_name', '')
     
     if not user_id or not tx_id:
-        logger.warning(f"⚠️ Вебхук без user_id или tx_id: {data}")
         return jsonify({"status": "no user or tx"}), 200
     
-    # 3. Проверка на дубль
     if check_tribute_transaction(tx_id):
-        logger.info(f"⏭ Транзакция {tx_id} уже была обработана")
         return jsonify({"status": "already processed"}), 200
         
-    # 4. Определяем токены
     tokens_to_add = 0
-    if "Старт" in product_name or "900" in product_name:
-        tokens_to_add = 900
-    elif "Базовый" in product_name or "1800" in product_name:
-        tokens_to_add = 1800
-    elif "Выгодный" in product_name or "2700" in product_name:
-        tokens_to_add = 2700
-    elif "Профи" in product_name or "3600" in product_name:
-        tokens_to_add = 3600
-    elif "Максимум" in product_name or "4500" in product_name:
-        tokens_to_add = 4500
-    else:
-        logger.warning(f"⚠️ Неизвестный товар: {product_name}")
-        return jsonify({"status": "unknown product"}), 200
+    if "Старт" in product_name or "900" in product_name: tokens_to_add = 900
+    elif "Базовый" in product_name or "1800" in product_name: tokens_to_add = 1800
+    elif "Выгодный" in product_name or "2700" in product_name: tokens_to_add = 2700
+    elif "Профи" in product_name or "3600" in product_name: tokens_to_add = 3600
+    elif "Максимум" in product_name or "4500" in product_name: tokens_to_add = 4500
+    else: return jsonify({"status": "unknown product"}), 200
     
-    # 5. Начисляем и уведомляем
     try:
         add_tokens(user_id, tokens_to_add)
         add_tribute_transaction(tx_id, user_id, product_name, tokens_to_add)
         logger.info(f"✅ Tribute: {user_id} оплатил {product_name}, начислено {tokens_to_add} токенов")
         
-        # Отправляем уведомление
         import asyncio
         async def send_notify():
             try:
                 await bot.send_message(
                     user_id, 
-                    f"🎉 <b>Оплата прошла успешно!</b>\n\n"
-                    f"Вы купили: {product_name}\n"
-                    f"Начислено: <b>+{tokens_to_add} токенов</b>\n\n"
-                    f"Проверьте баланс: /balance"
+                    f"🎉 <b>Оплата прошла успешно!</b>\n\nВы купили: {product_name}\nНачислено: <b>+{tokens_to_add} токенов</b>\n\nПроверьте баланс: /balance"
                 )
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось отправить уведомление юзеру {user_id}: {e}")
+                logger.warning(f"⚠️ Не удалось отправить уведомление {user_id}: {e}")
         
         loop = asyncio.get_event_loop()
         loop.create_task(send_notify())
-        
     except Exception as e:
-        logger.error(f"❌ Ошибка начисления токенов для {user_id}: {e}")
+        logger.error(f"❌ Ошибка начисления: {e}")
         return jsonify({"error": "DB error"}), 500
     
     return jsonify({"status": "ok"}), 200
@@ -163,11 +143,7 @@ async def subscription_worker():
             
             with db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT user_id, plan, premium_until FROM users
-                    WHERE plan IN ('premium', 'premium_plus')
-                    AND premium_until > ? AND premium_until <= ?
-                """, (now.isoformat(), in_3_days))
+                cursor.execute("SELECT user_id, plan, premium_until FROM users WHERE plan IN ('premium', 'premium_plus') AND premium_until > ? AND premium_until <= ?", (now.isoformat(), in_3_days))
                 
                 for row in cursor.fetchall():
                     user_id = row['user_id']
@@ -175,17 +151,7 @@ async def subscription_worker():
                     days_left = (until - now).days
                     plan_name = "Premium+" if row['plan'] == "premium_plus" else "Premium"
                     
-                    text = (
-                        f"⚠️ <b>Подписка {plan_name} заканчивается!</b>
-
-"
-                        f"Осталось дней: <b>{days_left}</b>
-"
-                        f"Не забудь продлить, чтобы сохранить скидку и отсутствие водяных знаков!
-
-"
-                        f"Продлить: /credits"
-                    )
+                    text = f"⚠️ <b>Подписка {plan_name} заканчивается!</b>\n\nОсталось дней: <b>{days_left}</b>\nНе забудь продлить, чтобы сохранить скидку и отсутствие водяных знаков!\n\nПродлить: /credits"
                     try:
                         await bot.send_message(user_id, text)
                     except Exception as e:
@@ -210,12 +176,12 @@ def smart_backup_worker():
             daily_time_str = get_setting("backup_time") or "05:00"
             
             if db_freq > 0 and (current_time - last_db_time) >= (db_freq * 60):
-                logger.info(f"⏳ Авто-бэкап БД (интервал: {db_freq} мин)")
+                logger.info(f"⏳ Авто-бэкап БД")
                 GitHubBackup().backup_db(reason='по расписанию')
                 last_db_time = current_time
                 
             if users_freq > 0 and (current_time - last_users_time) >= (users_freq * 60):
-                logger.info(f"⏳ Авто-бэкап юзеров (интервал: {users_freq} мин)")
+                logger.info(f"⏳ Авто-бэкап юзеров")
                 GitHubBackup().backup_users(reason='по расписанию')
                 last_users_time = current_time
                 
@@ -225,8 +191,7 @@ def smart_backup_worker():
                     logger.info(f"⏳ Ежедневный бэкап ({daily_time_str})")
                     GitHubBackup().backup_all(reason='ежедневный')
                     last_daily_date = now.date()
-            except ValueError:
-                pass
+            except ValueError: pass
                 
             time.sleep(30)
         except Exception as e:
@@ -238,25 +203,20 @@ async def main():
     threading.Thread(target=run_flask, daemon=True).start()
 
     if not os.path.exists('data/repsolver.db'):
-        try:
-            GitHubBackup().restore_latest_backup()
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось восстановить БД: {e}")
+        try: GitHubBackup().restore_latest_backup()
+        except Exception as e: logger.warning(f"⚠️ Не удалось восстановить БД: {e}")
 
     init_db()
     migrate_db()
     logger.info("✅ База данных готова")
 
     if not os.path.exists('data/users') or len(os.listdir('data/users')) == 0:
-        try:
-            GitHubBackup().restore_users(skip_images=True)
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось восстановить папки: {e}")
+        try: GitHubBackup().restore_users(skip_images=True)
+        except Exception as e: logger.warning(f"⚠️ Не удалось восстановить папки: {e}")
     else:
         logger.info("⏭ Папки юзеров уже на месте")
 
-    try:
-        restore_from_user_folders()
+    try: restore_from_user_folders()
     except Exception: pass
 
     threading.Thread(target=smart_backup_worker, daemon=True).start()
