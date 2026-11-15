@@ -362,6 +362,17 @@ def init_db():
         ''')
 
         cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tribute_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tx_id TEXT UNIQUE,
+            user_id INTEGER,
+            product_name TEXT,
+            tokens_added INTEGER,
+            created_at TEXT
+        )
+        ''')
+
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS warnings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -1117,3 +1128,18 @@ def restore_bonus_from_folders():
                             restored += 1
                 except Exception: pass
     return restored
+
+
+# === ФУНКЦИИ ДЛЯ TRIBUTE WEBHOOK ===
+@db_operation
+def check_tribute_transaction(conn, cursor, tx_id):
+    cursor.execute("SELECT id FROM tribute_transactions WHERE tx_id = ?", (tx_id,))
+    return cursor.fetchone() is not None
+
+@db_operation
+def add_tribute_transaction(conn, cursor, tx_id, user_id, product_name, tokens_added):
+    cursor.execute(
+        "INSERT INTO tribute_transactions (tx_id, user_id, product_name, tokens_added, created_at) VALUES (?, ?, ?, ?, ?)",
+        (tx_id, user_id, product_name, tokens_added, datetime.now().isoformat())
+    )
+    _schedule_db_backup()
