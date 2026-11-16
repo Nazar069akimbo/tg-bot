@@ -51,7 +51,7 @@ class GitHubBackup:
             ok = self._upload_file(self.repo_db, file_path, content, f'БД ({reason})')
             os.remove(backup_name)
             if ok:
-                self._cleanup_old(self.repo_db, 'db', keep=5) # Храним только 5 файлов!
+                self._cleanup_old(self.repo_db, 'db', keep=5)
             return ok
         except Exception as e:
             logger.error(f"❌ Ошибка бэкапа БД: {e}")
@@ -192,8 +192,31 @@ _users_backup_lock = threading.Lock()
 _users_backup_running = threading.Lock()
 
 def schedule_users_backup(delay=60):
-    """Отключено для экономии трафика. Бэкап только в 05:00 через bot.py."""
     pass
 
 def _do_users_backup():
     pass
+
+# === УМНЫЙ БЭКАП (DEBOUNCE) ===
+_smart_backup_timer = None
+_smart_backup_lock = threading.Lock()
+
+def trigger_smart_backup():
+    global _smart_backup_timer
+    with _smart_backup_lock:
+        if _smart_backup_timer is not None:
+            _smart_backup_timer.cancel()
+        _smart_backup_timer = threading.Timer(300, _do_smart_backup)
+        _smart_backup_timer.daemon = True
+        _smart_backup_timer.start()
+
+def _do_smart_backup():
+    global _smart_backup_timer
+    try:
+        logger.info("⏳ Умный бэкап: сохранение изменений...")
+        GitHubBackup().backup_all(reason='умный (после действий)')
+    except Exception as e:
+        logger.warning(f"⚠️ Умный бэкап: {e}")
+    finally:
+        with _smart_backup_lock:
+            _smart_backup_timer = None

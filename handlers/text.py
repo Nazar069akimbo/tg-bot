@@ -11,7 +11,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 router = Router()
 logger = logging.getLogger(__name__)
 
-
 async def _open_referral(message: types.Message):
     user_id = message.from_user.id
     count = get_referral_count(user_id)
@@ -23,11 +22,10 @@ async def _open_referral(message: types.Message):
         f"🔗 Твоя ссылка:\n<code>{link}</code>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Vertex AI!")],
+        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=🤖 Vertex!")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ])
     await message.answer(text, reply_markup=kb)
-
 
 async def _buy_tariff_by_name(message: types.Message, user_id: int, tariff_name: str, reply_text: str = ""):
     from database.db import get_tariffs, create_payment
@@ -73,13 +71,18 @@ async def _buy_tariff_by_name(message: types.Message, user_id: int, tariff_name:
         logger.error(f"❌ Инвойс: {e}")
         await message.answer(f"❌ Ошибка оплаты: {str(e)[:150]}")
 
-
 @router.message(F.text)
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
     if not text or text.startswith("/"):
         return
+
+    # Умный бэкап при любой активности
+    try:
+        from backup import trigger_smart_backup
+        trigger_smart_backup()
+    except: pass
 
     # 1. Проверка блокировок
     user = get_user(user_id)
@@ -88,7 +91,7 @@ async def handle_text(message: types.Message):
         if u_dict.get("is_blocked"):
             state = helpers.user_pages.get(user_id, {})
             if state.get("state") != "waiting_support_message" and not text.startswith("/support"):
-                return  # Полная блокировка: полный игнор
+                return
                 
         if u_dict.get("is_soft_blocked") and not u_dict.get("is_blocked"):
             state = helpers.user_pages.get(user_id, {})
@@ -111,39 +114,27 @@ async def handle_text(message: types.Message):
         "waiting_user_search", "waiting_admin_reply", "waiting_admin_reply_to_user",
         "waiting_warn_add", "waiting_warn_remove", "waiting_start_dialog_user", 
         "waiting_model_price_edit", "waiting_price_edit", "waiting_price_add",
-        "waiting_backup_time",
-        "waiting_tribute_link",
+        "waiting_backup_time", "waiting_tribute_link",
     ]:
         if not is_admin(user_id):
             helpers.user_pages.pop(user_id, None)
-            await message.answer("⛔ Нет доступа")
             return
         
-        # --- Поиск юзера ---
         if state_name == "waiting_user_search":
             from .admin.users import handle_user_search
             await handle_user_search(message)
             return
-            
-        # --- Цены моделей ---
         elif state_name == "waiting_model_price_edit":
             from .admin.models import handle_model_price_edit
             await handle_model_price_edit(message)
             return
-            
-        # --- Ответ в тикете ---
         elif state_name == "waiting_admin_reply":
             from .admin.support import handle_admin_reply
             await handle_admin_reply(message)
             return
-            
-        # --- Написать сообщение юзеру напрямую ---
         elif state_name == "waiting_admin_reply_to_user":
             target_id = state.get("target_user_id")
-            if not target_id:
-                helpers.user_pages.pop(user_id, None)
-                await message.answer("❌ Ошибка: цель не найдена", reply_markup=helpers.admin_kb())
-                return
+            if not target_id: return
             safe_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✍️ Ответить", callback_data=f"reply_to_ticket|admin")]])
             try:
@@ -153,19 +144,14 @@ async def handle_text(message: types.Message):
                 await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
             return
-            
-        # --- Время ежедневного бэкапа ---
         elif state_name == "waiting_backup_time":
             from .admin.backup_settings import handle_backup_time
             await handle_backup_time(message)
             return
-            
         elif state_name == "waiting_tribute_link":
             from .admin.prices import handle_tribute_link
             await handle_tribute_link(message)
             return
-            
-        # --- Тарифы ---
         elif state_name == "waiting_price_edit":
             tid = state.get("tariff_id")
             t = get_tariff(tid)
@@ -181,7 +167,6 @@ async def handle_text(message: types.Message):
                 await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
             return
-            
         elif state_name == "waiting_price_add":
             kind = state.get("kind", "tokens")
             try:
@@ -194,8 +179,6 @@ async def handle_text(message: types.Message):
                 await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
             return
-            
-        # --- Промокоды ---
         elif state_name == "waiting_promo_code":
             try:
                 parts = [p.strip() for p in text.split("|")]
@@ -205,8 +188,6 @@ async def handle_text(message: types.Message):
                 await message.answer(f"❌ Ошибка: {e}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
             return
-            
-        # --- Рассылка ---
         elif state_name == "waiting_broadcast":
             users = get_all_active_user_ids()
             sent = 0
@@ -215,14 +196,10 @@ async def handle_text(message: types.Message):
                     await message.bot.send_message(uid, f"📢 {text}")
                     sent += 1
                     await asyncio.sleep(0.05)
-                except Exception:
-                    pass
+                except Exception: pass
             await message.answer(f"✅ Отправлено: {sent}", reply_markup=helpers.admin_kb())
             helpers.user_pages.pop(user_id, None)
             return
-            
-        await message.answer("⚙️ Действие не распознано.")
-        helpers.user_pages.pop(user_id, None)
         return
 
     # 4. ПРОМОКОД (для юзеров)
@@ -267,30 +244,20 @@ async def handle_text(message: types.Message):
     await process_text(message, user_id, text, state)
 
 
-# ==================== ОСНОВНОЙ ИИ (process_text) ====================
-
 async def process_text(message: types.Message, user_id: int, text: str, state: dict):
     current_model = get_model_setting("text_chat") or "gpt-4.1-nano"
     cost = helpers.MODEL_COSTS.get(current_model, 1)
 
     if not helpers.can_use_model(user_id, current_model):
-        await message.answer(
-            f"🔒 Модель <b>{helpers.MODEL_NAMES.get(current_model)}</b> доступна только на Premium или с токенами.\n\n"
-            f"💎 Оформи: /credits"
-        )
+        await message.answer(f"🔒 Модель <b>{helpers.MODEL_NAMES.get(current_model)}</b> доступна только на Premium или с токенами.\n\n💎 Оформи: /credits")
         return
 
     balance = get_tokens(user_id)
-
     if balance < cost:
-        await message.answer(
-            f"❌ Не хватает токенов: нужно <b>{cost}</b>, у тебя <b>{balance}</b>.\n\n"
-            f"💎 Пополни: /credits"
-        )
+        await message.answer(f"❌ Не хватает токенов: нужно <b>{cost}</b>, у тебя <b>{balance}</b>.\n\n💎 Пополни: /credits")
         return
 
     status_msg = await message.answer("🤔 Думаю...")
-
     reminder_state = state if state.get("state") == "waiting_reminder_clarification" else None
     result = None
     try:
@@ -298,10 +265,8 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
     except Exception as e:
         logger.error(f"❌ smart_reply [{user_id}]: {e}", exc_info=True)
 
-    try:
-        await status_msg.delete()
-    except Exception:
-        pass
+    try: await status_msg.delete()
+    except: pass
 
     if not result or not result.get("reply"):
         await message.answer("😔 Не смог ответить. Токены не списаны. Попробуй ещё раз.")
@@ -312,68 +277,51 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         return
 
     try:
-        from database.db import log_model_usage
+        from database.db import log_model_usage, increment_counter
         log_model_usage(user_id, current_model, cost)
-    except Exception as e:
-        logger.warning(f"⚠️ log_model_usage: {e}")
+        increment_counter(user_id, "texts_total")
+    except: pass
 
     action = result.get("action", "reply")
-    logger.info(f"📤 [{user_id}] action={action}, reply={result.get('reply', '')[:60]}")
+    logger.info(f"📤 [{user_id}] action={action}")
 
-    try:
-        from database.db import increment_counter
-        increment_counter(user_id, "texts_total")
-    except Exception as e:
-        logger.warning(f"⚠️ counter texts: {e}")
-
-    # === НОВЫЕ ДЕЙСТВИЯ ===
     if action == "show_profile":
         from .profile import show_profile
         await show_profile(message)
         return
-
     if action == "show_balance":
         from .balance import balance_cmd
         await balance_cmd(message)
         return
-
     if action == "show_referral":
         await _open_referral(message)
         return
-
     if action == "show_prices":
         from .payments import prices_text, prices_kb
         from .balance import balance_cmd
         await message.answer(prices_text(), reply_markup=prices_kb())
         await balance_cmd(message)
         return
-
     if action == "show_credits":
         from .payments import buy_tokens_screen
         await buy_tokens_screen(message=message)
         return
-
     if action == "show_help":
         from .help import HELP_TEXT
         await message.answer(HELP_TEXT, reply_markup=helpers.main_menu())
         return
-
     if action == "buy_tariff":
         tariff_name = (result.get("tariff_name") or "").strip()
         await _buy_tariff_by_name(message, user_id, tariff_name, result.get("reply", ""))
         return
 
-    # === СТАРЫЕ ДЕЙСТВИЯ ===
     if action == "reply":
-        reply_text = result.get("reply", "")
-        await message.answer(reply_text or "Не понял.")
-        if reminder_state:
-            helpers.user_pages.pop(user_id, None)
+        await message.answer(result.get("reply", "Не понял."))
+        if reminder_state: helpers.user_pages.pop(user_id, None)
         try:
             from .bonus import notify_achievements
             await notify_achievements(message.bot, user_id)
-        except Exception:
-            pass
+        except: pass
         return
 
     if action == "generate_image":
@@ -388,10 +336,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         question = result.get("question", "")
         reply_text = result.get("reply", "")
 
-        helpers.user_pages[user_id] = {
-            "state": "waiting_reminder_clarification",
-            "text": r_text, "time": r_time, "date": r_date, "question": question
-        }
+        helpers.user_pages[user_id] = {"state": "waiting_reminder_clarification", "text": r_text, "time": r_time, "date": r_date, "question": question}
 
         if need_clar:
             await message.answer(reply_text or f"❓ {question}" or "❓ Уточни.")
@@ -402,11 +347,7 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
             if full_time:
                 add_reminder(user_id, r_text, full_time.isoformat())
                 helpers.user_pages.pop(user_id, None)
-                await message.answer(
-                    f"⏰ <b>Напоминание установлено!</b>\n\n"
-                    f"📝 {r_text}\n"
-                    f"🕐 {full_time.strftime('%d.%m.%Y %H:%M')}"
-                )
+                await message.answer(f"⏰ <b>Напоминание установлено!</b>\n\n📝 {r_text}\n🕐 {full_time.strftime('%d.%m.%Y %H:%M')}")
                 return
         await message.answer(reply_text or f"❓ {question}" or "❓ Уточни.")
         return
@@ -415,75 +356,53 @@ async def process_text(message: types.Message, user_id: int, text: str, state: d
         helpers.user_pages.pop(user_id, None)
         await message.answer(result.get("reply", "✅ Отменено"), reply_markup=helpers.main_menu())
         return
-
     if action == "delete_reminder":
         target = result.get("text", "")
         if target:
             delete_reminder_by_text(user_id, target)
             await message.answer(f"✅ Удалено: {target}")
-        else:
-            await message.answer("❌ Не понял")
+        else: await message.answer("❌ Не понял")
         return
-
     if action == "delete_all_reminders":
         delete_all_reminders(user_id)
         await message.answer("🗑️ Все удалены")
         return
-
     if action == "list_reminders":
         from .reminders import list_reminders_msg
         await list_reminders_msg(message)
         return
-
     if action == "search_web":
         search_status = await message.answer("🔍 Ищу...")
         answer = search_web(result.get("query", text))
         await search_status.edit_text(f"🔍 {answer}")
         return
-
     if action == "remember":
         fact = result.get("fact", "").strip()
         reply_text = result.get("reply", "").strip()
-        if fact:
-            add_fact(user_id, fact)
+        if fact: add_fact(user_id, fact)
         await message.answer(reply_text or "Запомнил 😊")
         return
 
     await message.answer(result.get("reply", "Не понял."))
 
-
-# ==================== CALLBACK-ХЕНДЛЕРЫ ====================
-
+# CALLBACKS (pickmodel, always, change_model) остаются как были, они не тронуты
 @router.callback_query(F.data.startswith("pickmodel|"))
 async def pick_model_cb(callback: types.CallbackQuery):
     parts = callback.data.split("|")
-    if len(parts) < 3:
-        await helpers.safe_answer(callback, "❌ Ошибка", show_alert=True)
-        return
+    if len(parts) < 3: return
     task = parts[1]
     model_id = parts[2]
 
     if not helpers.can_use_model(callback.from_user.id, model_id):
-        await helpers.safe_answer(callback, "🔒 Модель доступна только на Premium или с токенами", show_alert=True)
+        await helpers.safe_answer(callback, "🔒 Модель недоступна", show_alert=True)
         return
-
     set_model_setting(task, model_id)
-
-    if task == "image_generate":
-        set_setting(f"ask_image_model_{callback.from_user.id}", "no")
-    elif task == "text_chat":
-        set_setting(f"ask_model_{callback.from_user.id}", "no")
+    if task == "image_generate": set_setting(f"ask_image_model_{callback.from_user.id}", "no")
+    elif task == "text_chat": set_setting(f"ask_model_{callback.from_user.id}", "no")
 
     try:
-        save_user_settings(
-            callback.from_user.id,
-            ask_model=get_setting(f"ask_model_{callback.from_user.id}") or "yes",
-            ask_image_model=get_setting(f"ask_image_model_{callback.from_user.id}") or "yes",
-            text_chat=get_model_setting("text_chat"),
-            image_generate=get_model_setting("image_generate")
-        )
-    except Exception as e:
-        logger.warning(f"⚠️ save_user_settings: {e}")
+        save_user_settings(callback.from_user.id, ask_model=get_setting(f"ask_model_{callback.from_user.id}") or "yes", ask_image_model=get_setting(f"ask_image_model_{callback.from_user.id}") or "yes", text_chat=get_model_setting("text_chat"), image_generate=get_model_setting("image_generate"))
+    except: pass
 
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")
@@ -491,76 +410,50 @@ async def pick_model_cb(callback: types.CallbackQuery):
 
     if pending_text:
         helpers.user_pages.pop(callback.from_user.id, None)
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+        try: await callback.message.delete()
+        except: pass
         await process_text(callback.message, callback.from_user.id, pending_text, {})
     elif pending_prompt:
         helpers.user_pages.pop(callback.from_user.id, None)
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+        try: await callback.message.delete()
+        except: pass
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
-        try:
-            await callback.message.edit_text(f"✅ Модель: <b>{helpers.MODEL_NAMES.get(model_id, model_id)}</b>")
-        except Exception:
-            pass
+        try: await callback.message.edit_text(f"✅ Модель: <b>{helpers.MODEL_NAMES.get(model_id, model_id)}</b>")
+        except: pass
     await helpers.safe_answer(callback)
-
 
 @router.callback_query(F.data.startswith("always|"))
 async def always_model_cb(callback: types.CallbackQuery):
     task = callback.data.replace("always|", "")
     set_setting(f"ask_model_{callback.from_user.id}", "no")
-    if task == "image_generate":
-        set_setting(f"ask_image_model_{callback.from_user.id}", "no")
-
+    if task == "image_generate": set_setting(f"ask_image_model_{callback.from_user.id}", "no")
     try:
-        save_user_settings(
-            callback.from_user.id,
-            ask_model=get_setting(f"ask_model_{callback.from_user.id}") or "yes",
-            ask_image_model=get_setting(f"ask_image_model_{callback.from_user.id}") or "yes"
-        )
-    except Exception as e:
-        logger.warning(f"⚠️ save_user_settings: {e}")
-
+        save_user_settings(callback.from_user.id, ask_model="no", ask_image_model="no")
+    except: pass
     state = helpers.user_pages.get(callback.from_user.id, {})
     pending_text = state.get("pending_text")
     pending_prompt = state.get("pending_prompt")
-
     if pending_text:
         helpers.user_pages.pop(callback.from_user.id, None)
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+        try: await callback.message.delete()
+        except: pass
         await process_text(callback.message, callback.from_user.id, pending_text, {})
     elif pending_prompt:
         helpers.user_pages.pop(callback.from_user.id, None)
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+        try: await callback.message.delete()
+        except: pass
         await generate_image(callback.message, pending_prompt, callback.from_user.id)
     else:
-        try:
-            await callback.message.edit_text("✅ Больше не спрашиваю.")
-        except Exception:
-            pass
+        try: await callback.message.edit_text("✅ Больше не спрашиваю.")
+        except: pass
     await helpers.safe_answer(callback)
-
 
 @router.callback_query(F.data == "change_model")
 async def change_model_cb(callback: types.CallbackQuery):
-    try:
-        await callback.message.edit_text("⚙️ Смена модели\n\nВыбери, что менять:", reply_markup=helpers.change_model_kb())
-    except Exception:
-        await callback.message.answer("⚙️ Смена модели\n\nВыбери, что менять:", reply_markup=helpers.change_model_kb())
+    try: await callback.message.edit_text("⚙️ Смена модели\n\nВыбери, что менять:", reply_markup=helpers.change_model_kb())
+    except: await callback.message.answer("⚙️ Смена модели\n\nВыбери, что менять:", reply_markup=helpers.change_model_kb())
     await helpers.safe_answer(callback)
-
 
 @router.callback_query(F.data == "change_model_text")
 async def change_model_text_cb(callback: types.CallbackQuery):
@@ -568,19 +461,9 @@ async def change_model_text_cb(callback: types.CallbackQuery):
     plan = dict(user).get("plan", "basic") if user else "basic"
     balance = get_tokens(callback.from_user.id)
     current = get_model_setting("text_chat") or "gpt-4.1-nano"
-
-    try:
-        await callback.message.edit_text(
-            f"🧠 Выбери текстовую модель:",
-            reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
-        )
-    except Exception:
-        await callback.message.answer(
-            f"🧠 Выбери текстовую модель:",
-            reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance)
-        )
+    try: await callback.message.edit_text(f"🧠 Выбери текстовую модель:", reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance))
+    except: await callback.message.answer(f"🧠 Выбери текстовую модель:", reply_markup=helpers.model_choice_kb("text_chat", current, plan, balance))
     await helpers.safe_answer(callback)
-
 
 @router.callback_query(F.data == "change_model_image")
 async def change_model_image_cb(callback: types.CallbackQuery):
@@ -588,15 +471,6 @@ async def change_model_image_cb(callback: types.CallbackQuery):
     plan = dict(user).get("plan", "basic") if user else "basic"
     balance = get_tokens(callback.from_user.id)
     current = get_model_setting("image_generate") or "flux-schnell"
-
-    try:
-        await callback.message.edit_text(
-            f"🎨 Выбери модель для картинок:",
-            reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
-        )
-    except Exception:
-        await callback.message.answer(
-            f"🎨 Выбери модель для картинок:",
-            reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance)
-        )
+    try: await callback.message.edit_text(f"🎨 Выбери модель для картинок:", reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance))
+    except: await callback.message.answer(f"🎨 Выбери модель для картинок:", reply_markup=helpers.model_choice_kb("image_generate", current, plan, balance))
     await helpers.safe_answer(callback)

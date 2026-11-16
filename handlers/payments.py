@@ -14,8 +14,7 @@ PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN', '')
 def is_premium(user_id):
     try:
         user = get_user(user_id)
-        if not user:
-            return False
+        if not user: return False
         user = dict(user)
         plan = user.get("plan") or "basic"
         until = user.get("premium_until")
@@ -29,7 +28,7 @@ def is_premium(user_id):
 def prices_text():
     tokens_tariffs = get_tariffs("tokens")
     premium_tariffs = get_tariffs("premium")
-    text = "💰 Цены Vertex AI\n\n📦 Пакеты токенов:\n"
+    text = "💰 Цены Vertex\n\n📦 Пакеты токенов:\n"
     for t in tokens_tariffs:
         text += f"• {t['name']} — {t['price_rub']}₽ = {t['tokens']} токенов ({t['stars']} ⭐)\n"
     text += "\n"
@@ -76,22 +75,14 @@ async def buy_tokens_screen(callback=None, message=None):
         text += "💎 <b>У тебя Premium! Скидка 20% на все пакеты!</b>\n\n"
     
     for t in tariffs:
-        link = t.get('tribute_link')
-        
         price = t['price_rub']
         if prem:
             price = int(price * 0.8)
             
-        if link:
-            kb_rows.append([InlineKeyboardButton(
-                text=f"{t['name']} — {price}₽" + (f" (вместо {t['price_rub']}₽)" if prem else ""),
-                callback_data=f"go_tribute|{t['id']}|{price}"
-            )])
-        else:
-            kb_rows.append([InlineKeyboardButton(
-                text=f"{t['name']} — {price}₽ ({t['stars']} ⭐)",
-                callback_data=f"buy_tariff_{t['id']}"
-            )])
+        kb_rows.append([InlineKeyboardButton(
+            text=f"{t['name']} — {price}₽ = {t['tokens']} токенов",
+            callback_data=f"select_pay|{t['id']}|{price}"
+        )])
             
         text += f"• {t['name']} — {price}₽ = {t['tokens']} токенов\n"
         
@@ -109,6 +100,40 @@ async def buy_tokens_screen(callback=None, message=None):
         await message.answer(text, reply_markup=kb)
 
 
+@router.callback_query(F.data.startswith("select_pay|"))
+async def select_pay_cb(callback: types.CallbackQuery):
+    parts = callback.data.split("|")
+    tid = int(parts[1])
+    price = int(parts[2])
+    
+    t = get_tariff(tid)
+    if not t: return
+    
+    has_tribute = bool(t.get('tribute_link'))
+    
+    text = (
+        f"💳 <b>Выберите способ оплаты</b>\n\n"
+        f"Товар: <b>{t['name']}</b>\n"
+        f"Сумма: <b>{price} ₽</b>\n\n"
+        f"⚠️ <b>Важно для карт из Беларуси:</b>\n"
+        f"<i>Если у вас карта БЕЛКАРТ, включите «ИнтернетПароль» в приложении банка. Карты Mastercard и МИР могут отклоняться из-за ограничений. Лучше всего работают Visa и UnionPay.</i>"
+    )
+    
+    kb_rows = []
+    if has_tribute:
+        kb_rows.append([InlineKeyboardButton(text="💳 Оплатить картой (Tribute)", callback_data=f"go_tribute|{tid}|{price}")])
+    kb_rows.append([InlineKeyboardButton(text=f"⭐ Оплатить звёздами ({t['stars']} ⭐)", callback_data=f"buy_tariff_{tid}")])
+    kb_rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="buy_tokens")])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await helpers.safe_answer(callback)
+
+
 @router.callback_query(F.data.startswith("go_tribute|"))
 async def go_tribute_cb(callback: types.CallbackQuery):
     parts = callback.data.split("|")
@@ -117,7 +142,7 @@ async def go_tribute_cb(callback: types.CallbackQuery):
     
     t = get_tariff(tid)
     if not t or not t.get('tribute_link'):
-        await helpers.safe_answer(callback, "❌ Ссылка на оплату не найдена", show_alert=True)
+        await helpers.safe_answer(callback, "❌ Ссылка не найдена", show_alert=True)
         return
         
     link = t['tribute_link']
@@ -126,7 +151,7 @@ async def go_tribute_cb(callback: types.CallbackQuery):
         f"💳 <b>Переход к оплате</b>\n\n"
         f"Вы выбрали: <b>{t['name']}</b>\n"
         f"Сумма: <b>{price} ₽</b>\n\n"
-        f"🛡 <b>Tribute</b> — это официальный сервис для приема платежей в Telegram (от команды Telegram).\n\n"
+        f"🛡 <b>Tribute</b> — официальный сервис для приема платежей в Telegram.\n\n"
         f"<i>Вы перейдете на защищенную страницу оплаты, где сможете оплатить картой или через СБП. Ваши данные в безопасности.</i>"
     )
     
@@ -242,11 +267,16 @@ async def payment_success(message: types.Message):
         except ValueError:
             return
         t = get_tariff(tariff_id)
-        if not t:
-            return
+        if not t: return
         plan_name = "premium_plus" if "plus" in t['name'].lower() else "premium"
         add_premium(user_id, t['days'], plan_name, True)
         add_tokens(user_id, t['tokens'])
+        # Мгновенный бэкап после оплаты
+        try:
+            from backup import GitHubBackup
+            GitHubBackup().backup_db(reason='после оплаты Stars')
+        except: pass
+        
         await message.answer(f"✅ Подписка {t['name']} активирована!\n🎁 +{t['tokens']} токенов", reply_markup=helpers.main_menu())
         return
 
@@ -259,6 +289,10 @@ async def payment_success(message: types.Message):
                 break
         if tokens > 0:
             add_tokens(user_id, tokens)
+            try:
+                from backup import GitHubBackup
+                GitHubBackup().backup_db(reason='после оплаты Stars')
+            except: pass
             await message.answer(f"✅ +{tokens} токенов!", reply_markup=helpers.main_menu())
         else:
             await message.answer("❌ Ошибка начисления")
