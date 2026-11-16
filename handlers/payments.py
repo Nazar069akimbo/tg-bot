@@ -85,7 +85,7 @@ async def buy_tokens_screen(callback=None, message=None):
         if link:
             kb_rows.append([InlineKeyboardButton(
                 text=f"{t['name']} — {price}₽" + (f" (вместо {t['price_rub']}₽)" if prem else ""),
-                url=link
+                callback_data=f"go_tribute|{t['id']}|{price}"
             )])
         else:
             kb_rows.append([InlineKeyboardButton(
@@ -107,6 +107,39 @@ async def buy_tokens_screen(callback=None, message=None):
         await helpers.safe_answer(callback)
     else:
         await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("go_tribute|"))
+async def go_tribute_cb(callback: types.CallbackQuery):
+    parts = callback.data.split("|")
+    tid = int(parts[1])
+    price = int(parts[2])
+    
+    t = get_tariff(tid)
+    if not t or not t.get('tribute_link'):
+        await helpers.safe_answer(callback, "❌ Ссылка на оплату не найдена", show_alert=True)
+        return
+        
+    link = t['tribute_link']
+    
+    text = (
+        f"💳 <b>Переход к оплате</b>\n\n"
+        f"Вы выбрали: <b>{t['name']}</b>\n"
+        f"Сумма: <b>{price} ₽</b>\n\n"
+        f"🛡 <b>Tribute</b> — это официальный сервис для приема платежей в Telegram (от команды Telegram).\n\n"
+        f"<i>Вы перейдете на защищенную страницу оплаты, где сможете оплатить картой или через СБП. Ваши данные в безопасности.</i>"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Перейти к оплате", url=link)],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="buy_tokens")]
+    ])
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await helpers.safe_answer(callback)
 
 
 @router.callback_query(F.data == "buy_tokens")
